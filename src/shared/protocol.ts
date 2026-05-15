@@ -184,6 +184,12 @@ export interface ConversationState {
   lastOutputTokens?: number;
 }
 
+export interface FirstRunState {
+  completed: boolean;
+  needsSetup: boolean;
+  llmConfig: LlmConfigView;
+}
+
 export interface ConversationUpdated {
   conversationId: string;
   messages: LlmMessage[];
@@ -251,6 +257,7 @@ export type WebviewToHost =
   | { type: "deleteSession"; conversationId: string }
   | { type: "setLlmConfig"; config: Omit<LlmConfigView, "hasApiKey"> }
   | { type: "setSecret"; provider: Exclude<LlmProvider, "local">; apiKey: string }
+  | { type: "completeFirstRun" }
   | { type: "approve"; callId: CallId; approved: boolean; rememberRule?: AlwaysAllowRule; sessionCount?: number }
   | { type: "setAutoApprove"; enabled: boolean }
   | { type: "removeAlwaysAllowRule"; id: string }
@@ -266,6 +273,7 @@ export type HostToWebview =
   | { type: "done"; reason: TaskDone["reason"] }
   | { type: "restore"; messages: Msg[]; conversationId: string; usage: ConversationUsage; llmConfig: LlmConfigView }
   | { type: "llmConfig"; llmConfig: LlmConfigView }
+  | { type: "firstRunState"; state: FirstRunState }
   | { type: "autoApprove"; enabled: boolean }
   | { type: "alwaysAllowList"; rules: AlwaysAllowRule[] }
   | { type: "usage"; usage: ConversationUsage }

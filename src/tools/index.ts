@@ -260,7 +260,7 @@ function severityLabel(severity: vscode.DiagnosticSeverity): string {
 let outputChannel: vscode.OutputChannel | undefined;
 function getOutputChannel(): vscode.OutputChannel {
   if (!outputChannel) {
-    outputChannel = vscode.window.createOutputChannel("My Agent - Commands");
+    outputChannel = vscode.window.createOutputChannel("Loom - Commands");
   }
   return outputChannel;
 }

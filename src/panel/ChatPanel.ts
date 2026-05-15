@@ -12,6 +12,7 @@ import type {
   AlwaysAllowRule,
   ConversationState,
   ConversationUpdated,
+  FirstRunState,
   HostToWebview,
   LlmConfigView,
   LlmProvider,
@@ -50,6 +51,7 @@ const SESSION_BODY_PREFIX = "loom.sessions.body:";
 const AUTO_APPROVE_KEY = "loom.autoApprove";
 const ALWAYS_ALLOW_KEY = "loom.alwaysAllow";
 const MODE_KEY = "loom.currentMode";
+const FIRST_RUN_KEY = "loom.firstRun.completed";
 const MAX_TITLE_LEN = 60;
 const LOCAL_BASE_URL = "http://localhost:11434/v1";
 const LOCAL_MODEL = "llama3.1";
@@ -156,8 +158,12 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         await this.ctx.secrets.store(secretKeyFor(m.provider), m.apiKey.trim());
       }
       await this.postLlmConfig();
+      await this.postFirstRunState();
     } else if (m.type === "setLlmConfig") {
       await this.applyLlmConfig(m.config);
+    } else if (m.type === "completeFirstRun") {
+      await this.ctx.workspaceState.update(FIRST_RUN_KEY, true);
+      await this.postFirstRunState();
     } else if (m.type === "approve") {
       const call = this.pendingApprovalCalls.get(m.callId);
       if (m.approved) {
@@ -540,6 +546,17 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.postAlwaysAllowList();
     this.postModes();
     this.postThemeConfig();
+    await this.postFirstRunState();
+  }
+
+  private async postFirstRunState() {
+    const llmConfig = await this.currentLlmConfigView();
+    const state: FirstRunState = {
+      completed: this.ctx.workspaceState.get<boolean>(FIRST_RUN_KEY, false),
+      needsSetup: !llmConfig.hasApiKey,
+      llmConfig,
+    };
+    this.post({ type: "firstRunState", state }, false);
   }
 
   private postThemeConfig() {
@@ -855,11 +872,13 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     if ("error" in cfg) {
       this.post({ type: "error", error: cfg.error });
       await this.postLlmConfig();
+      await this.postFirstRunState();
       return;
     }
     try {
       await this.agent?.updateConfig(cfg);
       await this.postLlmConfig();
+      await this.postFirstRunState();
     } catch (e: unknown) {
       this.post({ type: "error", error: e instanceof Error ? e.message : String(e) });
     }
@@ -903,6 +922,26 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       return;
     }
     void this.agent.invalidateIndex(rel).catch(() => { /* ignore */ });
+  }
+
+  public async dispose() {
+    if (this.activeTaskId) {
+      try {
+        await this.agent?.cancel(this.activeTaskId);
+      } catch {
+        // Best-effort cancellation during extension shutdown/update.
+      }
+      this.post({ type: "done", reason: "cancelled" });
+      this.activeTaskId = undefined;
+      this.busy = false;
+    }
+    this.pendingApprovals.clear();
+    this.pendingApprovalCalls.clear();
+    this.sessionBulkCounters.clear();
+    this.toolStartTimes.clear();
+    this.persistNow();
+    await this.agent?.dispose();
+    this.agent = undefined;
   }
 
   private async approveLocalToolBatch(
@@ -971,7 +1010,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   }
 
   private async postLlmConfig() {
-    this.post({ type: "llmConfig", llmConfig: await this.currentLlmConfigView() }, false);
+    const llmConfig = await this.currentLlmConfigView();
+    this.post({ type: "llmConfig", llmConfig }, false);
   }
 
   private async currentLlmConfigView(): Promise<LlmConfigView> {

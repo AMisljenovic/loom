@@ -62,7 +62,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
-      - run: bash scripts/build-agent.sh
+      - run: npm run build:agent:all
       - name: Verify binaries
         run: |
           ls -la bin/

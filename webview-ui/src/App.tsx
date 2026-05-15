@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type {
   AlwaysAllowRule,
   ConversationUsage,
+  FirstRunState,
   IndexStatusNotify,
   LlmConfigView,
   McpServerStatus,
@@ -12,6 +13,7 @@ import type {
 } from "../../src/shared/protocol";
 import { AutoApproveBanner } from "./components/AutoApproveBanner";
 import { EmptyState } from "./components/EmptyState";
+import { FirstRun } from "./components/FirstRun";
 import { PanelHeader } from "./components/PanelHeader";
 import { InputArea } from "./components/composer/InputArea";
 import { ConversationList } from "./components/conversations/ConversationList";
@@ -57,6 +59,7 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [usage, setUsage] = useState<ConversationUsage>({ inputTokens: 0, outputTokens: 0 });
   const [llmConfig, setLlmConfig] = useState<LlmConfigView>(defaultLlmConfig);
+  const [firstRun, setFirstRun] = useState<FirstRunState | null>(null);
   const [autoApprove, setAutoApprove] = useState(false);
   const [alwaysAllowRules, setAlwaysAllowRules] = useState<AlwaysAllowRule[]>([]);
   const [pendingDiffs, setPendingDiffs] = useState<Map<string, string>>(() => new Map());
@@ -101,6 +104,7 @@ export function App() {
         return;
       }
       if (m.type === "llmConfig") { setLlmConfig(m.llmConfig ?? defaultLlmConfig); return; }
+      if (m.type === "firstRunState") { setFirstRun(m.state ?? null); return; }
       if (m.type === "usage") { setUsage(m.usage); return; }
       if (m.type === "autoApprove") { setAutoApprove(Boolean(m.enabled)); return; }
       if (m.type === "alwaysAllowList") { setAlwaysAllowRules(Array.isArray(m.rules) ? m.rules : []); return; }
@@ -200,6 +204,7 @@ export function App() {
 
   const currentMode = modes.find((m) => m.id === currentModeId);
   const isEmpty = messages.length === 0;
+  const showFirstRun = isEmpty && firstRun && (!firstRun.completed || firstRun.needsSetup);
 
   return (
     <div className="panel" ref={rootRef}>
@@ -213,7 +218,9 @@ export function App() {
         onEndRename={() => setRenamingId(null)}
       />
       {autoApprove && <AutoApproveBanner onDisable={() => post({ type: "setAutoApprove", enabled: false })} />}
-      {isEmpty ? (
+      {showFirstRun ? (
+        <FirstRun state={firstRun} onSample={(p) => setInput(p)} />
+      ) : isEmpty ? (
         <EmptyState mode={currentMode} onSuggest={(p) => { setInput(p); }} />
       ) : (
         <Thread messages={messages} pendingDiffs={pendingDiffs} pendingOutputs={pendingOutputs} />

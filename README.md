@@ -1,55 +1,90 @@
-# My Agent
+# Loom
 
-VS Code AI coding agent. TypeScript extension shell + Go agent backend.
+Loom is a VS Code AI coding agent with a TypeScript extension host, a React
+webview, and a Go backend. The Go agent owns the LLM loop and pure-Go tools;
+the TypeScript host owns VS Code APIs, approvals, sessions, and webview state.
 
-## Architecture
+![Loom demo](media/loom-demo.gif)
 
+## Install
+
+For local testing, install one of the per-platform VSIX files from `dist/`:
+
+```bash
+code --install-extension dist/loom-win32-x64.vsix
 ```
-Webview (React) ─► extension.ts ─► Go agent binary
-                   (proxy + VS Code API tools)   (loop + LLM + Go tools)
-```
 
-The Go binary is spawned as a child process and communicates over stdio
-using JSON-RPC 2.0 (LSP-style framing).
+Use the VSIX that matches your platform:
+
+- `loom-darwin-arm64.vsix`
+- `loom-darwin-x64.vsix`
+- `loom-linux-arm64.vsix`
+- `loom-linux-x64.vsix`
+- `loom-win32-x64.vsix`
+
+The binaries are not code-signed for v1.0. macOS Gatekeeper and Windows
+SmartScreen may require the workaround documented in `TROUBLESHOOTING.md`.
+
+## First Run
+
+Open the Loom view from the activity bar. The first-run panel lets you choose:
+
+- Anthropic with an Anthropic API key
+- OpenAI with an OpenAI API key
+- Local OpenAI-compatible endpoint, such as Ollama
+
+API keys are stored in VS Code SecretStorage. Loom also supports `.env` and
+environment variables for development.
 
 ## Build
 
 Requires Node 20+ and Go 1.22+.
 
 ```bash
-npm run install:all       # installs deps for root + webview
-npm run build             # builds Go agent (current platform), webview, extension
+npm run install:all
+npm run build
 ```
-
-Cross-platform: the build scripts use Node, so they work on Windows,
-macOS, and Linux without bash. If something fails, see `TROUBLESHOOTING.md`.
 
 This produces:
-- `dist/extension.js` — bundled TS extension
-- `dist/webview/` — webview React app
-- `bin/agent-<platform>-<arch>` — Go binary for the current platform
 
-To cross-compile binaries for all platforms (needed before packaging
-release VSIX files):
-
-```bash
-npm run build:agent:all
-```
-
-## Run in dev
-
-1. Open the folder in VS Code.
-2. Press **F5** — this launches the Extension Development Host.
-3. Run **Loom: Set Anthropic API Key** (or export `ANTHROPIC_API_KEY`).
-4. Open the **My Agent** view in the activity bar.
+- `dist/extension.js` - bundled extension host
+- `dist/webview/` - built React webview
+- `bin/agent-<platform>-<arch>` - Go agent for the current platform
 
 ## Package
 
 ```bash
-npm run package           # produces a VSIX per platform in dist/
+npm run package
 ```
 
-## Status
+Packaging cross-compiles the Go agent for all supported targets, builds the
+webview and extension bundle, then writes one VSIX per platform to `dist/`.
+Each VSIX is staged with only the matching Go binary.
 
-v0.1 scaffold. The Go agent loop is stubbed at `agent/internal/loop/loop.go` —
-search for `TODO` to wire up the Anthropic streaming call.
+## Configuration
+
+Important settings:
+
+- `loom.provider`: `anthropic`, `openai`, or `local`
+- `loom.telemetry.enabled`: opt-in telemetry, disabled by default
+- `loom.telemetry.endpoint`: HTTPS endpoint for batched sanitized events
+- `loom.mcp.servers`: stdio MCP server configuration
+- `loom.ui.accent`, `loom.ui.density`, `loom.ui.themeBias`: webview theme
+
+Telemetry never sends prompts, file contents, workspace paths, API keys, or raw
+machine IDs.
+
+## Architecture
+
+```text
+React webview <-> TypeScript extension host <-> Go agent binary
+        postMessage        JSON-RPC 2.0 over LSP framing
+```
+
+Wire types live in `src/shared/protocol.ts`.
+
+## Contributing
+
+See `CONTRIBUTING.md` for development workflow, release notes, and PR
+expectations. See `TROUBLESHOOTING.md` for common setup, packaging, and
+runtime issues.

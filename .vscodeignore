@@ -2,6 +2,8 @@
 !package.json
 !README.md
 !LICENSE
+!assets/**
+!media/**
 !dist/extension.js
 !dist/webview/**
 !bin/**

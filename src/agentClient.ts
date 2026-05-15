@@ -82,6 +82,7 @@ export class AgentClient {
   private proc?: ChildProcessWithoutNullStreams;
   private rpc?: JsonRpc;
   private activeTaskId?: string;
+  private disposed = false;
 
   constructor(
     private readonly extensionPath: string,
@@ -98,13 +99,16 @@ export class AgentClient {
       try { fs.chmodSync(binary, 0o755); } catch { /* ignore */ }
     }
 
+    this.disposed = false;
     this.proc = spawn(binary, [], {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...buildSpawnEnv(cfg), ...buildExtrasEnv(this.extras) },
     });
     this.proc.stderr.on("data", (d) => console.error("[agent]", d.toString()));
     this.proc.on("exit", (code) => {
-      this.events.onError(`agent exited with code ${code}`);
+      if (!this.disposed) {
+        this.events.onError(`agent exited with code ${code}`);
+      }
     });
 
     this.rpc = new JsonRpc(this.proc.stdout, this.proc.stdin);
@@ -203,8 +207,16 @@ export class AgentClient {
     }
   }
 
-  dispose() {
+  async dispose() {
+    this.disposed = true;
+    await Promise.race([
+      this.cancel().catch(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, 500)),
+    ]);
     this.proc?.kill();
+    this.proc = undefined;
+    this.rpc = undefined;
+    this.activeTaskId = undefined;
   }
 
   private binaryPath(): string {

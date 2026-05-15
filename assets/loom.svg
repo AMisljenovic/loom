@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="256" height="256" fill="none" role="img" aria-label="Loom">
+  <title>Loom</title>
+  <defs>
+    <linearGradient id="loom-grad" gradientUnits="userSpaceOnUse" x1="4" y1="4" x2="28" y2="28">
+      <stop offset="0%" stop-color="#6D7BFF"></stop>
+      <stop offset="100%" stop-color="#8B6DFF"></stop>
+    </linearGradient>
+  </defs>
+  
+  <g stroke="url(#loom-grad)" stroke-width="2.3" stroke-linecap="round" fill="none">
+    <path d="M7.5 5 C 13 12, 13 20, 7.5 27"></path>
+    <path d="M16 4 L 16 28"></path>
+    <path d="M24.5 5 C 19 12, 19 20, 24.5 27"></path>
+  </g>
+</svg>

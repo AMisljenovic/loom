@@ -6,6 +6,7 @@ For full project documentation, see `CLAUDE.md`.
 ## What this project is
 
 A VS Code extension with three runtimes:
+
 - TypeScript extension host (`src/`)
 - React webview (`webview-ui/`)
 - Go agent binary (`agent/`)
@@ -19,28 +20,29 @@ newline-delimited JSON-RPC over stdio.
 - TypeScript: strict mode, no `any`, prefer `unknown` + narrowing,
   `node:` prefix for built-ins, async/await
 - Go: gofmt, `fmt.Errorf` with `%w` wrapping, channels over shared state,
-  stderr for all logs (never stdout)
+  stderr for all logs, never stdout
 - React: function components, hooks only, VS Code CSS variables for theming
 
 ## Where to put things
 
-- Agent loop → `agent/internal/loop/`
-- MCP client/manager → `agent/internal/mcp/`
-- LLM SDK code → `agent/internal/llm/` (isolated; the loop never imports the SDK)
-- Go-side tools → `agent/internal/tools/tools.go`
-- Workspace symbol index → `agent/internal/index/` (tree-sitter via CGO when available, pure-Go fallback otherwise)
-- Embeddings providers → `agent/internal/embed/` (Ollama, Voyage)
-- Vector store (SQLite) → `agent/internal/index/vector.go` (`<workspace>/.loom/index.db`)
-- Telemetry (opt-in) → `agent/internal/telemetry/`
-- TS-side tools → `src/tools/index.ts`
-- Wire types → `src/shared/protocol.ts` (mirror in Go)
-- Per-mode system prompts → `agent/internal/prompts/*.md` (embedded via `embed.FS`)
-- Built-in mode definitions → `src/modes.ts`
-- Webview UI → `webview-ui/src/`
-- Webview design tokens → `webview-ui/src/styles/tokens.css` + `components.css`
-- Webview brand assets → `webview-ui/src/brand/` (LoomMark, icons)
-- Webview components → `webview-ui/src/components/` (thread, toolbar, composer, popovers, conversations)
-- Webview utilities → `webview-ui/src/util/` (format, rules, parseToolOutput)
+- Agent loop -> `agent/internal/loop/`
+- MCP client/manager -> `agent/internal/mcp/`
+- LLM SDK code -> `agent/internal/llm/`
+- Go-side tools -> `agent/internal/tools/tools.go`
+- Workspace symbol index -> `agent/internal/index/`
+- Embeddings providers -> `agent/internal/embed/`
+- Vector store -> `agent/internal/index/vector.go`
+- Telemetry -> `agent/internal/telemetry/`
+- TS-side tools -> `src/tools/index.ts`
+- Wire types -> `src/shared/protocol.ts`
+- Per-mode system prompts -> `agent/internal/prompts/*.md`
+- Built-in mode definitions -> `src/modes.ts`
+- Webview UI -> `webview-ui/src/`
+- Webview design tokens -> `webview-ui/src/styles/tokens.css` and `components.css`
+- Webview brand assets -> `webview-ui/src/brand/`
+- Webview components -> `webview-ui/src/components/`
+- Webview utilities -> `webview-ui/src/util/`
+- Marketplace assets -> `assets/` and `media/`
 
 ## Rules
 
@@ -53,17 +55,22 @@ newline-delimited JSON-RPC over stdio.
    bulk counters are in-memory only. The Go loop remains serial.
 6. Keep the two stdio codecs separate: Loom's extension-agent bridge is
    LSP-framed, while MCP server stdio is newline-delimited JSON-RPC.
-7. Tools run in parallel within a turn (errgroup, cap 8). Approval-gated
-   tools are batched into one `tool.approveBatch` RPC — do not add per-call
-   `tool.approve` for new Go-side tools.
-8. Prompt caching (Anthropic cache_control, OpenAI automatic) depends on a
-   byte-stable system + tools prefix. Sort any newly-added dynamic tool
-   list deterministically.
+7. Tools run in parallel within a turn with approval-gated tools batched into
+   one `tool.approveBatch` RPC. Do not add per-call `tool.approve` for new
+   Go-side tools.
+8. Prompt caching depends on a byte-stable system + tools prefix. Sort dynamic
+   tool lists deterministically.
 9. Conversation sessions are stored TS-side in `workspaceState`
-   (`loom.sessions.index` + `loom.sessions.body:<id>` per session). The Go
-   conversation store is already multi-session; do not add list management
-   on the Go side. Switching active sessions must cancel any in-flight task
-   first.
+   (`loom.sessions.index` + `loom.sessions.body:<id>` per session). Switching
+   active sessions must cancel any in-flight task first.
+10. First-run setup is host-owned state (`loom.firstRun.completed`) rendered
+    by the webview. API keys must still use VS Code SecretStorage.
+11. Extension shutdown/update cleanup must cancel active tasks, persist the
+    session, and dispose the Go process explicitly.
+12. Go task panics must recover with sanitized opt-in telemetry and generic
+    user-facing errors only.
+13. Use checked-in exported marketplace assets from `assets/` and `media/`;
+    do not replace them with generated assets.
 
 ## Pre-commit hook
 

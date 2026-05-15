@@ -33,7 +33,7 @@ npm run build
 ```
 
 This runs three sub-builds: the Go agent (current platform only;
-`scripts/build-agent.sh` cross-compiles all), the webview, and the extension
+`npm run build:agent:all` cross-compiles all), the webview, and the extension
 bundle.
 
 ## Run
@@ -91,6 +91,17 @@ No test suite yet. When adding one:
     message. `ChatPanel.ts` reads `loom.ui.accent`, `loom.ui.density`, and
     `loom.ui.themeBias` from VS Code settings and re-posts on
     `onDidChangeConfiguration` and `onDidChangeActiveColorTheme`.
+13. First-run setup is host-owned state and webview-rendered UI. The
+    `loom.firstRun.completed` workspaceState key gates the setup panel; API
+    keys still go through VS Code SecretStorage via `setSecret`.
+14. Extension shutdown and update handling must cancel any active task, persist
+    the active session, and dispose the Go process deliberately. Keep cleanup
+    in `ChatPanel.dispose()` / `AgentClient.dispose()`.
+15. Go task goroutines must recover panics, emit only sanitized opt-in
+    telemetry metadata, notify the user with a generic error, and send
+    `task.done` with reason `error`.
+16. Marketplace assets live in `assets/` and `media/`. Do not regenerate them
+    from code when exported brand files already exist.
 
 ## Pre-commit hook
 

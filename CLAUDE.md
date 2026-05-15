@@ -62,6 +62,20 @@ change to a message type must be made on both sides.
   webview sets `data-accent`/`data-density`/`data-theme` on the root element;
   CSS token overrides cascade from there. VS Code theme class
   (`.vscode-dark`/`.vscode-light`) handles chrome; Loom owns accent+density.
+- **First-run setup is host-owned.** `ChatPanel.ts` stores
+  `workspaceState["loom.firstRun.completed"]`, posts `firstRunState`, and
+  keeps API keys on the existing SecretStorage path. The webview renders the
+  setup panel and forwards provider/key choices only.
+- **Shutdown is deliberate.** `ChatPanel.dispose()` cancels an active task,
+  persists session state, clears pending approvals, and disposes
+  `AgentClient`. Do not rely on VS Code process cleanup for update/reload
+  behavior.
+- **Go panics are sanitized.** Task goroutines recover panics, log the local
+  stack to stderr, emit only bounded opt-in telemetry metadata, post a generic
+  user-facing error, and finish with `task.done` reason `error`.
+- **Marketplace assets are checked in.** Use `assets/` and `media/` for VSIX
+  icon/demo assets. Do not introduce generated replacements when exported
+  brand files already exist.
 
 ## Where things live
 
@@ -82,6 +96,7 @@ change to a message type must be made on both sides.
 | Embeddings providers | `agent/internal/embed/` (Ollama, Voyage) |
 | Vector store (SQLite) | `agent/internal/index/vector.go` (writes to `<workspace>/.loom/index.db`) |
 | Opt-in telemetry | `agent/internal/telemetry/` |
+| Marketplace assets | `assets/`, `media/` |
 | Per-mode system prompts | `agent/internal/prompts/*.md` (embedded via `embed.FS`) |
 | Built-in mode definitions | `src/modes.ts` |
 | JSON-RPC codec (Go) | `agent/internal/rpc/rpc.go` |
@@ -106,10 +121,10 @@ npm run build
 npm run watch
 
 # Cross-compile Go for all targets
-bash scripts/build-agent.sh
+npm run build:agent:all
 
 # Package per-platform VSIX
-bash scripts/package.sh
+npm run package
 ```
 
 To run in dev: open the repo in VS Code, press **F5**. This launches an

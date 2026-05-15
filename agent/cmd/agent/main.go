@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"runtime/debug"
 	"sync"
 
 	"github.com/your-org/loom/internal/conversation"
@@ -137,6 +138,21 @@ func main() {
 		}
 		go func() {
 			defer func() {
+				if recovered := recover(); recovered != nil {
+					telemetryClient.Emit("error", map[string]any{
+						"where": "loop.Run",
+						"kind":  "panic",
+					})
+					_ = conn.Notify("message.delta", map[string]any{
+						"taskId": p.TaskID,
+						"text":   "The Loom agent hit an internal error and stopped this task. No prompt or file contents were sent in the crash report.",
+					})
+					_ = conn.Notify("task.done", map[string]any{
+						"taskId": p.TaskID,
+						"reason": "error",
+					})
+					log.Printf("task panic: %v\n%s", recovered, debug.Stack())
+				}
 				taskMu.Lock()
 				delete(taskCancels, p.TaskID)
 				taskMu.Unlock()

@@ -1,15 +1,42 @@
 {
   "name": "loom",
-  "displayName": "My Agent",
-  "description": "AI coding agent with a Go backend",
+  "displayName": "Loom",
+  "description": "A VS Code coding agent with a fast Go backend, approval-aware tools, sessions, modes, MCP, and local indexing.",
   "version": "0.1.0",
-  "publisher": "your-publisher-id",
+  "publisher": "loom-dev",
+  "license": "Apache-2.0",
+  "icon": "assets/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/loom-dev/loom.git"
+  },
+  "bugs": {
+    "url": "https://github.com/loom-dev/loom/issues"
+  },
+  "homepage": "https://github.com/loom-dev/loom#readme",
   "engines": {
     "vscode": "^1.90.0"
   },
   "categories": [
+    "AI",
+    "Machine Learning",
+    "Programming Languages",
     "Other"
   ],
+  "keywords": [
+    "ai",
+    "agent",
+    "coding assistant",
+    "mcp",
+    "openai",
+    "anthropic",
+    "go",
+    "chat"
+  ],
+  "galleryBanner": {
+    "color": "#0B0D11",
+    "theme": "dark"
+  },
   "main": "./dist/extension.js",
   "activationEvents": [
     "onCommand:loom.open",
@@ -20,7 +47,7 @@
     "commands": [
       {
         "command": "loom.open",
-        "title": "My Agent: Open Chat"
+        "title": "Loom: Open Chat"
       },
       {
         "command": "loom.setAnthropicKey",
@@ -35,8 +62,8 @@
       "activitybar": [
         {
           "id": "loom",
-          "title": "My Agent",
-          "icon": "$(sparkle)"
+          "title": "Loom",
+          "icon": "assets/activitybar.svg"
         }
       ]
     },
@@ -50,7 +77,7 @@
       ]
     },
     "configuration": {
-      "title": "My Agent",
+      "title": "Loom",
       "properties": {
         "loom.provider": {
           "type": "string",

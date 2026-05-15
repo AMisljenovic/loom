@@ -64,6 +64,20 @@ of `agent-win32-x64.exe`, the rename step failed. Re-run the build.
 
 ## Runtime errors
 
+### First-run setup keeps asking for an API key
+
+If you choose Anthropic or OpenAI, enter the key in the first-run panel or run
+the matching command:
+
+- **Loom: Set Anthropic API Key**
+- **Loom: Set OpenAI API Key**
+
+Keys are stored in VS Code SecretStorage. For development you can also use a
+workspace `.env` file or process environment variables.
+
+For local models, choose **Local** in the setup panel and confirm the base URL
+and model. The default endpoint is `http://localhost:11434/v1`.
+
 ### "Agent binary not found at ..."
 
 The binary for your current platform hasn't been built. Run
@@ -89,6 +103,44 @@ Something is writing unframed bytes to the Go process's stdout. The fix is
 always: find the stray `fmt.Print*` or `println` in Go code and change it to
 `log.Print*` (which goes to stderr). See `.cursor/rules/wire-protocol.mdc`.
 
+### "The Loom agent hit an internal error"
+
+The Go backend recovered from a panic and stopped the current task. If
+`loom.telemetry.enabled` is off, no event is sent. If it is on, Loom emits only
+bounded metadata such as error kind and location; it does not send prompts,
+file contents, workspace paths, API keys, or raw machine IDs.
+
+Check the Extension Host logs and the VS Code developer console for the local
+stack trace, then file a bug with the extension version, platform, and the
+redacted log.
+
+## Install and packaging issues
+
+### macOS says the agent binary cannot be opened
+
+The v1.0 VSIX bundles unsigned Go binaries. If Gatekeeper blocks the agent
+after installing a local or GitHub Release VSIX, remove the quarantine flag
+from the extension install directory:
+
+```bash
+xattr -dr com.apple.quarantine ~/.vscode/extensions/loom-dev.loom-*
+```
+
+Then reload VS Code. Marketplace builds should eventually be signed and
+notarized; v1.0 documents this workaround instead.
+
+### Windows SmartScreen warns about the binary
+
+The v1.0 Windows binary is not EV-signed. For local VSIX installs, choose
+**More info** and **Run anyway** only if the VSIX came from your own build or
+the official project release. EV signing is deferred from v1.0.
+
+### A VSIX contains binaries for other platforms
+
+Use `npm run package`, not a direct `vsce package` command. The packaging
+script cross-compiles all five binaries, temporarily stages one target binary
+at a time, and writes per-platform VSIX files.
+
 ## Platform-specific notes
 
 ### Windows
@@ -103,9 +155,9 @@ always: find the stray `fmt.Print*` or `println` in Go code and change it to
 ### macOS
 
 - Unsigned Go binaries get blocked by Gatekeeper on first run. For local
-  development this isn't an issue because you built it yourself; for
-  distributed VSIX, sign + notarize. See
-  `.claude/agents/release-engineer.md`.
+  development this usually is not an issue because you built it yourself; for
+  distributed VSIX, use the quarantine workaround above until signing and
+  notarization are added.
 
 ### Linux
 

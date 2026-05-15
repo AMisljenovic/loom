@@ -3,10 +3,14 @@ import { ChatPanel } from "./panel/ChatPanel";
 import { secretKeyFor, SecretProvider } from "./secrets";
 import { registerApplyDiffContentProvider } from "./tools/diffPreview";
 
+let activePanel: ChatPanel | undefined;
+
 export async function activate(context: vscode.ExtensionContext) {
   registerApplyDiffContentProvider(context);
   await migratePlaintextSecrets(context);
   const panel = new ChatPanel(context);
+  activePanel = panel;
+  context.subscriptions.push({ dispose: () => { void panel.dispose(); } });
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(ChatPanel.viewType, panel)
   );
@@ -35,8 +39,9 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 }
 
-export function deactivate() {
-  // child process killed via extension subscription cleanup is enough for v0.1
+export async function deactivate() {
+  await activePanel?.dispose();
+  activePanel = undefined;
 }
 
 async function migratePlaintextSecrets(context: vscode.ExtensionContext) {
