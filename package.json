@@ -1,6 +1,6 @@
 {
-  "name": "loom-pilot",
-  "displayName": "Loom",
+  "name": "loom-code",
+  "displayName": "Loom Code",
   "description": "A VS Code coding agent with a fast Go backend, approval-aware tools, sessions, modes, MCP, and local indexing.",
   "version": "0.1.0",
   "publisher": "Loom",
