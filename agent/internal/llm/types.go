@@ -54,8 +54,10 @@ type StreamHandler interface {
 }
 
 type TokenUsage struct {
-	InputTokens  int64 `json:"inputTokens"`
-	OutputTokens int64 `json:"outputTokens"`
+	InputTokens         int64 `json:"inputTokens"`
+	OutputTokens        int64 `json:"outputTokens"`
+	CacheCreationTokens int64 `json:"cacheCreationTokens,omitempty"`
+	CacheReadTokens     int64 `json:"cacheReadTokens,omitempty"`
 }
 
 type StreamResult struct {

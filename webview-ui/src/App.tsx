@@ -3,6 +3,7 @@ import { estimateCost } from "../../src/shared/pricing";
 import type {
   AlwaysAllowRule,
   ConversationUsage,
+  IndexStatusNotify,
   LlmConfigView,
   LlmProvider,
   McpServerStatus,
@@ -50,6 +51,7 @@ export function App() {
   const [alwaysAllowRules, setAlwaysAllowRules] = useState<AlwaysAllowRule[]>([]);
   const [pendingDiffs, setPendingDiffs] = useState<Map<string, string>>(() => new Map());
   const [mcpStatuses, setMcpStatuses] = useState<Record<string, McpServerStatus>>({});
+  const [indexStatus, setIndexStatus] = useState<IndexStatusNotify | null>(null);
   const [showAlwaysAllow, setShowAlwaysAllow] = useState(false);
   const [modes, setModes] = useState<ModeDefinition[]>([]);
   const [currentModeId, setCurrentModeId] = useState<string>("code");
@@ -102,6 +104,10 @@ export function App() {
       }
       if (m.type === "mcpStatus") {
         setMcpStatuses((prev) => ({ ...prev, [m.status.server]: m.status }));
+        return;
+      }
+      if (m.type === "indexStatus") {
+        setIndexStatus(m.status);
         return;
       }
       if (m.type === "toolResult") {
@@ -279,6 +285,7 @@ export function App() {
         usage={usage}
         llmConfig={llmConfig}
         mcpStatuses={mcpStatuses}
+        indexStatus={indexStatus}
         autoApprove={autoApprove}
         onAutoApproveChange={setAutoApproveEnabled}
         onShowAlwaysAllow={openAlwaysAllow}
@@ -315,6 +322,7 @@ function StatusStrip({
   usage,
   llmConfig,
   mcpStatuses,
+  indexStatus,
   autoApprove,
   onAutoApproveChange,
   onShowAlwaysAllow,
@@ -322,16 +330,20 @@ function StatusStrip({
   usage: ConversationUsage;
   llmConfig: LlmConfigView;
   mcpStatuses: Record<string, McpServerStatus>;
+  indexStatus: IndexStatusNotify | null;
   autoApprove: boolean;
   onAutoApproveChange: (enabled: boolean) => void;
   onShowAlwaysAllow: () => void;
 }) {
   const cost = estimateCost(usage);
   const mcpSummary = formatMcpSummary(mcpStatuses);
+  const indexSummary = formatIndexSummary(indexStatus);
+  const cacheRead = usage.cacheReadTokens ?? 0;
   return (
     <div style={styles.statusStrip}>
       <ProviderPicker config={llmConfig} />
       {mcpSummary && <span title={mcpSummary.detail}>{mcpSummary.label}</span>}
+      {indexSummary && <span title={indexSummary.detail}>{indexSummary.label}</span>}
       <button
         type="button"
         onClick={() => onAutoApproveChange(!autoApprove)}
@@ -342,9 +354,27 @@ function StatusStrip({
       <button type="button" onClick={onShowAlwaysAllow} style={styles.statusButton}>Allowlist</button>
       <span>↑ {formatTokens(usage.inputTokens)}</span>
       <span>↓ {formatTokens(usage.outputTokens)}</span>
+      {cacheRead > 0 && (
+        <span title="Prompt cache hits (cumulative)">⚡ {formatTokens(cacheRead)}</span>
+      )}
       {cost !== undefined && <span>≈ ${cost.toFixed(cost < 0.01 ? 4 : 2)}</span>}
     </div>
   );
+}
+
+function formatIndexSummary(status: IndexStatusNotify | null): { label: string; detail: string } | undefined {
+  if (!status) return undefined;
+  if (status.state === "disabled") return undefined;
+  const dot = status.state === "ready" ? "●" : status.state === "scanning" ? "◐" : "◌";
+  const label = `${dot} Index ${formatCount(status.symbolsCount)}`;
+  const detail = `Index: ${status.state} — ${status.filesScanned} files, ${status.symbolsCount} symbols`;
+  return { label, detail };
+}
+
+function formatCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
 }
 
 function formatMcpSummary(statuses: Record<string, McpServerStatus>): { label: string; detail: string } | undefined {

@@ -4,17 +4,26 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	agentprompts "github.com/your-org/loom/internal/prompts"
+	"golang.org/x/sync/errgroup"
+
 	"github.com/your-org/loom/internal/conversation"
+	"github.com/your-org/loom/internal/embed"
+	"github.com/your-org/loom/internal/index"
 	"github.com/your-org/loom/internal/llm"
 	"github.com/your-org/loom/internal/mcp"
+	agentprompts "github.com/your-org/loom/internal/prompts"
 	"github.com/your-org/loom/internal/rpc"
+	"github.com/your-org/loom/internal/telemetry"
 	"github.com/your-org/loom/internal/tools"
 )
+
+// parallelToolCap bounds concurrent tool execution per turn.
+const parallelToolCap = 8
 
 // Driver runs the agent loop for a single task.
 type Driver struct {
@@ -24,6 +33,9 @@ type Driver struct {
 	LLM           llm.Provider
 	Conversations *conversation.Store
 	MCP           *mcp.Manager
+	Telemetry     *telemetry.Client // may be nil
+	Index         *index.Indexer    // may be nil
+	Embedder      embed.Provider    // may be nil
 }
 
 // ModeDefinition mirrors the TypeScript ModeDefinition in src/shared/protocol.ts.
@@ -118,27 +130,36 @@ func (d *Driver) Run(ctx context.Context, p StartParams) error {
 		d.notifyConversationUpdated(p.ConversationID, entry)
 
 		if result.StopReason != "tool_calls" || len(toolCalls) == 0 {
+			d.Telemetry.Emit("task_completed", map[string]any{
+				"turns":               turn + 1,
+				"inputTokens":         entry.CumulativeInput,
+				"outputTokens":        entry.CumulativeOutput,
+				"cacheReadTokens":     result.Usage.CacheReadTokens,
+				"cacheCreationTokens": result.Usage.CacheCreationTokens,
+			})
 			done("completed")
 			return nil
 		}
 
+		toolResults, err := d.execToolsParallel(ctx, p.TaskID, toolCalls, registry)
+		if err != nil {
+			if ctx.Err() != nil {
+				done("cancelled")
+				return nil
+			}
+			return err
+		}
+		if ctx.Err() != nil {
+			done("cancelled")
+			return nil
+		}
+		// Append in original call order so the LLM sees a deterministic
+		// transcript regardless of completion order.
 		for _, tc := range toolCalls {
-			if ctx.Err() != nil {
-				done("cancelled")
-				return nil
-			}
-			result, err := d.ExecTool(p.TaskID, tc.ID, tc.Name, tc.Input)
-			content := result
-			if err != nil {
-				content = "error: " + err.Error()
-			}
-			if ctx.Err() != nil {
-				done("cancelled")
-				return nil
-			}
+			r := toolResults[tc.ID]
 			entry.Append(llm.Message{
 				Role:       llm.RoleTool,
-				Content:    content,
+				Content:    r.content,
 				ToolCallID: tc.ID,
 			})
 			d.notifyConversationUpdated(p.ConversationID, entry)
@@ -193,25 +214,31 @@ func (d *Driver) maybeSummarize(ctx context.Context, taskID, conversationID, sys
 
 func (d *Driver) notifyUsage(taskID string, entry *conversation.Entry, usage llm.TokenUsage) {
 	_ = d.Conn.Notify("task.usage", map[string]any{
-		"taskId":           taskID,
-		"inputTokens":      usage.InputTokens,
-		"outputTokens":     usage.OutputTokens,
-		"cumulativeInput":  entry.CumulativeInput,
-		"cumulativeOutput": entry.CumulativeOutput,
-		"model":            d.LLM.Model(),
+		"taskId":                taskID,
+		"inputTokens":           usage.InputTokens,
+		"outputTokens":          usage.OutputTokens,
+		"cacheCreationTokens":   usage.CacheCreationTokens,
+		"cacheReadTokens":       usage.CacheReadTokens,
+		"cumulativeInput":       entry.CumulativeInput,
+		"cumulativeOutput":      entry.CumulativeOutput,
+		"cumulativeCacheRead":   entry.CumulativeCacheRead,
+		"cumulativeCacheWrite":  entry.CumulativeCacheWrite,
+		"model":                 d.LLM.Model(),
 	})
 }
 
 func (d *Driver) notifyConversationUpdated(conversationID string, entry *conversation.Entry) {
 	snap := entry.Snapshot()
 	_ = d.Conn.Notify("conversation.updated", map[string]any{
-		"conversationId":   conversationID,
-		"messages":         snap.Messages,
-		"cumulativeInput":  snap.CumulativeInput,
-		"cumulativeOutput": snap.CumulativeOutput,
-		"lastInputTokens":  snap.LastInputTokens,
-		"lastOutputTokens": snap.LastOutputTokens,
-		"model":            d.LLM.Model(),
+		"conversationId":       conversationID,
+		"messages":             snap.Messages,
+		"cumulativeInput":      snap.CumulativeInput,
+		"cumulativeOutput":     snap.CumulativeOutput,
+		"cumulativeCacheRead":  snap.CumulativeCacheRead,
+		"cumulativeCacheWrite": snap.CumulativeCacheWrite,
+		"lastInputTokens":      snap.LastInputTokens,
+		"lastOutputTokens":     snap.LastOutputTokens,
+		"model":                d.LLM.Model(),
 	})
 }
 
@@ -248,86 +275,217 @@ func (h *streamHandler) finish() (string, []llm.ToolCall) {
 	return h.text.String(), h.toolCalls
 }
 
-// ExecTool dispatches a tool either locally or via the TS host.
+// toolOutcome is the result of executing a single tool call.
+type toolOutcome struct {
+	content string
+	err     error
+}
+
+// execToolsParallel runs a turn's tool calls concurrently. For Go-side tools
+// requiring approval, a single tool.approveBatch RPC collects decisions before
+// any execution starts. TS-side tools (no LocalExec) handle their own
+// approval through tool.call, so they are simply dispatched in parallel.
+func (d *Driver) execToolsParallel(
+	ctx context.Context,
+	taskID string,
+	calls []llm.ToolCall,
+	registry []tools.Tool,
+) (map[string]toolOutcome, error) {
+	if len(calls) == 0 {
+		return nil, nil
+	}
+
+	byName := make(map[string]tools.Tool, len(registry))
+	for _, t := range registry {
+		byName[t.Name] = t
+	}
+
+	approvals, err := d.gatherApprovals(taskID, calls, byName)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make(map[string]toolOutcome, len(calls))
+	var mu sync.Mutex
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(parallelToolCap)
+	for _, tc := range calls {
+		tc := tc
+		g.Go(func() error {
+			if gctx.Err() != nil {
+				return gctx.Err()
+			}
+			t, ok := byName[tc.Name]
+			var out toolOutcome
+			switch {
+			case !ok:
+				out = toolOutcome{err: fmt.Errorf("unknown tool: %s", tc.Name)}
+			case t.LocalExec != nil && t.RequiresApproval && !approvals[tc.ID]:
+				out = toolOutcome{err: fmt.Errorf("user rejected")}
+			default:
+				startedAt := time.Now()
+				content, err := d.execToolNoApprovalGate(taskID, tc.ID, t, tc.Input)
+				out = toolOutcome{content: content, err: err}
+				d.Telemetry.Emit("tool_call", map[string]any{
+					"name":       tc.Name,
+					"durationMs": time.Since(startedAt).Milliseconds(),
+					"ok":         err == nil,
+				})
+			}
+			if out.err != nil && out.content == "" {
+				out.content = "error: " + out.err.Error()
+			}
+			mu.Lock()
+			results[tc.ID] = out
+			mu.Unlock()
+			return nil
+		})
+	}
+	_ = g.Wait()
+	return results, nil
+}
+
+// gatherApprovals batches all Go-side tools requiring approval into a single
+// tool.approveBatch RPC. Returns a map callID -> approved.
+func (d *Driver) gatherApprovals(
+	taskID string,
+	calls []llm.ToolCall,
+	byName map[string]tools.Tool,
+) (map[string]bool, error) {
+	type item struct {
+		CallID string          `json:"callId"`
+		Name   string          `json:"name"`
+		Input  json.RawMessage `json:"input"`
+	}
+	var items []item
+	for _, tc := range calls {
+		t, ok := byName[tc.Name]
+		if !ok || t.LocalExec == nil || !t.RequiresApproval {
+			continue
+		}
+		items = append(items, item{CallID: tc.ID, Name: tc.Name, Input: tc.Input})
+	}
+	if len(items) == 0 {
+		return map[string]bool{}, nil
+	}
+	var resp struct {
+		Decisions map[string]string `json:"decisions"`
+	}
+	err := d.Conn.Request("tool.approveBatch", map[string]any{
+		"taskId":  taskID,
+		"batchId": fmt.Sprintf("%s-%d", taskID, time.Now().UnixNano()),
+		"items":   items,
+	}, &resp)
+	if err != nil {
+		return nil, fmt.Errorf("tool.approveBatch: %w", err)
+	}
+	out := make(map[string]bool, len(items))
+	for _, it := range items {
+		out[it.CallID] = resp.Decisions[it.CallID] == "approved"
+	}
+	return out, nil
+}
+
+// execToolNoApprovalGate executes a tool without consulting approval (the
+// approval gate has already been satisfied or is not required).
+func (d *Driver) execToolNoApprovalGate(
+	taskID, callID string,
+	t tools.Tool,
+	input json.RawMessage,
+) (string, error) {
+	if t.LocalExec != nil {
+		_ = d.Conn.Notify("tool.localCall", map[string]any{
+			"callId":           callID,
+			"taskId":           taskID,
+			"name":             t.Name,
+			"input":            input,
+			"requiresApproval": false,
+		})
+		startedAt := time.Now()
+		result, err := t.LocalExec(d.WorkspaceRoot, input)
+		if err != nil {
+			_ = d.Conn.Notify("tool.localResult", map[string]any{
+				"callId":     callID,
+				"ok":         false,
+				"error":      err.Error(),
+				"durationMs": time.Since(startedAt).Milliseconds(),
+			})
+			return "", err
+		}
+		_ = d.Conn.Notify("tool.localResult", map[string]any{
+			"callId":     callID,
+			"ok":         true,
+			"content":    result,
+			"durationMs": time.Since(startedAt).Milliseconds(),
+		})
+		return result, nil
+	}
+	var result struct {
+		CallID  string `json:"callId"`
+		OK      bool   `json:"ok"`
+		Content string `json:"content"`
+		Error   string `json:"error"`
+	}
+	err := d.Conn.Request("tool.call", map[string]any{
+		"callId":           callID,
+		"taskId":           taskID,
+		"name":             t.Name,
+		"input":            input,
+		"requiresApproval": t.RequiresApproval,
+	}, &result)
+	if err != nil {
+		return "", err
+	}
+	if !result.OK {
+		return "", fmt.Errorf("%s", result.Error)
+	}
+	return result.Content, nil
+}
+
+// ExecTool dispatches a single tool, going through the full approval gate.
+// Retained for compatibility with any callers outside the loop. The loop
+// itself uses execToolsParallel.
 func (d *Driver) ExecTool(taskID, callID, name string, input json.RawMessage) (string, error) {
 	for _, t := range d.registry() {
 		if t.Name != name {
 			continue
 		}
-		if t.LocalExec != nil {
-			if t.RequiresApproval {
-				var approval struct {
-					Approved bool `json:"approved"`
-				}
-				err := d.Conn.Request("tool.approve", map[string]any{
-					"callId":           callID,
-					"taskId":           taskID,
-					"name":             name,
-					"input":            input,
-					"requiresApproval": true,
-				}, &approval)
-				if err != nil {
-					return "", err
-				}
-				if !approval.Approved {
-					return "", fmt.Errorf("user rejected")
-				}
-			} else {
-				_ = d.Conn.Notify("tool.localCall", map[string]any{
-					"callId":           callID,
-					"taskId":           taskID,
-					"name":             name,
-					"input":            input,
-					"requiresApproval": false,
-				})
+		if t.LocalExec != nil && t.RequiresApproval {
+			var approval struct {
+				Approved bool `json:"approved"`
 			}
-			startedAt := time.Now()
-			result, err := t.LocalExec(d.WorkspaceRoot, input)
+			err := d.Conn.Request("tool.approve", map[string]any{
+				"callId":           callID,
+				"taskId":           taskID,
+				"name":             name,
+				"input":            input,
+				"requiresApproval": true,
+			}, &approval)
 			if err != nil {
-				_ = d.Conn.Notify("tool.localResult", map[string]any{
-					"callId":     callID,
-					"ok":         false,
-					"error":      err.Error(),
-					"durationMs": time.Since(startedAt).Milliseconds(),
-				})
 				return "", err
 			}
-			_ = d.Conn.Notify("tool.localResult", map[string]any{
-				"callId":     callID,
-				"ok":         true,
-				"content":    result,
-				"durationMs": time.Since(startedAt).Milliseconds(),
-			})
-			return result, nil
+			if !approval.Approved {
+				return "", fmt.Errorf("user rejected")
+			}
 		}
-		var result struct {
-			CallID  string `json:"callId"`
-			OK      bool   `json:"ok"`
-			Content string `json:"content"`
-			Error   string `json:"error"`
-		}
-		err := d.Conn.Request("tool.call", map[string]any{
-			"callId":           callID,
-			"taskId":           taskID,
-			"name":             name,
-			"input":            input,
-			"requiresApproval": t.RequiresApproval,
-		}, &result)
-		if err != nil {
-			return "", err
-		}
-		if !result.OK {
-			return "", fmt.Errorf("%s", result.Error)
-		}
-		return result.Content, nil
+		return d.execToolNoApprovalGate(taskID, callID, t, input)
 	}
 	return "", fmt.Errorf("unknown tool: %s", name)
 }
 
 func (d *Driver) registry() []tools.Tool {
 	registry := tools.Registry()
+	registry = append(registry, tools.IndexTools(d.Index)...)
+	if d.Embedder != nil && d.Index != nil {
+		registry = append(registry, tools.SemanticSearchTool(d.Embedder, d.Index.Vectors()))
+	}
 	if d.MCP != nil {
-		registry = append(registry, d.MCP.Tools()...)
+		// Sort MCP tools by name so the cache prefix (system + tools) is
+		// stable across turns even if MCP map iteration reorders them.
+		mcpTools := d.MCP.Tools()
+		sort.Slice(mcpTools, func(i, j int) bool { return mcpTools[i].Name < mcpTools[j].Name })
+		registry = append(registry, mcpTools...)
 	}
 	return registry
 }

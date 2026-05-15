@@ -11,6 +11,14 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.window.registerWebviewViewProvider(ChatPanel.viewType, panel)
   );
   context.subscriptions.push(
+    vscode.workspace.onDidSaveTextDocument((doc) => {
+      panel.notifyFilesInvalidated([doc.uri.fsPath]);
+    }),
+    vscode.workspace.onDidDeleteFiles((e) => {
+      panel.notifyFilesInvalidated(e.files.map((u) => u.fsPath));
+    }),
+  );
+  context.subscriptions.push(
     vscode.commands.registerCommand("loom.open", async () => {
       await vscode.commands.executeCommand("workbench.view.extension.loom");
     })

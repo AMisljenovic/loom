@@ -8,10 +8,13 @@ import (
 	"sync"
 
 	"github.com/your-org/loom/internal/conversation"
+	"github.com/your-org/loom/internal/embed"
+	"github.com/your-org/loom/internal/index"
 	"github.com/your-org/loom/internal/llm"
 	"github.com/your-org/loom/internal/loop"
 	"github.com/your-org/loom/internal/mcp"
 	"github.com/your-org/loom/internal/rpc"
+	"github.com/your-org/loom/internal/telemetry"
 )
 
 type taskCancelParams struct {
@@ -72,6 +75,44 @@ func main() {
 		_ = conn.Notify("mcp.serverStatus", status)
 	})
 	defer mcpManager.Close()
+	telemetryCtx, cancelTelemetry := context.WithCancel(context.Background())
+	defer cancelTelemetry()
+	telemetryClient := telemetry.NewFromEnv(telemetryCtx)
+
+	embedder, embedErr := embed.NewFromEnv()
+	if embedErr != nil {
+		log.Printf("embeddings disabled: %v", embedErr)
+	}
+
+	indexCtx, cancelIndex := context.WithCancel(context.Background())
+	defer cancelIndex()
+	var (
+		indexerMu sync.Mutex
+		indexer   *index.Indexer
+		vectors   *index.VectorStore
+	)
+	ensureIndexer := func(workspaceRoot string) *index.Indexer {
+		indexerMu.Lock()
+		defer indexerMu.Unlock()
+		if indexer != nil || workspaceRoot == "" {
+			return indexer
+		}
+		indexer = index.New(workspaceRoot, func(s index.Status) {
+			_ = conn.Notify("index.status", s)
+		})
+		if embedder != nil {
+			vs, err := index.OpenVectorStore(workspaceRoot, embedder.Dim())
+			if err != nil {
+				log.Printf("vector store: %v", err)
+			} else {
+				vectors = vs
+				indexer.WithEmbeddings(embedder, vs)
+			}
+		}
+		go indexer.Start(indexCtx)
+		return indexer
+	}
+	_ = vectors // closed implicitly when process exits
 	var taskMu sync.Mutex
 	taskCancels := make(map[string]context.CancelFunc)
 
@@ -90,6 +131,9 @@ func main() {
 			LLM:           providers.Get(),
 			Conversations: conversations,
 			MCP:           mcpManager,
+			Telemetry:     telemetryClient,
+			Index:         ensureIndexer(p.WorkspaceRoot),
+			Embedder:      embedder,
 		}
 		go func() {
 			defer func() {
@@ -98,6 +142,10 @@ func main() {
 				taskMu.Unlock()
 			}()
 			if err := d.Run(ctx, p); err != nil {
+				telemetryClient.Emit("error", map[string]any{
+					"where": "loop.Run",
+					"kind":  "task_error",
+				})
 				conn.Notify("task.done", map[string]any{
 					"taskId": p.TaskID,
 					"reason": "error",
@@ -169,6 +217,22 @@ func main() {
 			return map[string]any{"ok": false, "error": err.Error()}, nil
 		}
 		providers.Set(next)
+		return map[string]any{"ok": true}, nil
+	})
+
+	conn.Handle("index.invalidate", func(params json.RawMessage) (any, error) {
+		var p struct {
+			Paths []string `json:"paths"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		indexerMu.Lock()
+		idx := indexer
+		indexerMu.Unlock()
+		if idx != nil && len(p.Paths) > 0 {
+			idx.Invalidate(p.Paths)
+		}
 		return map[string]any{"ok": true}, nil
 	})
 

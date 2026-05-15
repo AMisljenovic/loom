@@ -148,6 +148,35 @@
             ]
           }
         },
+        "loom.telemetry.enabled": {
+          "type": "boolean",
+          "default": false,
+          "order": 55,
+          "markdownDescription": "**Loom: Telemetry**\n\nOpt-in anonymous usage telemetry (tool call counts, durations, token totals). No file contents or prompts are sent. Disabled by default."
+        },
+        "loom.telemetry.endpoint": {
+          "type": "string",
+          "default": "",
+          "order": 56,
+          "markdownDescription": "**Loom: Telemetry Endpoint**\n\nHTTPS endpoint that receives batched telemetry events. Leave blank to drop events locally (useful for verifying instrumentation without a backend)."
+        },
+        "loom.embeddings.provider": {
+          "type": "string",
+          "enum": [
+            "disabled",
+            "ollama",
+            "voyage"
+          ],
+          "default": "disabled",
+          "order": 70,
+          "markdownDescription": "**Loom: Embeddings Provider**\n\nProvider used to embed code for `semantic_search`. `ollama` uses a local Ollama instance; `voyage` uses Voyage AI (requires `VOYAGE_API_KEY`)."
+        },
+        "loom.embeddings.model": {
+          "type": "string",
+          "default": "",
+          "order": 71,
+          "markdownDescription": "**Loom: Embeddings Model**\n\nModel id for the embeddings provider (e.g. `nomic-embed-text` for Ollama, `voyage-code-3` for Voyage). Leave blank for the provider's default."
+        },
         "loom.modes": {
           "type": "array",
           "default": [],

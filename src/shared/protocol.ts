@@ -107,6 +107,33 @@ export interface ToolApprovalResult {
   approved: boolean;
 }
 
+export interface ToolApprovalItem {
+  callId: CallId;
+  name: string;
+  input: unknown;
+}
+
+export interface ToolApproveBatchParams {
+  taskId: TaskId;
+  batchId: string;
+  items: ToolApprovalItem[];
+}
+
+export interface ToolApproveBatchResult {
+  decisions: Record<string, "approved" | "rejected">;
+}
+
+export interface IndexStatusNotify {
+  state: "scanning" | "ready" | "updating" | "disabled";
+  filesScanned: number;
+  symbolsCount: number;
+  workspaceRoot?: string;
+}
+
+export interface IndexInvalidateParams {
+  paths: string[];
+}
+
 export interface TaskDone {
   taskId: TaskId;
   reason: "completed" | "cancelled" | "error";
@@ -115,12 +142,16 @@ export interface TaskDone {
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
 }
 
 export interface TaskUsage extends TokenUsage {
   taskId: TaskId;
   cumulativeInput: number;
   cumulativeOutput: number;
+  cumulativeCacheRead?: number;
+  cumulativeCacheWrite?: number;
   model: string;
 }
 
@@ -140,6 +171,7 @@ export interface LlmMessage {
 export interface ConversationUsage {
   inputTokens: number;
   outputTokens: number;
+  cacheReadTokens?: number;
   model?: string;
 }
 
@@ -157,6 +189,8 @@ export interface ConversationUpdated {
   messages: LlmMessage[];
   cumulativeInput: number;
   cumulativeOutput: number;
+  cumulativeCacheRead?: number;
+  cumulativeCacheWrite?: number;
   lastInputTokens: number;
   lastOutputTokens: number;
   model: string;
@@ -213,6 +247,7 @@ export type HostToWebview =
   | { type: "alwaysAllowList"; rules: AlwaysAllowRule[] }
   | { type: "usage"; usage: ConversationUsage }
   | { type: "mcpStatus"; status: McpServerStatus }
+  | { type: "indexStatus"; status: IndexStatusNotify }
   | { type: "summarized"; droppedCount: number }
   | { type: "error"; error: string }
   | { type: "modes"; modes: ModeDefinition[]; currentModeId: string };

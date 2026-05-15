@@ -36,6 +36,19 @@ change to a message type must be made on both sides.
 - **MCP stdio is separate.** External MCP servers use newline-delimited
   JSON-RPC in `agent/internal/mcp/`; do not reuse `agent/internal/rpc/`, which
   is only for Loom's internal LSP-framed bridge.
+- **Parallel tools are the default.** Within a turn the loop dispatches all
+  tool calls concurrently via `errgroup` (cap 8). Tools requiring approval
+  are batched into one `tool.approveBatch` RPC; do not reintroduce per-call
+  `tool.approve` for new Go-side tools. `RoleTool` messages are appended in
+  original call order so the LLM sees a deterministic transcript.
+- **Prompt prefix must stay byte-stable.** Anthropic and OpenAI prompt
+  caching both rely on the system-prompt + tools prefix being identical
+  across turns. When adding tools, ensure list order is deterministic (MCP
+  tools are sorted by name in `Driver.registry()`).
+- **Indexer is optional.** Tree-sitter symbol extraction is gated by
+  `//go:build cgo`. The non-CGO build path compiles fine and reports an
+  empty index; `find_symbol` / `find_references` return "no matches".
+  `semantic_search` only registers when `LOOM_EMBED_PROVIDER` is set.
 
 ## Where things live
 
@@ -52,6 +65,10 @@ change to a message type must be made on both sides.
 | MCP client/manager | `agent/internal/mcp/` |
 | Anthropic SDK wrapper | `agent/internal/llm/llm.go` |
 | Tool registry | `agent/internal/tools/tools.go` |
+| Workspace symbol index | `agent/internal/index/` (CGO tree-sitter when available, pure-Go fallback) |
+| Embeddings providers | `agent/internal/embed/` (Ollama, Voyage) |
+| Vector store (SQLite) | `agent/internal/index/vector.go` (writes to `<workspace>/.loom/index.db`) |
+| Opt-in telemetry | `agent/internal/telemetry/` |
 | Per-mode system prompts | `agent/internal/prompts/*.md` (embedded via `embed.FS`) |
 | Built-in mode definitions | `src/modes.ts` |
 | JSON-RPC codec (Go) | `agent/internal/rpc/rpc.go` |

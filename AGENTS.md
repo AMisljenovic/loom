@@ -69,6 +69,19 @@ No test suite yet. When adding one:
    `task.start`. Per-mode system prompts live in `agent/internal/prompts/*.md`
    and are embedded in the Go binary via `embed.FS`. The Go loop remains
    stateless with respect to mode configuration.
+8. Tools execute in parallel within a turn (errgroup, cap 8). Tools that
+   require approval are batched into one `tool.approveBatch` RPC. Do not
+   reintroduce per-call `tool.approve` for new Go-side tools. `RoleTool`
+   messages must be appended in original call order so the LLM transcript is
+   deterministic.
+9. Workspace symbol index lives in `agent/internal/index/`. Tree-sitter
+   extraction is gated by `//go:build cgo`; the non-CGO build returns empty
+   symbol lists so the agent still works. Embeddings live in
+   `agent/internal/embed/` (Ollama, Voyage). Vector store is SQLite at
+   `<workspace>/.loom/index.db` via pure-Go `modernc.org/sqlite`.
+10. Anthropic + OpenAI prompt caching depend on a byte-stable system-prompt +
+    tools prefix. MCP tools are sorted by name in `Driver.registry()`; keep
+    any new tool ordering deterministic.
 
 ## Pre-commit hook
 

@@ -64,11 +64,22 @@ func (p *anthropicProvider) Stream(
 		Messages:  antMsgs,
 	}
 	if systemPrompt != "" {
-		params.System = []anthropic.TextBlockParam{{Text: systemPrompt}}
+		params.System = []anthropic.TextBlockParam{{
+			Text:         systemPrompt,
+			CacheControl: anthropic.NewCacheControlEphemeralParam(),
+		}}
 	}
 	if len(antTools) > 0 {
+		// Cache through the end of the tool definitions. Anthropic caches the
+		// entire request prefix up to and including the marked block.
+		if last := antTools[len(antTools)-1].OfTool; last != nil {
+			last.CacheControl = anthropic.NewCacheControlEphemeralParam()
+		}
 		params.Tools = antTools
 	}
+	// Final two breakpoints: the prior user turn and the current user turn.
+	// Anthropic allows up to 4 cache_control breakpoints total.
+	markAnthropicUserBreakpoints(params.Messages)
 
 	stream := p.client.Messages.NewStreaming(ctx, params)
 	acc := anthropic.Message{}
@@ -111,8 +122,10 @@ func (p *anthropicProvider) Stream(
 	result := StreamResult{
 		StopReason: "end_turn",
 		Usage: TokenUsage{
-			InputTokens:  acc.Usage.InputTokens,
-			OutputTokens: acc.Usage.OutputTokens,
+			InputTokens:         acc.Usage.InputTokens,
+			OutputTokens:        acc.Usage.OutputTokens,
+			CacheCreationTokens: acc.Usage.CacheCreationInputTokens,
+			CacheReadTokens:     acc.Usage.CacheReadInputTokens,
 		},
 	}
 	if acc.StopReason == anthropic.StopReasonToolUse {
@@ -190,6 +203,32 @@ func toAnthropicMessages(messages []Message) ([]anthropic.MessageParam, error) {
 		}
 	}
 	return out, nil
+}
+
+// markAnthropicUserBreakpoints sets cache_control on the final content block
+// of the two most recent user-role messages. Combined with the system-prompt
+// and tools breakpoints, this consumes all four cache_control slots Anthropic
+// allows per request and grows the cached prefix turn-by-turn.
+func markAnthropicUserBreakpoints(msgs []anthropic.MessageParam) {
+	marked := 0
+	for i := len(msgs) - 1; i >= 0 && marked < 2; i-- {
+		if msgs[i].Role != anthropic.MessageParamRoleUser {
+			continue
+		}
+		content := msgs[i].Content
+		if len(content) == 0 {
+			continue
+		}
+		last := &content[len(content)-1]
+		switch {
+		case last.OfText != nil:
+			last.OfText.CacheControl = anthropic.NewCacheControlEphemeralParam()
+			marked++
+		case last.OfToolResult != nil:
+			last.OfToolResult.CacheControl = anthropic.NewCacheControlEphemeralParam()
+			marked++
+		}
+	}
 }
 
 func toAnthropicTools(tools []ToolDef) ([]anthropic.ToolUnionParam, error) {

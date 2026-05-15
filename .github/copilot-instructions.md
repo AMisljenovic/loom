@@ -28,6 +28,10 @@ newline-delimited JSON-RPC over stdio.
 - MCP client/manager → `agent/internal/mcp/`
 - LLM SDK code → `agent/internal/llm/` (isolated; the loop never imports the SDK)
 - Go-side tools → `agent/internal/tools/tools.go`
+- Workspace symbol index → `agent/internal/index/` (tree-sitter via CGO when available, pure-Go fallback otherwise)
+- Embeddings providers → `agent/internal/embed/` (Ollama, Voyage)
+- Vector store (SQLite) → `agent/internal/index/vector.go` (`<workspace>/.loom/index.db`)
+- Telemetry (opt-in) → `agent/internal/telemetry/`
 - TS-side tools → `src/tools/index.ts`
 - Wire types → `src/shared/protocol.ts` (mirror in Go)
 - Per-mode system prompts → `agent/internal/prompts/*.md` (embedded via `embed.FS`)
@@ -45,6 +49,12 @@ newline-delimited JSON-RPC over stdio.
    bulk counters are in-memory only. The Go loop remains serial.
 6. Keep the two stdio codecs separate: Loom's extension-agent bridge is
    LSP-framed, while MCP server stdio is newline-delimited JSON-RPC.
+7. Tools run in parallel within a turn (errgroup, cap 8). Approval-gated
+   tools are batched into one `tool.approveBatch` RPC — do not add per-call
+   `tool.approve` for new Go-side tools.
+8. Prompt caching (Anthropic cache_control, OpenAI automatic) depends on a
+   byte-stable system + tools prefix. Sort any newly-added dynamic tool
+   list deterministically.
 
 ## Pre-commit hook
 

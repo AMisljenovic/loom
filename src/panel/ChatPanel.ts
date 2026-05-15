@@ -1,8 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { AgentClient, LlmConfig } from "../agentClient";
+import { AgentClient, AgentSpawnExtras, LlmConfig } from "../agentClient";
 import { consumeHostApprovalPolicy } from "../approval/hostPolicy";
 import { loadDotEnv } from "../env";
 import { resolveMcpConfig } from "../mcpConfig";
@@ -22,6 +22,8 @@ import type {
   ReasoningEffort,
   TaskDone,
   TaskUsage,
+  ToolApproveBatchParams,
+  ToolApproveBatchResult,
   ToolCall,
   ToolResult,
   WebviewToHost,
@@ -221,6 +223,29 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     return true;
   }
 
+  private buildSpawnExtras(): AgentSpawnExtras {
+    const settings = vscode.workspace.getConfiguration("loom");
+    const telemetryEnabled = settings.get<boolean>("telemetry.enabled", false);
+    const telemetryEndpoint = settings.get<string>("telemetry.endpoint", "");
+    const embedProvider = settings.get<string>("embeddings.provider", "disabled");
+    const embedModel = settings.get<string>("embeddings.model", "");
+    const validProvider: "disabled" | "ollama" | "voyage" =
+      embedProvider === "ollama" || embedProvider === "voyage" ? embedProvider : "disabled";
+    return {
+      telemetry: {
+        enabled: telemetryEnabled,
+        endpoint: telemetryEndpoint || undefined,
+        machineIdHash: telemetryEnabled
+          ? createHash("sha256").update(vscode.env.machineId).digest("hex")
+          : undefined,
+      },
+      embeddings: {
+        provider: validProvider,
+        model: embedModel || undefined,
+      },
+    };
+  }
+
   private createAgent(workspaceRoot: string): AgentClient {
     return new AgentClient(this.ctx.extensionPath, {
       onDelta: ({ text }) => this.post({ type: "delta", text }),
@@ -310,13 +335,15 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         }
       },
       onToolApprove: async (call: ToolCall) => this.approveLocalTool(call),
+      onToolApproveBatch: async (params: ToolApproveBatchParams) => this.approveLocalToolBatch(params, workspaceRoot),
       onMcpStatus: (status) => this.handleMcpStatus(status),
       onDone: (done) => this.handleDone(done),
       onUsage: (usage) => this.handleUsage(usage),
       onConversationUpdated: (update) => this.handleConversationUpdated(update),
       onSummarized: ({ droppedCount }) => this.post({ type: "summarized", droppedCount }),
+      onIndexStatus: (status) => this.post({ type: "indexStatus", status }, false),
       onError: (error) => this.post({ type: "error", error }),
-    });
+    }, this.buildSpawnExtras());
   }
 
   private async handleDone({ taskId, reason }: TaskDone) {
@@ -339,6 +366,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       usage: {
         inputTokens: usage.cumulativeInput,
         outputTokens: usage.cumulativeOutput,
+        cacheReadTokens: usage.cumulativeCacheRead,
         model: usage.model,
       },
     });
@@ -352,6 +380,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.state.usage = {
       inputTokens: update.cumulativeInput,
       outputTokens: update.cumulativeOutput,
+      cacheReadTokens: update.cumulativeCacheRead,
       model: update.model,
     };
     this.state.lastInputTokens = update.lastInputTokens;
@@ -649,6 +678,56 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       workspaceRoot: this.workspaceRoot(),
       settingsServers: settings.get("mcp.servers"),
     });
+  }
+
+  public notifyFilesInvalidated(paths: string[]) {
+    if (!this.agent || paths.length === 0) {
+      return;
+    }
+    const workspaceRoot = this.workspaceRoot();
+    const rel = paths
+      .map((p) => {
+        if (!workspaceRoot) return undefined;
+        const r = path.relative(workspaceRoot, p);
+        return r.startsWith("..") ? undefined : r.split(path.sep).join("/");
+      })
+      .filter((r): r is string => !!r);
+    if (rel.length === 0) {
+      return;
+    }
+    void this.agent.invalidateIndex(rel).catch(() => { /* ignore */ });
+  }
+
+  private async approveLocalToolBatch(
+    params: ToolApproveBatchParams,
+    workspaceRoot: string,
+  ): Promise<ToolApproveBatchResult> {
+    const taskId = params.taskId;
+    const decisions: Record<string, "approved" | "rejected"> = {};
+    // Fan each item through the existing single-call approval flow. Items
+    // covered by host policy (autoApprove / alwaysAllow / session counters)
+    // resolve immediately; others show the existing per-tool approval card.
+    // The host-policy and UI dialog logic is shared with single-call flow,
+    // so behavior is consistent regardless of how the loop dispatches.
+    void workspaceRoot;
+    await Promise.all(
+      params.items.map(async (item) => {
+        const call: ToolCall = {
+          callId: item.callId,
+          taskId,
+          name: item.name,
+          input: item.input,
+          requiresApproval: true,
+        };
+        try {
+          const { approved } = await this.approveLocalTool(call);
+          decisions[item.callId] = approved ? "approved" : "rejected";
+        } catch {
+          decisions[item.callId] = "rejected";
+        }
+      }),
+    );
+    return { decisions };
   }
 
   private async approveLocalTool(call: ToolCall): Promise<{ approved: boolean }> {

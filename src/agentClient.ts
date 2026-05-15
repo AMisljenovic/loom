@@ -5,6 +5,7 @@ import { JsonRpc } from "./rpc";
 import type {
   ConfigUpdateParams,
   ConfigUpdateResult,
+  IndexStatusNotify,
   McpConfig,
   McpConfigureResult,
   McpServerStatus,
@@ -12,6 +13,8 @@ import type {
   MessageDelta,
   ToolCall,
   ToolApprovalResult,
+  ToolApproveBatchParams,
+  ToolApproveBatchResult,
   ToolResult,
   TaskDone,
   TaskUsage,
@@ -26,11 +29,13 @@ export interface AgentEvents {
   onToolResult: (r: ToolResult) => void;
   onToolCall: (c: ToolCall) => Promise<ToolResult>;
   onToolApprove: (c: ToolCall) => Promise<ToolApprovalResult>;
+  onToolApproveBatch: (params: ToolApproveBatchParams) => Promise<ToolApproveBatchResult>;
   onMcpStatus: (s: McpServerStatus) => void;
   onDone: (d: TaskDone) => void;
   onUsage: (u: TaskUsage) => void;
   onConversationUpdated: (u: ConversationUpdated) => void;
   onSummarized: (s: { taskId: string; conversationId: string; droppedCount: number }) => void;
+  onIndexStatus: (s: IndexStatusNotify) => void;
   onError: (err: string) => void;
 }
 
@@ -59,6 +64,20 @@ export type LlmConfig =
     };
   };
 
+export interface AgentSpawnExtras {
+  telemetry?: {
+    enabled: boolean;
+    endpoint?: string;
+    machineIdHash?: string;
+  };
+  embeddings?: {
+    provider: "disabled" | "ollama" | "voyage";
+    model?: string;
+    voyageApiKey?: string;
+    ollamaHost?: string;
+  };
+}
+
 export class AgentClient {
   private proc?: ChildProcessWithoutNullStreams;
   private rpc?: JsonRpc;
@@ -66,7 +85,8 @@ export class AgentClient {
 
   constructor(
     private readonly extensionPath: string,
-    private readonly events: AgentEvents
+    private readonly events: AgentEvents,
+    private readonly extras: AgentSpawnExtras = {},
   ) {}
 
   async start(cfg: LlmConfig) {
@@ -80,7 +100,7 @@ export class AgentClient {
 
     this.proc = spawn(binary, [], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ...buildSpawnEnv(cfg) },
+      env: { ...process.env, ...buildSpawnEnv(cfg), ...buildExtrasEnv(this.extras) },
     });
     this.proc.stderr.on("data", (d) => console.error("[agent]", d.toString()));
     this.proc.on("exit", (code) => {
@@ -94,6 +114,9 @@ export class AgentClient {
     });
     this.rpc.onRequest("tool.approve", async (params: ToolCall) => {
       return this.events.onToolApprove(params);
+    });
+    this.rpc.onRequest("tool.approveBatch", async (params: ToolApproveBatchParams) => {
+      return this.events.onToolApproveBatch(params);
     });
     this.rpc.onRequest("tool.localCall", (params: ToolCall) => {
       this.events.onToolStart(params);
@@ -122,6 +145,14 @@ export class AgentClient {
     this.rpc.onRequest("mcp.serverStatus", (params: McpServerStatus) => {
       this.events.onMcpStatus(params);
     });
+    this.rpc.onRequest("index.status", (params: IndexStatusNotify) => {
+      this.events.onIndexStatus(params);
+    });
+  }
+
+  async invalidateIndex(paths: string[]): Promise<void> {
+    if (!this.rpc || paths.length === 0) return;
+    await this.rpc.request("index.invalidate", { paths });
   }
 
   async startTask(params: TaskStartParams) {
@@ -182,6 +213,33 @@ export class AgentClient {
     const ext = platform === "win32" ? ".exe" : "";
     return path.join(this.extensionPath, "bin", `agent-${platform}-${arch}${ext}`);
   }
+}
+
+function buildExtrasEnv(extras: AgentSpawnExtras): Record<string, string> {
+  const env: Record<string, string> = {};
+  if (extras.telemetry?.enabled) {
+    env.LOOM_TELEMETRY_ENABLED = "1";
+    if (extras.telemetry.endpoint) {
+      env.LOOM_TELEMETRY_ENDPOINT = extras.telemetry.endpoint;
+    }
+    if (extras.telemetry.machineIdHash) {
+      env.LOOM_TELEMETRY_MACHINE_ID = extras.telemetry.machineIdHash;
+    }
+  }
+  const embed = extras.embeddings;
+  if (embed && embed.provider !== "disabled") {
+    env.LOOM_EMBED_PROVIDER = embed.provider;
+    if (embed.model) {
+      env.LOOM_EMBED_MODEL = embed.model;
+    }
+    if (embed.voyageApiKey) {
+      env.VOYAGE_API_KEY = embed.voyageApiKey;
+    }
+    if (embed.ollamaHost) {
+      env.OLLAMA_HOST = embed.ollamaHost;
+    }
+  }
+  return env;
 }
 
 function buildSpawnEnv(cfg: LlmConfig): Record<string, string> {

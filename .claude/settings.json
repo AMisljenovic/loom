@@ -23,7 +23,10 @@
       "Bash(go get *)",
       "Bash(npm run *)",
       "Bash(npx tsc *)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(go doc *)",
+      "Bash(where gcc *)",
+      "Bash(gcc --version)"
     ],
     "deny": [
       "Bash(rm -rf:*)",

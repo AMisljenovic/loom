@@ -166,8 +166,9 @@ func (p *openaiProvider) Stream(
 	result := StreamResult{
 		StopReason: "end_turn",
 		Usage: TokenUsage{
-			InputTokens:  acc.Usage.PromptTokens,
-			OutputTokens: acc.Usage.CompletionTokens,
+			InputTokens:     acc.Usage.PromptTokens,
+			OutputTokens:    acc.Usage.CompletionTokens,
+			CacheReadTokens: acc.Usage.PromptTokensDetails.CachedTokens,
 		},
 	}
 	switch finishReason {

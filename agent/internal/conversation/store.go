@@ -14,20 +14,24 @@ type Store struct {
 type Entry struct {
 	mu sync.Mutex
 
-	Messages          []llm.Message
-	CumulativeInput   int64
-	CumulativeOutput  int64
-	LastInputTokens   int64
-	LastOutputTokens  int64
-	LastSummarizedLen int
+	Messages             []llm.Message
+	CumulativeInput      int64
+	CumulativeOutput     int64
+	CumulativeCacheRead  int64
+	CumulativeCacheWrite int64
+	LastInputTokens      int64
+	LastOutputTokens     int64
+	LastSummarizedLen    int
 }
 
 type Snapshot struct {
-	Messages         []llm.Message `json:"messages"`
-	CumulativeInput  int64         `json:"cumulativeInput"`
-	CumulativeOutput int64         `json:"cumulativeOutput"`
-	LastInputTokens  int64         `json:"lastInputTokens"`
-	LastOutputTokens int64         `json:"lastOutputTokens"`
+	Messages             []llm.Message `json:"messages"`
+	CumulativeInput      int64         `json:"cumulativeInput"`
+	CumulativeOutput     int64         `json:"cumulativeOutput"`
+	CumulativeCacheRead  int64         `json:"cumulativeCacheRead,omitempty"`
+	CumulativeCacheWrite int64         `json:"cumulativeCacheWrite,omitempty"`
+	LastInputTokens      int64         `json:"lastInputTokens"`
+	LastOutputTokens     int64         `json:"lastOutputTokens"`
 }
 
 func NewStore() *Store {
@@ -58,6 +62,8 @@ func (s *Store) Hydrate(id string, snap Snapshot) {
 	entry.Messages = cloneMessages(snap.Messages)
 	entry.CumulativeInput = snap.CumulativeInput
 	entry.CumulativeOutput = snap.CumulativeOutput
+	entry.CumulativeCacheRead = snap.CumulativeCacheRead
+	entry.CumulativeCacheWrite = snap.CumulativeCacheWrite
 	entry.LastInputTokens = snap.LastInputTokens
 	entry.LastOutputTokens = snap.LastOutputTokens
 }
@@ -76,11 +82,13 @@ func (e *Entry) Append(messages ...llm.Message) {
 
 func (e *Entry) Snapshot() Snapshot {
 	return Snapshot{
-		Messages:         cloneMessages(e.Messages),
-		CumulativeInput:  e.CumulativeInput,
-		CumulativeOutput: e.CumulativeOutput,
-		LastInputTokens:  e.LastInputTokens,
-		LastOutputTokens: e.LastOutputTokens,
+		Messages:             cloneMessages(e.Messages),
+		CumulativeInput:      e.CumulativeInput,
+		CumulativeOutput:     e.CumulativeOutput,
+		CumulativeCacheRead:  e.CumulativeCacheRead,
+		CumulativeCacheWrite: e.CumulativeCacheWrite,
+		LastInputTokens:      e.LastInputTokens,
+		LastOutputTokens:     e.LastOutputTokens,
 	}
 }
 
@@ -89,6 +97,8 @@ func (e *Entry) AddUsage(usage llm.TokenUsage) {
 	e.LastOutputTokens = usage.OutputTokens
 	e.CumulativeInput += usage.InputTokens
 	e.CumulativeOutput += usage.OutputTokens
+	e.CumulativeCacheRead += usage.CacheReadTokens
+	e.CumulativeCacheWrite += usage.CacheCreationTokens
 }
 
 func cloneMessages(messages []llm.Message) []llm.Message {
