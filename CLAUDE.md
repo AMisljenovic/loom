@@ -140,6 +140,10 @@ multiple implementations.
 
 ## Things to be careful about
 
+- **Approval UX gate.** Approval short-circuits live host-side in
+  `src/panel/ChatPanel.ts`: `loom.autoApprove`, `loom.alwaysAllow`, and
+  in-memory session counters are checked before creating a pending approval.
+  The Go loop remains serial and unchanged.
 - **Cross-platform paths.** Use `filepath.Join` in Go and `path.join` from
   `node:path` in TS. Never string-concatenate paths.
 - **Binary permissions.** On Unix, the bundled Go binary needs the executable

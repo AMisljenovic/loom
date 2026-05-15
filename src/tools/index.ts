@@ -21,9 +21,10 @@ interface ApplyDiffInput {
   edits: ApplyDiffEdit[];
 }
 
-interface ExecError extends NodeJS.ErrnoException {
+interface ExecError {
   killed?: boolean;
   code?: number | string;
+  signal?: string | null;
 }
 
 export interface PreparedApplyDiff {

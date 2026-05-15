@@ -3,9 +3,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { AgentClient, LlmConfig } from "../agentClient";
+import { matchAlwaysAllow } from "../approval/rules";
 import { loadDotEnv } from "../env";
 import { secretKeyFor } from "../secrets";
 import type {
+  AlwaysAllowRule,
   ConversationState,
   ConversationUpdated,
   HostToWebview,
@@ -31,8 +33,11 @@ import {
   openDiffPreview,
   setDiffPreview,
 } from "../tools/diffPreview";
+import { createUnifiedDiff } from "../tools/unifiedDiff";
 
 const STATE_KEY = "loom.conversation";
+const AUTO_APPROVE_KEY = "loom.autoApprove";
+const ALWAYS_ALLOW_KEY = "loom.alwaysAllow";
 const LOCAL_BASE_URL = "http://localhost:11434/v1";
 const LOCAL_MODEL = "llama3.1";
 const ANTHROPIC_MODEL = "claude-opus-4-7";
@@ -44,8 +49,12 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private agent?: AgentClient;
   private pendingApprovals = new Map<string, (ok: boolean) => void>();
+  private pendingApprovalCalls = new Map<string, ToolCall>();
   private toolStartTimes = new Map<string, number>();
   private state: ConversationState;
+  private autoApprove = false;
+  private alwaysAllow: AlwaysAllowRule[] = [];
+  private sessionBulkCounters = new Map<string, number>();
   private persistTimer?: NodeJS.Timeout;
   private activeTaskId?: string;
   private busy = false;
@@ -56,6 +65,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
 
   constructor(private readonly ctx: vscode.ExtensionContext) {
     this.state = this.loadState();
+    this.autoApprove = this.ctx.workspaceState.get<boolean>(AUTO_APPROVE_KEY, false);
+    this.alwaysAllow = this.loadAlwaysAllow();
   }
 
   resolveWebviewView(view: vscode.WebviewView) {
@@ -105,8 +116,28 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     } else if (m.type === "setLlmConfig") {
       await this.applyLlmConfig(m.config);
     } else if (m.type === "approve") {
+      const call = this.pendingApprovalCalls.get(m.callId);
+      if (m.approved) {
+        if (m.rememberRule) {
+          this.addAlwaysAllowRule(m.rememberRule);
+        }
+        if (call && typeof m.sessionCount === "number" && m.sessionCount > 0) {
+          this.sessionBulkCounters.set(call.name, Math.floor(m.sessionCount));
+        }
+      }
       this.pendingApprovals.get(m.callId)?.(m.approved);
       this.pendingApprovals.delete(m.callId);
+      this.pendingApprovalCalls.delete(m.callId);
+    } else if (m.type === "setAutoApprove") {
+      this.autoApprove = m.enabled;
+      this.schedulePersist();
+      this.postAutoApprove();
+    } else if (m.type === "removeAlwaysAllowRule") {
+      this.alwaysAllow = this.alwaysAllow.filter((rule) => rule.id !== m.id);
+      this.schedulePersist();
+      this.postAlwaysAllowList();
+    } else if (m.type === "requestAlwaysAllowList") {
+      this.postAlwaysAllowList();
     }
   }
 
@@ -185,39 +216,50 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       onToolCall: async (call: ToolCall) => {
         this.toolStartTimes.set(call.callId, Date.now());
         if (call.requiresApproval) {
-          if (call.name === "apply_diff") {
-            try {
-              const plan = await prepareApplyDiff(call, { workspaceRoot });
-              cachePreparedApplyDiff(plan);
-              setDiffPreview(call.callId, plan.relPath, plan.before, plan.after);
-              await openDiffPreview(call.callId, plan.relPath);
-            } catch (e: unknown) {
-              const result = this.failedToolResult(call.callId, e);
-              this.post({ type: "toolCall", call });
+          if (this.isApprovedByHostPolicy(call)) {
+            this.post({ type: "toolCall", call: { ...call, requiresApproval: false } });
+          } else {
+            if (call.name === "apply_diff") {
+              try {
+                const plan = await prepareApplyDiff(call, { workspaceRoot });
+                cachePreparedApplyDiff(plan);
+                setDiffPreview(call.callId, plan.relPath, plan.before, plan.after);
+                await openDiffPreview(call.callId, plan.relPath);
+                this.post({
+                  type: "diffPreview",
+                  callId: call.callId,
+                  relPath: plan.relPath,
+                  unified: createUnifiedDiff(plan.relPath, plan.before, plan.after),
+                });
+              } catch (e: unknown) {
+                const result = this.failedToolResult(call.callId, e);
+                this.post({ type: "toolCall", call });
+                this.post({
+                  type: "toolResult",
+                  callId: call.callId,
+                  ok: false,
+                  summary: result.error ?? "",
+                  durationMs: this.finishToolTiming(call.callId),
+                });
+                return result;
+              }
+            }
+            this.post({ type: "toolCall", call });
+            const approved = await new Promise<boolean>((resolve) => {
+              this.pendingApprovals.set(call.callId, resolve);
+              this.pendingApprovalCalls.set(call.callId, call);
+            });
+            if (!approved) {
+              await this.cleanupApplyDiff(call.callId);
               this.post({
                 type: "toolResult",
                 callId: call.callId,
                 ok: false,
-                summary: result.error ?? "",
+                summary: "rejected",
                 durationMs: this.finishToolTiming(call.callId),
               });
-              return result;
+              return { callId: call.callId, ok: false, error: "user rejected" };
             }
-          }
-          this.post({ type: "toolCall", call });
-          const approved = await new Promise<boolean>((resolve) => {
-            this.pendingApprovals.set(call.callId, resolve);
-          });
-          if (!approved) {
-            await this.cleanupApplyDiff(call.callId);
-            this.post({
-              type: "toolResult",
-              callId: call.callId,
-              ok: false,
-              summary: "rejected",
-              durationMs: this.finishToolTiming(call.callId),
-            });
-            return { callId: call.callId, ok: false, error: "user rejected" };
           }
         } else {
           this.post({ type: "toolCall", call });
@@ -300,6 +342,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.hydratedConversationId = undefined;
     this.assistantIndex = null;
     this.pendingApprovals.clear();
+    this.pendingApprovalCalls.clear();
+    this.sessionBulkCounters.clear();
     this.toolStartTimes.clear();
     this.persistNow();
     await this.restoreWebview();
@@ -313,6 +357,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       usage: this.state.usage,
       llmConfig: await this.currentLlmConfigView(),
     }, false);
+    this.postAutoApprove();
+    this.postAlwaysAllowList();
   }
 
   private mirrorHostMessage(msg: HostToWebview) {
@@ -396,6 +442,17 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     return this.emptyState();
   }
 
+  private loadAlwaysAllow(): AlwaysAllowRule[] {
+    const saved = this.ctx.workspaceState.get<AlwaysAllowRule[]>(ALWAYS_ALLOW_KEY, []);
+    if (!Array.isArray(saved)) {
+      return [];
+    }
+    return saved.flatMap((rule) => {
+      const normalized = this.normalizeAlwaysAllowRule(rule);
+      return normalized ? [normalized] : [];
+    });
+  }
+
   private emptyState(): ConversationState {
     return {
       conversationId: randomUUID(),
@@ -417,7 +474,78 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       clearTimeout(this.persistTimer);
       this.persistTimer = undefined;
     }
-    void this.ctx.workspaceState.update(STATE_KEY, this.state);
+    void Promise.all([
+      this.ctx.workspaceState.update(STATE_KEY, this.state),
+      this.ctx.workspaceState.update(AUTO_APPROVE_KEY, this.autoApprove),
+      this.ctx.workspaceState.update(ALWAYS_ALLOW_KEY, this.alwaysAllow),
+    ]);
+  }
+
+  private isApprovedByHostPolicy(call: ToolCall): boolean {
+    if (this.autoApprove || matchAlwaysAllow(call, this.alwaysAllow)) {
+      return true;
+    }
+    const remaining = this.sessionBulkCounters.get(call.name) ?? 0;
+    if (remaining <= 0) {
+      return false;
+    }
+    if (remaining === 1) {
+      this.sessionBulkCounters.delete(call.name);
+    } else {
+      this.sessionBulkCounters.set(call.name, remaining - 1);
+    }
+    return true;
+  }
+
+  private addAlwaysAllowRule(rule: AlwaysAllowRule) {
+    const normalized = this.normalizeAlwaysAllowRule(rule);
+    if (!normalized) {
+      return;
+    }
+    const exists = this.alwaysAllow.some((existing) => (
+      existing.tool === normalized.tool &&
+      existing.scope === normalized.scope &&
+      existing.pattern === normalized.pattern &&
+      existing.argKey === normalized.argKey
+    ));
+    if (!exists) {
+      this.alwaysAllow = [...this.alwaysAllow, normalized];
+      this.schedulePersist();
+    }
+    this.postAlwaysAllowList();
+  }
+
+  private normalizeAlwaysAllowRule(rule: AlwaysAllowRule): AlwaysAllowRule | undefined {
+    if (!rule || typeof rule.tool !== "string" || !rule.tool) {
+      return undefined;
+    }
+    if (rule.scope !== "tool" && rule.scope !== "argPattern") {
+      return undefined;
+    }
+    if (rule.scope === "argPattern") {
+      if (typeof rule.pattern !== "string" || !rule.pattern) {
+        return undefined;
+      }
+      if (rule.argKey !== "command" && rule.argKey !== "path") {
+        return undefined;
+      }
+    }
+    return {
+      id: typeof rule.id === "string" && rule.id ? rule.id : randomUUID(),
+      tool: rule.tool,
+      scope: rule.scope,
+      pattern: rule.scope === "argPattern" ? rule.pattern : undefined,
+      argKey: rule.scope === "argPattern" ? rule.argKey : undefined,
+      createdAt: typeof rule.createdAt === "number" ? rule.createdAt : Date.now(),
+    };
+  }
+
+  private postAutoApprove() {
+    this.post({ type: "autoApprove", enabled: this.autoApprove }, false);
+  }
+
+  private postAlwaysAllowList() {
+    this.post({ type: "alwaysAllowList", rules: this.alwaysAllow }, false);
   }
 
   private finishToolTiming(callId: string): number {

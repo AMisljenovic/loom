@@ -35,6 +35,9 @@ Layers communicate via JSON-RPC 2.0 over stdio with LSP-style framing.
 2. VS Code API calls stay in TypeScript.
 3. Webview has no business logic.
 4. Any wire-protocol change updates both sides in the same commit.
+5. Approval UX shortcuts live host-side in `src/panel/ChatPanel.ts`.
+   `loom.autoApprove` and `loom.alwaysAllow` are workspaceState keys; session
+   bulk counters are in-memory only. The Go loop remains serial.
 
 ## Pre-commit hook
 

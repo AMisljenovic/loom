@@ -54,6 +54,15 @@ export interface ToolCall {
   requiresApproval: boolean;
 }
 
+export type AlwaysAllowRule = {
+  id: string;
+  tool: string;
+  scope: "tool" | "argPattern";
+  pattern?: string;
+  argKey?: "command" | "path";
+  createdAt: number;
+};
+
 export interface ToolResult {
   callId: CallId;
   ok: boolean;
@@ -149,16 +158,22 @@ export type WebviewToHost =
   | { type: "newConversation" }
   | { type: "setLlmConfig"; config: Omit<LlmConfigView, "hasApiKey"> }
   | { type: "setSecret"; provider: Exclude<LlmProvider, "local">; apiKey: string }
-  | { type: "approve"; callId: CallId; approved: boolean };
+  | { type: "approve"; callId: CallId; approved: boolean; rememberRule?: AlwaysAllowRule; sessionCount?: number }
+  | { type: "setAutoApprove"; enabled: boolean }
+  | { type: "removeAlwaysAllowRule"; id: string }
+  | { type: "requestAlwaysAllowList" };
 
 export type HostToWebview =
   | { type: "delta"; text: string }
   | { type: "toolCall"; call: ToolCall }
+  | { type: "diffPreview"; callId: CallId; relPath: string; unified: string }
   | { type: "toolProgress"; callId: CallId; chunk: string }
   | { type: "toolResult"; callId: CallId; ok: boolean; summary: string; durationMs: number }
   | { type: "done"; reason: TaskDone["reason"] }
   | { type: "restore"; messages: Msg[]; conversationId: string; usage: ConversationUsage; llmConfig: LlmConfigView }
   | { type: "llmConfig"; llmConfig: LlmConfigView }
+  | { type: "autoApprove"; enabled: boolean }
+  | { type: "alwaysAllowList"; rules: AlwaysAllowRule[] }
   | { type: "usage"; usage: ConversationUsage }
   | { type: "summarized"; droppedCount: number }
   | { type: "error"; error: string };

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import type {
+  AlwaysAllowRule,
   ConversationUsage,
   LlmConfigView,
   LlmProvider,
@@ -8,6 +9,7 @@ import type {
   ToolStatus,
 } from "../../src/shared/protocol";
 import { estimateCost } from "../../src/shared/pricing";
+import { InlineDiff } from "./components/InlineDiff";
 
 // VS Code webview API handle
 declare function acquireVsCodeApi(): { postMessage: (m: unknown) => void };
@@ -31,12 +33,21 @@ const modelOptions: Record<Exclude<LlmProvider, "local">, string[]> = {
   openai: ["gpt-5", "gpt-4o", "o3-mini"],
 };
 
+interface ApproveOptions {
+  rememberRule?: AlwaysAllowRule;
+  sessionCount?: number;
+}
+
 export function App() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [usage, setUsage] = useState<ConversationUsage>({ inputTokens: 0, outputTokens: 0 });
   const [llmConfig, setLlmConfig] = useState<LlmConfigView>(defaultLlmConfig);
+  const [autoApprove, setAutoApprove] = useState(false);
+  const [alwaysAllowRules, setAlwaysAllowRules] = useState<AlwaysAllowRule[]>([]);
+  const [pendingDiffs, setPendingDiffs] = useState<Map<string, string>>(() => new Map());
+  const [showAlwaysAllow, setShowAlwaysAllow] = useState(false);
   const assistantRef = useRef<number | null>(null);
   const interruptQueuedRef = useRef(false);
 
@@ -48,6 +59,7 @@ export function App() {
         setMessages(m.messages ?? []);
         setUsage(m.usage ?? { inputTokens: 0, outputTokens: 0 });
         setLlmConfig(m.llmConfig ?? defaultLlmConfig);
+        setPendingDiffs(new Map());
         setBusy(false);
         assistantRef.current = null;
         interruptQueuedRef.current = false;
@@ -60,6 +72,30 @@ export function App() {
       if (m.type === "usage") {
         setUsage(m.usage);
         return;
+      }
+      if (m.type === "autoApprove") {
+        setAutoApprove(Boolean(m.enabled));
+        return;
+      }
+      if (m.type === "alwaysAllowList") {
+        setAlwaysAllowRules(Array.isArray(m.rules) ? m.rules : []);
+        return;
+      }
+      if (m.type === "diffPreview") {
+        setPendingDiffs((prev) => {
+          const next = new Map(prev);
+          next.set(m.callId, m.unified);
+          return next;
+        });
+        return;
+      }
+      if (m.type === "toolResult") {
+        setPendingDiffs((prev) => {
+          if (!prev.has(m.callId)) return prev;
+          const next = new Map(prev);
+          next.delete(m.callId);
+          return next;
+        });
       }
       setMessages((prev) => {
         const next = [...prev];
@@ -147,8 +183,8 @@ export function App() {
     vscode.postMessage({ type: "newConversation" });
   };
 
-  const approve = (callId: string, approved: boolean) => {
-    vscode.postMessage({ type: "approve", callId, approved });
+  const approve = (callId: string, approved: boolean, options: ApproveOptions = {}) => {
+    vscode.postMessage({ type: "approve", callId, approved, ...options });
     setMessages((prev) =>
       prev.map((m) =>
         m.role === "tool" && m.callId === callId
@@ -156,6 +192,15 @@ export function App() {
           : m
       )
     );
+  };
+
+  const setAutoApproveEnabled = (enabled: boolean) => {
+    vscode.postMessage({ type: "setAutoApprove", enabled });
+  };
+
+  const openAlwaysAllow = () => {
+    vscode.postMessage({ type: "requestAlwaysAllowList" });
+    setShowAlwaysAllow(true);
   };
 
   const toggleTool = (callId: string) => {
@@ -173,6 +218,9 @@ export function App() {
       <div style={styles.toolbar}>
         <button onClick={newConversation} disabled={busy} style={styles.secondaryButton}>New conversation</button>
       </div>
+      {autoApprove && (
+        <div style={styles.autoApproveBanner}>Auto-approve is on. Approval-gated tools will run without prompting.</div>
+      )}
       <div style={styles.transcript}>
         {messages.map((m, i) => (
           <div key={i} style={styles.message}>
@@ -181,6 +229,7 @@ export function App() {
             {m.role === "tool" && (
               <ToolCard
                 msg={m}
+                diffPreview={pendingDiffs.get(m.callId)}
                 onApprove={approve}
                 onToggle={toggleTool}
               />
@@ -188,7 +237,20 @@ export function App() {
           </div>
         ))}
       </div>
-      <StatusStrip usage={usage} llmConfig={llmConfig} />
+      {showAlwaysAllow && (
+        <AlwaysAllowSettings
+          rules={alwaysAllowRules}
+          onClose={() => setShowAlwaysAllow(false)}
+          onRemove={(id) => vscode.postMessage({ type: "removeAlwaysAllowRule", id })}
+        />
+      )}
+      <StatusStrip
+        usage={usage}
+        llmConfig={llmConfig}
+        autoApprove={autoApprove}
+        onAutoApproveChange={setAutoApproveEnabled}
+        onShowAlwaysAllow={openAlwaysAllow}
+      />
       <div style={styles.composer}>
         <input
           value={input}
@@ -203,11 +265,31 @@ export function App() {
   );
 }
 
-function StatusStrip({ usage, llmConfig }: { usage: ConversationUsage; llmConfig: LlmConfigView }) {
+function StatusStrip({
+  usage,
+  llmConfig,
+  autoApprove,
+  onAutoApproveChange,
+  onShowAlwaysAllow,
+}: {
+  usage: ConversationUsage;
+  llmConfig: LlmConfigView;
+  autoApprove: boolean;
+  onAutoApproveChange: (enabled: boolean) => void;
+  onShowAlwaysAllow: () => void;
+}) {
   const cost = estimateCost(usage);
   return (
     <div style={styles.statusStrip}>
       <ProviderPicker config={llmConfig} />
+      <button
+        type="button"
+        onClick={() => onAutoApproveChange(!autoApprove)}
+        style={autoApprove ? styles.autoApproveToggleOn : styles.statusButton}
+      >
+        Auto-approve
+      </button>
+      <button type="button" onClick={onShowAlwaysAllow} style={styles.statusButton}>Allowlist</button>
       <span>↑ {formatTokens(usage.inputTokens)}</span>
       <span>↓ {formatTokens(usage.outputTokens)}</span>
       {cost !== undefined && <span>≈ ${cost.toFixed(cost < 0.01 ? 4 : 2)}</span>}
@@ -360,11 +442,13 @@ function ProviderPicker({ config }: { config: LlmConfigView }) {
 
 function ToolCard({
   msg,
+  diffPreview,
   onApprove,
   onToggle,
 }: {
   msg: Extract<Msg, { role: "tool" }>;
-  onApprove: (callId: string, approved: boolean) => void;
+  diffPreview?: string;
+  onApprove: (callId: string, approved: boolean, options?: ApproveOptions) => void;
   onToggle: (callId: string) => void;
 }) {
   const outputRef = useRef<HTMLPreElement | null>(null);
@@ -376,6 +460,8 @@ function ToolCard({
   }, [msg.output, msg.status]);
 
   const duration = msg.durationMs === undefined ? "" : ` · ${formatDuration(msg.durationMs)}`;
+  const command = inputString(msg.input, "command");
+  const relPath = inputString(msg.input, "path");
 
   return (
     <div style={styles.toolCard}>
@@ -396,19 +482,70 @@ function ToolCard({
         </span>
         <strong>{msg.name}</strong>
         <span style={styles.status}> · {msg.status}{duration}</span>
-        {msg.status === "pending" && (
-          <span style={styles.approvals}>
-            <button onClick={(e) => { e.stopPropagation(); onApprove(msg.callId, true); }}>Approve</button>
-            <button onClick={(e) => { e.stopPropagation(); onApprove(msg.callId, false); }}>Reject</button>
-          </span>
-        )}
       </div>
+      {msg.status === "pending" && (
+        <div style={styles.approvalPanel}>
+          {diffPreview && <InlineDiff unified={diffPreview} />}
+          <div style={styles.approvals}>
+            <button onClick={() => onApprove(msg.callId, true)}>Approve</button>
+            <button onClick={() => onApprove(msg.callId, false)}>Reject</button>
+            <button onClick={() => onApprove(msg.callId, true, { rememberRule: makeToolRule(msg.name) })}>
+              Always allow {msg.name}
+            </button>
+            {msg.name === "run_command" && command && (
+              <button onClick={() => onApprove(msg.callId, true, { rememberRule: makeCommandRule(command) })}>
+                Always allow {shortLabel(command)}
+              </button>
+            )}
+            {isPathTool(msg.name) && relPath && (
+              <button onClick={() => onApprove(msg.callId, true, { rememberRule: makePathRule(msg.name, relPath) })}>
+                Always allow path
+              </button>
+            )}
+            <button onClick={() => onApprove(msg.callId, true, { sessionCount: 5 })}>Approve next 5</button>
+          </div>
+        </div>
+      )}
       {msg.expanded && (
         <div style={styles.toolBody}>
           <div style={styles.sectionLabel}>Input:</div>
           <pre style={styles.pre}>{JSON.stringify(msg.input ?? {}, null, 2)}</pre>
           <div style={styles.sectionLabel}>Output:</div>
           <pre ref={outputRef} style={styles.outputPre}>{msg.output ?? ""}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AlwaysAllowSettings({
+  rules,
+  onClose,
+  onRemove,
+}: {
+  rules: AlwaysAllowRule[];
+  onClose: () => void;
+  onRemove: (id: string) => void;
+}) {
+  return (
+    <div style={styles.settingsPanel}>
+      <div style={styles.settingsHeader}>
+        <strong>Always allow</strong>
+        <button type="button" onClick={onClose}>Close</button>
+      </div>
+      {rules.length === 0 ? (
+        <div style={styles.emptySettings}>No rules yet.</div>
+      ) : (
+        <div style={styles.ruleList}>
+          {rules.map((rule) => (
+            <div key={rule.id} style={styles.ruleRow}>
+              <div style={styles.ruleText}>
+                <strong>{rule.tool}</strong>
+                <span>{formatRule(rule)}</span>
+              </div>
+              <button type="button" onClick={() => onRemove(rule.id)}>Delete</button>
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -453,6 +590,71 @@ function defaultModelFor(provider: LlmProvider): string {
   return "claude-opus-4-7";
 }
 
+function makeToolRule(tool: string): AlwaysAllowRule {
+  return {
+    id: makeId(),
+    tool,
+    scope: "tool",
+    createdAt: Date.now(),
+  };
+}
+
+function makeCommandRule(command: string): AlwaysAllowRule {
+  return {
+    id: makeId(),
+    tool: "run_command",
+    scope: "argPattern",
+    argKey: "command",
+    pattern: `^${escapeRegex(command)}$`,
+    createdAt: Date.now(),
+  };
+}
+
+function makePathRule(tool: string, relPath: string): AlwaysAllowRule {
+  return {
+    id: makeId(),
+    tool,
+    scope: "argPattern",
+    argKey: "path",
+    pattern: relPath,
+    createdAt: Date.now(),
+  };
+}
+
+function formatRule(rule: AlwaysAllowRule): string {
+  if (rule.scope === "tool") {
+    return "Any invocation";
+  }
+  if (rule.argKey === "command") {
+    return `Command matches ${rule.pattern ?? ""}`;
+  }
+  return `Path matches ${rule.pattern ?? ""}`;
+}
+
+function inputString(input: unknown, key: "command" | "path"): string | undefined {
+  if (typeof input !== "object" || input === null || !(key in input)) {
+    return undefined;
+  }
+  const value = (input as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function isPathTool(tool: string): boolean {
+  return tool === "apply_diff" || tool === "read_file" || tool === "list_dir" || tool === "search";
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function shortLabel(value: string): string {
+  return value.length > 32 ? `${value.slice(0, 29)}...` : value;
+}
+
+function makeId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 const styles: Record<string, React.CSSProperties> = {
   shell: {
     display: "flex",
@@ -470,6 +672,14 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "flex-end",
     gap: 6,
     padding: "8px 8px 0",
+  },
+  autoApproveBanner: {
+    margin: "8px 8px 0",
+    padding: "6px 8px",
+    color: "var(--vscode-errorForeground)",
+    background: "var(--vscode-inputValidation-errorBackground)",
+    border: "1px solid var(--vscode-inputValidation-errorBorder)",
+    fontWeight: 600,
   },
   secondaryButton: {
     font: "inherit",
@@ -503,9 +713,15 @@ const styles: Record<string, React.CSSProperties> = {
     color: "var(--vscode-descriptionForeground)",
   },
   approvals: {
-    marginLeft: "auto",
-    display: "inline-flex",
+    display: "flex",
+    flexWrap: "wrap",
     gap: 4,
+  },
+  approvalPanel: {
+    display: "grid",
+    gap: 8,
+    borderTop: "1px solid var(--vscode-panel-border)",
+    padding: 8,
   },
   toolBody: {
     borderTop: "1px solid var(--vscode-panel-border)",
@@ -550,6 +766,55 @@ const styles: Record<string, React.CSSProperties> = {
     color: "var(--vscode-descriptionForeground)",
     borderTop: "1px solid var(--vscode-panel-border)",
     fontSize: 12,
+  },
+  statusButton: {
+    border: "1px solid var(--vscode-button-border, var(--vscode-panel-border))",
+    color: "var(--vscode-button-secondaryForeground)",
+    background: "var(--vscode-button-secondaryBackground)",
+    font: "inherit",
+    padding: "2px 8px",
+    cursor: "pointer",
+  },
+  autoApproveToggleOn: {
+    border: "1px solid var(--vscode-inputValidation-errorBorder)",
+    color: "var(--vscode-button-foreground)",
+    background: "var(--vscode-errorForeground)",
+    font: "inherit",
+    padding: "2px 8px",
+    cursor: "pointer",
+  },
+  settingsPanel: {
+    margin: "0 8px 8px",
+    padding: 8,
+    border: "1px solid var(--vscode-panel-border)",
+    background: "var(--vscode-editor-background)",
+  },
+  settingsHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  emptySettings: {
+    color: "var(--vscode-descriptionForeground)",
+  },
+  ruleList: {
+    display: "grid",
+    gap: 6,
+  },
+  ruleRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    padding: 6,
+    border: "1px solid var(--vscode-panel-border)",
+  },
+  ruleText: {
+    display: "grid",
+    gap: 2,
+    minWidth: 0,
+    overflowWrap: "anywhere",
   },
   providerPicker: {
     position: "relative",

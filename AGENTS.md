@@ -59,6 +59,9 @@ No test suite yet. When adding one:
 2. VS Code API calls live in TypeScript only. Go asks via RPC.
 3. Shared types in `src/shared/protocol.ts`. Mirror in Go.
 4. Webview has no business logic — it renders and forwards messages.
+5. Approval UX shortcuts live host-side in `src/panel/ChatPanel.ts`.
+   `loom.autoApprove` and `loom.alwaysAllow` are workspaceState keys; session
+   bulk counters are in-memory only. The Go loop remains serial.
 
 ## Pre-commit hook
 
