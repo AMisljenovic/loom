@@ -26,7 +26,10 @@
       "Bash(node -e ' *)",
       "Bash(go doc *)",
       "Bash(where gcc *)",
-      "Bash(gcc --version)"
+      "Bash(gcc --version)",
+      "Bash(ls -la \"C:\\\\\\\\Projects\\\\\\\\loom\\\\\\\\loom-design\\\\\\\\\")",
+      "Bash(wc -l \"C:\\\\\\\\Projects\\\\\\\\loom\\\\\\\\loom-design\\\\\\\\styles.css\")",
+      "Bash(grep -n \"class\\\\|function\\\\|const.*=\" \"C:\\\\\\\\Projects\\\\\\\\loom\\\\\\\\loom-design\\\\\\\\panel.jsx\")"
     ],
     "deny": [
       "Bash(rm -rf:*)",

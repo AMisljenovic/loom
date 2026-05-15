@@ -218,6 +218,40 @@
               }
             }
           }
+        },
+        "loom.ui.accent": {
+          "type": "string",
+          "enum": [
+            "indigo",
+            "violet",
+            "coral",
+            "teal",
+            "gold"
+          ],
+          "default": "indigo",
+          "order": 80,
+          "markdownDescription": "**Loom: UI Accent** — Accent color palette."
+        },
+        "loom.ui.density": {
+          "type": "string",
+          "enum": [
+            "compact",
+            "comfortable"
+          ],
+          "default": "comfortable",
+          "order": 81,
+          "markdownDescription": "**Loom: UI Density** — Row height and padding density."
+        },
+        "loom.ui.themeBias": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "dark",
+            "light"
+          ],
+          "default": "auto",
+          "order": 82,
+          "markdownDescription": "**Loom: UI Theme Bias** — Force dark or light token set, or auto-detect from VS Code theme."
         }
       }
     }

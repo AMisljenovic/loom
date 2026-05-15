@@ -56,6 +56,12 @@ change to a message type must be made on both sides.
   was already keyed by `conversationId`, so multi-session is a TS+webview
   feature; do not add list-management logic in Go. Switching sessions
   cancels any in-flight task before swapping to avoid stream cross-talk.
+- **Webview theming is data-attribute driven.** Three VS Code settings
+  (`loom.ui.accent`, `loom.ui.density`, `loom.ui.themeBias`) are read by
+  `ChatPanel.ts` and posted as a `themeConfig` `HostToWebview` message. The
+  webview sets `data-accent`/`data-density`/`data-theme` on the root element;
+  CSS token overrides cascade from there. VS Code theme class
+  (`.vscode-dark`/`.vscode-light`) handles chrome; Loom owns accent+density.
 
 ## Where things live
 
@@ -80,6 +86,11 @@ change to a message type must be made on both sides.
 | Built-in mode definitions | `src/modes.ts` |
 | JSON-RPC codec (Go) | `agent/internal/rpc/rpc.go` |
 | Chat UI | `webview-ui/src/App.tsx` |
+| Webview design tokens | `webview-ui/src/styles/tokens.css` |
+| Webview component styles | `webview-ui/src/styles/components.css` |
+| Webview brand assets | `webview-ui/src/brand/` (`LoomMark`, icons) |
+| Webview components | `webview-ui/src/components/` (thread, toolbar, composer, popovers, conversations) |
+| Webview utilities | `webview-ui/src/util/` (`format`, `rules`, `parseToolOutput`) |
 
 ## Build, run, test
 

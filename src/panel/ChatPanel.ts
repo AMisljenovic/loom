@@ -20,6 +20,8 @@ import type {
   ModeDefinition,
   Msg,
   ReasoningEffort,
+  SessionMeta,
+  SessionsIndex,
   TaskDone,
   TaskUsage,
   ToolApproveBatchParams,
@@ -42,10 +44,13 @@ import {
 } from "../tools/diffPreview";
 import { createUnifiedDiff } from "../tools/unifiedDiff";
 
-const STATE_KEY = "loom.conversation";
+const LEGACY_STATE_KEY = "loom.conversation";
+const SESSIONS_INDEX_KEY = "loom.sessions.index";
+const SESSION_BODY_PREFIX = "loom.sessions.body:";
 const AUTO_APPROVE_KEY = "loom.autoApprove";
 const ALWAYS_ALLOW_KEY = "loom.alwaysAllow";
 const MODE_KEY = "loom.currentMode";
+const MAX_TITLE_LEN = 60;
 const LOCAL_BASE_URL = "http://localhost:11434/v1";
 const LOCAL_MODEL = "llama3.1";
 const ANTHROPIC_MODEL = "claude-opus-4-7";
@@ -60,6 +65,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private pendingApprovalCalls = new Map<string, ToolCall>();
   private toolStartTimes = new Map<string, number>();
   private state: ConversationState;
+  private sessions: SessionsIndex;
   private autoApprove = false;
   private alwaysAllow: AlwaysAllowRule[] = [];
   private currentModeId: string = "code";
@@ -73,7 +79,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private webviewMessageQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly ctx: vscode.ExtensionContext) {
-    this.state = this.loadState();
+    this.sessions = this.loadSessions();
+    this.state = this.loadSessionBody(this.sessions.activeId);
     this.autoApprove = this.ctx.workspaceState.get<boolean>(AUTO_APPROVE_KEY, false);
     this.alwaysAllow = this.loadAlwaysAllow();
     this.currentModeId = this.ctx.workspaceState.get<string>(MODE_KEY) ?? "code";
@@ -81,7 +88,11 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       if (e.affectsConfiguration("loom.mcp")) {
         this.configureMcpSoon();
       }
+      if (e.affectsConfiguration("loom.ui")) {
+        this.postThemeConfig();
+      }
     }));
+    this.ctx.subscriptions.push(vscode.window.onDidChangeActiveColorTheme(() => this.postThemeConfig()));
     const watcher = vscode.workspace.createFileSystemWatcher("**/.vscode/mcp.json");
     watcher.onDidCreate(() => this.configureMcpSoon(), this, this.ctx.subscriptions);
     watcher.onDidChange(() => this.configureMcpSoon(), this, this.ctx.subscriptions);
@@ -128,6 +139,18 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       }
     } else if (m.type === "newConversation") {
       await this.newConversation();
+    } else if (m.type === "switchSession") {
+      await this.switchSession(m.conversationId);
+    } else if (m.type === "archiveSession") {
+      await this.archiveSession(m.conversationId, true);
+    } else if (m.type === "unarchiveSession") {
+      await this.archiveSession(m.conversationId, false);
+    } else if (m.type === "togglePinSession") {
+      this.togglePinSession(m.conversationId);
+    } else if (m.type === "renameSession") {
+      this.renameSession(m.conversationId, m.title);
+    } else if (m.type === "deleteSession") {
+      await this.deleteSession(m.conversationId);
     } else if (m.type === "setSecret") {
       if (m.apiKey.trim()) {
         await this.ctx.secrets.store(secretKeyFor(m.provider), m.apiKey.trim());
@@ -393,9 +416,11 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     if (this.busy) {
       return;
     }
-    const oldConversationId = this.state.conversationId;
-    await this.agent?.resetConversation(oldConversationId);
-    this.state = this.emptyState();
+    // Persist the current session before swapping it out.
+    this.persistNow();
+    // Create a fresh session and make it active.
+    const meta = this.seedSessionInPlace(this.sessions);
+    this.state = this.loadSessionBody(meta.conversationId);
     this.hydratedConversationId = undefined;
     this.assistantIndex = null;
     this.pendingApprovals.clear();
@@ -404,6 +429,102 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.toolStartTimes.clear();
     this.persistNow();
     await this.restoreWebview();
+    this.postSessions();
+  }
+
+  private async switchSession(targetId: string) {
+    if (targetId === this.state.conversationId) {
+      return;
+    }
+    if (!this.sessions.sessions[targetId]) {
+      return;
+    }
+    // Cancel any in-flight task before swapping; deltas would otherwise
+    // stream into the wrong session.
+    if (this.busy && this.activeTaskId) {
+      await this.agent?.cancel(this.activeTaskId);
+    }
+    this.persistNow();
+    this.sessions.activeId = targetId;
+    // Move target to front of recent order (if not pinned, ordering reflects
+    // last touched; the webview still groups Pinned/Recent independently).
+    this.sessions.order = [targetId, ...this.sessions.order.filter((id) => id !== targetId)];
+    this.state = this.loadSessionBody(targetId);
+    this.hydratedConversationId = undefined;
+    this.assistantIndex = null;
+    this.pendingApprovals.clear();
+    this.pendingApprovalCalls.clear();
+    this.sessionBulkCounters.clear();
+    this.toolStartTimes.clear();
+    this.persistNow();
+    await this.restoreWebview();
+    this.postSessions();
+  }
+
+  private async archiveSession(id: string, archived: boolean) {
+    const meta = this.sessions.sessions[id];
+    if (!meta) return;
+    meta.state = archived ? "archived" : "active";
+    if (archived) {
+      meta.pinned = false;
+      if (id === this.state.conversationId) {
+        // Pick a fallback active session: most recent non-archived; if none,
+        // seed a fresh one.
+        const fallback = this.sessions.order
+          .filter((x) => x !== id)
+          .find((x) => this.sessions.sessions[x]?.state === "active");
+        if (fallback) {
+          await this.switchSession(fallback);
+        } else {
+          await this.newConversation();
+        }
+        // switchSession/newConversation already called postSessions/persistNow.
+        return;
+      }
+    }
+    this.persistNow();
+    this.postSessions();
+  }
+
+  private togglePinSession(id: string) {
+    const meta = this.sessions.sessions[id];
+    if (!meta) return;
+    meta.pinned = !meta.pinned;
+    if (meta.pinned) {
+      meta.state = "active"; // pinning auto-unarchives
+    }
+    this.persistNow();
+    this.postSessions();
+  }
+
+  private renameSession(id: string, title: string) {
+    const meta = this.sessions.sessions[id];
+    if (!meta) return;
+    meta.title = title.trim().slice(0, MAX_TITLE_LEN);
+    this.persistNow();
+    this.postSessions();
+  }
+
+  private async deleteSession(id: string) {
+    if (!this.sessions.sessions[id]) return;
+    delete this.sessions.sessions[id];
+    this.sessions.order = this.sessions.order.filter((x) => x !== id);
+    void this.ctx.workspaceState.update(this.bodyKey(id), undefined);
+    if (id === this.state.conversationId) {
+      const fallback = this.sessions.order.find((x) => this.sessions.sessions[x]?.state === "active");
+      if (fallback) {
+        await this.switchSession(fallback);
+      } else {
+        await this.newConversation();
+      }
+      return;
+    }
+    this.persistNow();
+    this.postSessions();
+  }
+
+  private postSessions() {
+    this.post({ type: "sessions", index: this.sessions }, false);
   }
 
   private async restoreWebview() {
@@ -414,9 +535,19 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       usage: this.state.usage,
       llmConfig: await this.currentLlmConfigView(),
     }, false);
+    this.postSessions();
     this.postAutoApprove();
     this.postAlwaysAllowList();
     this.postModes();
+    this.postThemeConfig();
+  }
+
+  private postThemeConfig() {
+    const settings = vscode.workspace.getConfiguration("loom");
+    const accent = settings.get<string>("ui.accent", "indigo");
+    const density = settings.get<string>("ui.density", "comfortable");
+    const themeBias = settings.get<string>("ui.themeBias", "auto");
+    this.post({ type: "themeConfig", accent, density, themeBias }, false);
   }
 
   private mirrorHostMessage(msg: HostToWebview) {
@@ -485,8 +616,66 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     }
   }
 
-  private loadState(): ConversationState {
-    const saved = this.ctx.workspaceState.get<ConversationState>(STATE_KEY);
+  private loadSessions(): SessionsIndex {
+    const saved = this.ctx.workspaceState.get<SessionsIndex>(SESSIONS_INDEX_KEY);
+    if (saved && saved.version === 1 && saved.activeId && saved.sessions) {
+      // Defensive: make sure activeId is in the map.
+      if (!saved.sessions[saved.activeId]) {
+        const firstActive = saved.order.find((id) => saved.sessions[id]?.state === "active");
+        saved.activeId = firstActive ?? this.seedSessionInPlace(saved).conversationId;
+      }
+      return saved;
+    }
+    // Migration: lift legacy single-conversation state into a session row.
+    const legacy = this.ctx.workspaceState.get<ConversationState>(LEGACY_STATE_KEY);
+    if (legacy?.conversationId && Array.isArray(legacy.messages) && Array.isArray(legacy.llmMessages)) {
+      const meta = this.makeMeta(legacy.conversationId, deriveTitleFromMessages(legacy.messages), legacy.messages.length);
+      const index: SessionsIndex = {
+        version: 1,
+        activeId: legacy.conversationId,
+        order: [legacy.conversationId],
+        sessions: { [legacy.conversationId]: meta },
+      };
+      // Persist the legacy body under its new key and clear the old key.
+      void this.ctx.workspaceState.update(this.bodyKey(legacy.conversationId), legacy);
+      void this.ctx.workspaceState.update(LEGACY_STATE_KEY, undefined);
+      void this.ctx.workspaceState.update(SESSIONS_INDEX_KEY, index);
+      return index;
+    }
+    // Fresh install: seed one empty active session.
+    const fresh: SessionsIndex = { version: 1, activeId: "", order: [], sessions: {} };
+    this.seedSessionInPlace(fresh);
+    return fresh;
+  }
+
+  private seedSessionInPlace(index: SessionsIndex): SessionMeta {
+    const id = randomUUID();
+    const meta = this.makeMeta(id, "", 0);
+    index.sessions[id] = meta;
+    index.order = [id, ...index.order.filter((x) => x !== id)];
+    index.activeId = id;
+    return meta;
+  }
+
+  private makeMeta(id: string, title: string, messageCount: number): SessionMeta {
+    const now = Date.now();
+    return {
+      conversationId: id,
+      title,
+      createdAt: now,
+      updatedAt: now,
+      messageCount,
+      state: "active",
+      pinned: false,
+    };
+  }
+
+  private bodyKey(id: string): string {
+    return SESSION_BODY_PREFIX + id;
+  }
+
+  private loadSessionBody(id: string): ConversationState {
+    const saved = this.ctx.workspaceState.get<ConversationState>(this.bodyKey(id));
     if (saved?.conversationId && Array.isArray(saved.messages) && Array.isArray(saved.llmMessages)) {
       return {
         conversationId: saved.conversationId,
@@ -497,7 +686,12 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         lastOutputTokens: saved.lastOutputTokens,
       };
     }
-    return this.emptyState();
+    return {
+      conversationId: id,
+      messages: [],
+      llmMessages: [],
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
   }
 
   private loadAlwaysAllow(): AlwaysAllowRule[] {
@@ -532,8 +726,21 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       clearTimeout(this.persistTimer);
       this.persistTimer = undefined;
     }
+    // Update meta from current state.
+    const meta = this.sessions.sessions[this.state.conversationId];
+    if (meta) {
+      meta.updatedAt = Date.now();
+      meta.messageCount = this.state.messages.length;
+      if (!meta.title) {
+        const derived = deriveTitleFromMessages(this.state.messages);
+        if (derived) {
+          meta.title = derived;
+        }
+      }
+    }
     void Promise.all([
-      this.ctx.workspaceState.update(STATE_KEY, this.state),
+      this.ctx.workspaceState.update(this.bodyKey(this.state.conversationId), this.state),
+      this.ctx.workspaceState.update(SESSIONS_INDEX_KEY, this.sessions),
       this.ctx.workspaceState.update(AUTO_APPROVE_KEY, this.autoApprove),
       this.ctx.workspaceState.update(ALWAYS_ALLOW_KEY, this.alwaysAllow),
       this.ctx.workspaceState.update(MODE_KEY, this.currentModeId),
@@ -946,4 +1153,16 @@ function mergeToolOutput(current: string | undefined, summary: string): string {
   const trimmed = summary.trim();
   if (!trimmed || current.includes(trimmed)) return current;
   return `${current.trimEnd()}\n\n${summary}`;
+}
+
+function deriveTitleFromMessages(messages: Msg[]): string {
+  const firstUser = messages.find((m) => m.role === "user");
+  if (!firstUser || firstUser.role !== "user") return "";
+  return firstLine(firstUser.text, MAX_TITLE_LEN);
+}
+
+function firstLine(text: string, max: number): string {
+  const line = text.trim().split(/\r?\n/, 1)[0] ?? "";
+  if (line.length <= max) return line;
+  return line.slice(0, max - 1).trimEnd() + "…";
 }

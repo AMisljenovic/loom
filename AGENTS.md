@@ -86,6 +86,11 @@ No test suite yet. When adding one:
     per-session body live in `workspaceState`; the Go side is unchanged
     (already keyed by `conversationId`). Switching sessions must cancel any
     in-flight task first or streamed deltas land in the wrong session.
+12. Webview theming uses `data-accent` / `data-density` / `data-theme`
+    attributes on the root element, driven by a `themeConfig` `HostToWebview`
+    message. `ChatPanel.ts` reads `loom.ui.accent`, `loom.ui.density`, and
+    `loom.ui.themeBias` from VS Code settings and re-posts on
+    `onDidChangeConfiguration` and `onDidChangeActiveColorTheme`.
 
 ## Pre-commit hook
 

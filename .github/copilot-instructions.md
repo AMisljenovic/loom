@@ -37,6 +37,10 @@ newline-delimited JSON-RPC over stdio.
 - Per-mode system prompts → `agent/internal/prompts/*.md` (embedded via `embed.FS`)
 - Built-in mode definitions → `src/modes.ts`
 - Webview UI → `webview-ui/src/`
+- Webview design tokens → `webview-ui/src/styles/tokens.css` + `components.css`
+- Webview brand assets → `webview-ui/src/brand/` (LoomMark, icons)
+- Webview components → `webview-ui/src/components/` (thread, toolbar, composer, popovers, conversations)
+- Webview utilities → `webview-ui/src/util/` (format, rules, parseToolOutput)
 
 ## Rules
 

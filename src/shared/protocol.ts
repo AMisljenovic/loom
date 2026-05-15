@@ -221,11 +221,34 @@ export type Msg =
     expanded?: boolean;
   };
 
+export interface SessionMeta {
+  conversationId: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
+  state: "active" | "archived";
+  pinned: boolean;
+}
+
+export interface SessionsIndex {
+  version: 1;
+  activeId: string;
+  order: string[];
+  sessions: Record<string, SessionMeta>;
+}
+
 export type WebviewToHost =
   | { type: "ready" }
   | { type: "submit"; prompt: string }
   | { type: "cancel" }
   | { type: "newConversation" }
+  | { type: "switchSession"; conversationId: string }
+  | { type: "archiveSession"; conversationId: string }
+  | { type: "unarchiveSession"; conversationId: string }
+  | { type: "togglePinSession"; conversationId: string }
+  | { type: "renameSession"; conversationId: string; title: string }
+  | { type: "deleteSession"; conversationId: string }
   | { type: "setLlmConfig"; config: Omit<LlmConfigView, "hasApiKey"> }
   | { type: "setSecret"; provider: Exclude<LlmProvider, "local">; apiKey: string }
   | { type: "approve"; callId: CallId; approved: boolean; rememberRule?: AlwaysAllowRule; sessionCount?: number }
@@ -248,6 +271,8 @@ export type HostToWebview =
   | { type: "usage"; usage: ConversationUsage }
   | { type: "mcpStatus"; status: McpServerStatus }
   | { type: "indexStatus"; status: IndexStatusNotify }
+  | { type: "sessions"; index: SessionsIndex }
   | { type: "summarized"; droppedCount: number }
   | { type: "error"; error: string }
-  | { type: "modes"; modes: ModeDefinition[]; currentModeId: string };
+  | { type: "modes"; modes: ModeDefinition[]; currentModeId: string }
+  | { type: "themeConfig"; accent: string; density: string; themeBias: string };

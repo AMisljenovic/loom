@@ -1,0 +1,269 @@
+/* ============================================================
+   LOOM — design tokens (VS Code-aware)
+   ============================================================ */
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+:root {
+    /* Typography — delegate to VS Code's system fonts */
+    --font-sans: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+    --font-mono: var(--vscode-editor-font-family, "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+
+    /* Type scale */
+    --t-xs: 10.5px;
+    --t-sm: 11.5px;
+    --t-md: 12.5px;
+    --t-base: 13px;
+    --t-lg: 14px;
+    --t-xl: 16px;
+    --t-2xl: 18px;
+
+    /* Spacing */
+    --s-1: 4px;
+    --s-2: 6px;
+    --s-3: 8px;
+    --s-4: 10px;
+    --s-5: 12px;
+    --s-6: 14px;
+    --s-7: 16px;
+    --s-8: 20px;
+    --s-9: 24px;
+    --s-10: 32px;
+
+    /* Radii */
+    --r-1: 4px;
+    --r-2: 6px;
+    --r-3: 8px;
+    --r-4: 10px;
+    --r-5: 12px;
+    --r-full: 999px;
+
+    /* Motion */
+    --ease: cubic-bezier(0.32, 0.72, 0.24, 1);
+    --quick: 120ms var(--ease);
+    --med: 220ms var(--ease);
+
+    /* Accent — indigo default */
+    --accent: #6D7BFF;
+    --accent-2: #8B6DFF;
+    --accent-warm: #E07856;
+    --accent-fg: #FFFFFF;
+    --accent-soft: rgba(109, 123, 255, 0.13);
+    --accent-ring: rgba(109, 123, 255, 0.35);
+
+    /* Status */
+    --ok: #5DBA8B;
+    --warn: #D9A858;
+    --danger: #E37862;
+    --danger-soft: rgba(227, 120, 98, 0.12);
+
+    /* Density defaults (comfortable) */
+    --row-h: 32px;
+    --pad-x: 12px;
+    --pad-y: 8px;
+
+    /* ---- Semantic tokens mapped to VS Code vars ---- */
+    --text: var(--vscode-foreground, #E7E9EE);
+    --text-strong: var(--vscode-editor-foreground, #F4F5F8);
+    --text-muted: var(--vscode-descriptionForeground, #8B92A1);
+    --text-faint: var(--vscode-disabledForeground, #5B6271);
+    --text-dim: #3F4552;
+
+    --bg: var(--vscode-editor-background, #0B0D11);
+    --bg-2: var(--vscode-sideBar-background, #0F1217);
+    --surface: var(--vscode-input-background, #14171D);
+    --surface-2: var(--vscode-editorWidget-background, #1A1E26);
+    --surface-3: var(--vscode-editorHoverWidget-background, #20242D);
+
+    --hover: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.04));
+    --hover-strong: rgba(255, 255, 255, 0.07);
+
+    --border: var(--vscode-panel-border, #232831);
+    --border-strong: var(--vscode-widget-border, #2D333F);
+    --border-faint: rgba(255, 255, 255, 0.06);
+
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.4), 0 2px 4px rgba(0, 0, 0, 0.3);
+    --shadow-3: 0 24px 48px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.4);
+
+    --code-bg: var(--vscode-textCodeBlock-background, #0E1116);
+    --code-add: rgba(93, 186, 139, 0.10);
+    --code-add-line: rgba(93, 186, 139, 0.7);
+    --code-del: rgba(227, 120, 98, 0.10);
+    --code-del-line: rgba(227, 120, 98, 0.7);
+}
+
+/* Light theme — VS Code body class OR explicit data-theme */
+.vscode-light,
+[data-theme="light"] {
+    --text-dim: #B5BAC5;
+    --border-faint: rgba(0, 0, 0, 0.05);
+    --hover-strong: rgba(0, 0, 0, 0.06);
+    --shadow-1: 0 1px 2px rgba(10, 14, 22, 0.06);
+    --shadow-2: 0 8px 24px rgba(10, 14, 22, 0.07), 0 2px 4px rgba(10, 14, 22, 0.04);
+    --shadow-3: 0 24px 48px rgba(10, 14, 22, 0.12), 0 4px 12px rgba(10, 14, 22, 0.05);
+    --code-add: rgba(60, 150, 110, 0.10);
+    --code-add-line: rgba(60, 150, 110, 0.75);
+    --code-del: rgba(210, 95, 75, 0.10);
+    --code-del-line: rgba(210, 95, 75, 0.75);
+    --accent: #4D5BE0;
+    --accent-2: #6E4FE0;
+    --accent-soft: rgba(77, 91, 224, 0.10);
+    --accent-ring: rgba(77, 91, 224, 0.30);
+}
+
+/* High Contrast */
+.vscode-high-contrast,
+[data-theme="high-contrast"] {
+    --border: var(--vscode-contrastBorder, #6FC3DF);
+    --border-strong: var(--vscode-contrastBorder, #6FC3DF);
+    --accent: var(--vscode-focusBorder, #6FC3DF);
+    --accent-soft: transparent;
+    --accent-ring: var(--vscode-focusBorder, #6FC3DF);
+}
+
+/* ---- Accent palette overrides ---- */
+[data-accent="indigo"] {
+    --accent: #6D7BFF;
+    --accent-2: #8B6DFF;
+    --accent-soft: rgba(109, 123, 255, 0.13);
+    --accent-ring: rgba(109, 123, 255, 0.35);
+}
+
+[data-accent="violet"] {
+    --accent: #8B6DFF;
+    --accent-2: #C160E0;
+    --accent-soft: rgba(139, 109, 255, 0.13);
+    --accent-ring: rgba(139, 109, 255, 0.35);
+}
+
+[data-accent="coral"] {
+    --accent: #E07856;
+    --accent-2: #E0A656;
+    --accent-soft: rgba(224, 120, 86, 0.13);
+    --accent-ring: rgba(224, 120, 86, 0.35);
+}
+
+[data-accent="teal"] {
+    --accent: #46B5A8;
+    --accent-2: #5BB87C;
+    --accent-soft: rgba(70, 181, 168, 0.13);
+    --accent-ring: rgba(70, 181, 168, 0.35);
+}
+
+[data-accent="gold"] {
+    --accent: #C7A155;
+    --accent-2: #D98F55;
+    --accent-soft: rgba(199, 161, 85, 0.13);
+    --accent-ring: rgba(199, 161, 85, 0.35);
+}
+
+.vscode-light[data-accent="indigo"],
+[data-theme="light"][data-accent="indigo"] {
+    --accent: #4D5BE0;
+    --accent-2: #6E4FE0;
+    --accent-soft: rgba(77, 91, 224, 0.10);
+    --accent-ring: rgba(77, 91, 224, 0.30);
+}
+
+.vscode-light[data-accent="violet"],
+[data-theme="light"][data-accent="violet"] {
+    --accent: #6E4FE0;
+    --accent-2: #9A3EC4;
+    --accent-soft: rgba(110, 79, 224, 0.10);
+    --accent-ring: rgba(110, 79, 224, 0.30);
+}
+
+.vscode-light[data-accent="coral"],
+[data-theme="light"][data-accent="coral"] {
+    --accent: #C95A36;
+    --accent-2: #C9853C;
+    --accent-soft: rgba(201, 90, 54, 0.10);
+    --accent-ring: rgba(201, 90, 54, 0.30);
+}
+
+.vscode-light[data-accent="teal"],
+[data-theme="light"][data-accent="teal"] {
+    --accent: #2D9788;
+    --accent-2: #469A5F;
+    --accent-soft: rgba(45, 151, 136, 0.10);
+    --accent-ring: rgba(45, 151, 136, 0.30);
+}
+
+.vscode-light[data-accent="gold"],
+[data-theme="light"][data-accent="gold"] {
+    --accent: #A37D2D;
+    --accent-2: #B26E2C;
+    --accent-soft: rgba(163, 125, 45, 0.10);
+    --accent-ring: rgba(163, 125, 45, 0.30);
+}
+
+/* ---- Density ---- */
+[data-density="compact"] {
+    --row-h: 26px;
+    --pad-x: 10px;
+    --pad-y: 6px;
+}
+
+[data-density="comfortable"] {
+    --row-h: 32px;
+    --pad-x: 12px;
+    --pad-y: 8px;
+}
+
+/* ---- Global resets ---- */
+html,
+body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: var(--t-base);
+    -webkit-font-smoothing: antialiased;
+}
+
+button {
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    background: transparent;
+    border: 0;
+    padding: 0;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[role="button"]:focus-visible {
+    outline: 2px solid var(--accent-ring);
+    outline-offset: 1px;
+    border-radius: var(--r-2);
+}
+
+input,
+select,
+textarea {
+    font: inherit;
+    color: inherit;
+}
+
+::selection {
+    background: var(--accent-soft);
+    color: var(--text-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+    }
+}
