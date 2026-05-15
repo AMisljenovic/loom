@@ -118,6 +118,27 @@
           "default": "llama3.1",
           "order": 41,
           "markdownDescription": "**Loom: Local**\n\nLocal OpenAI-compatible model id."
+        },
+        "loom.mcp.servers": {
+          "type": "object",
+          "default": {},
+          "order": 50,
+          "markdownDescription": "**Loom: MCP Servers**\n\nModel Context Protocol stdio servers keyed by server name. Example: `{ \"fs\": { \"command\": \"npx\", \"args\": [\"-y\", \"@modelcontextprotocol/server-filesystem\", \"${workspaceFolder}\"] } }`.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "command": { "type": "string" },
+              "args": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": { "type": "string" }
+              }
+            },
+            "required": ["command"]
+          }
         }
       }
     }

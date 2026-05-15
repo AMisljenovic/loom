@@ -15,6 +15,7 @@ across three runtimes:
 3. **Go agent binary** (`agent/`) — spawned as a child process by the extension.
    Owns the agent loop, LLM client, and pure-Go tools (file I/O, search).
    Communicates with the extension over stdio using JSON-RPC 2.0 (LSP framing).
+   It also owns MCP client connections to external stdio MCP servers.
 
 The wire protocol between layers is defined in `src/shared/protocol.ts`. Any
 change to a message type must be made on both sides.
@@ -30,7 +31,11 @@ change to a message type must be made on both sides.
 - **Shared types live in `src/shared/protocol.ts`.** Mirror them in Go when
   needed; do not invent parallel type systems.
 - **JSON-RPC framing is LSP-style** (`Content-Length` header + body). Do not
-  switch to newline-delimited JSON without updating both sides.
+  switch the extension-agent bridge to newline-delimited JSON without updating
+  both sides.
+- **MCP stdio is separate.** External MCP servers use newline-delimited
+  JSON-RPC in `agent/internal/mcp/`; do not reuse `agent/internal/rpc/`, which
+  is only for Loom's internal LSP-framed bridge.
 
 ## Where things live
 
@@ -44,6 +49,7 @@ change to a message type must be made on both sides.
 | Wire types | `src/shared/protocol.ts` |
 | Agent entrypoint | `agent/cmd/agent/main.go` |
 | Agent loop | `agent/internal/loop/loop.go` |
+| MCP client/manager | `agent/internal/mcp/` |
 | Anthropic SDK wrapper | `agent/internal/llm/llm.go` |
 | Tool registry | `agent/internal/tools/tools.go` |
 | JSON-RPC codec (Go) | `agent/internal/rpc/rpc.go` |
@@ -151,7 +157,9 @@ multiple implementations.
 - **Webview CSP.** The webview has a strict Content-Security-Policy. Do not
   add inline scripts; bundle them through Vite.
 - **stdio buffering.** Use the framed protocol; do not write plain JSON to
-  stdout from Go or it will desync the codec. Use `stderr` for logging.
+  stdout from Go or it will desync the extension-agent codec. Use `stderr` for
+  logging. MCP child processes are the exception: their own stdio protocol is
+  newline-delimited JSON and is handled only inside `agent/internal/mcp/`.
 
 ## When you finish a task
 

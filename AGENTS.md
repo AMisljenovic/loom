@@ -62,6 +62,9 @@ No test suite yet. When adding one:
 5. Approval UX shortcuts live host-side in `src/panel/ChatPanel.ts`.
    `loom.autoApprove` and `loom.alwaysAllow` are workspaceState keys; session
    bulk counters are in-memory only. The Go loop remains serial.
+6. Loom's internal extension-agent RPC uses LSP `Content-Length` framing.
+   External MCP stdio servers use newline-delimited JSON-RPC in
+   `agent/internal/mcp/`; do not mix these codecs.
 
 ## Pre-commit hook
 

@@ -33,6 +33,28 @@ export type ConfigUpdateResult =
   | { ok: true }
   | { ok: false; error: string };
 
+export interface McpServerConfig {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+export interface McpConfig {
+  servers: Record<string, McpServerConfig>;
+}
+
+export type McpConfigureResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+export interface McpServerStatus {
+  server: string;
+  state: "starting" | "ready" | "stopped" | "crashed" | "error" | "failed";
+  message?: string;
+  toolCount?: number;
+  attempt?: number;
+}
+
 export interface TaskStartParams {
   taskId: TaskId;
   conversationId: string;
@@ -69,6 +91,10 @@ export interface ToolResult {
   content?: string;
   error?: string;
   durationMs?: number;
+}
+
+export interface ToolApprovalResult {
+  approved: boolean;
 }
 
 export interface TaskDone {
@@ -175,5 +201,6 @@ export type HostToWebview =
   | { type: "autoApprove"; enabled: boolean }
   | { type: "alwaysAllowList"; rules: AlwaysAllowRule[] }
   | { type: "usage"; usage: ConversationUsage }
+  | { type: "mcpStatus"; status: McpServerStatus }
   | { type: "summarized"; droppedCount: number }
   | { type: "error"; error: string };

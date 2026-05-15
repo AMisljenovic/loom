@@ -10,6 +10,7 @@ import (
 
 	"github.com/your-org/loom/internal/conversation"
 	"github.com/your-org/loom/internal/llm"
+	"github.com/your-org/loom/internal/mcp"
 	"github.com/your-org/loom/internal/rpc"
 	"github.com/your-org/loom/internal/tools"
 )
@@ -21,6 +22,7 @@ type Driver struct {
 	Model         string
 	LLM           llm.Provider
 	Conversations *conversation.Store
+	MCP           *mcp.Manager
 }
 
 type StartParams struct {
@@ -35,7 +37,12 @@ func (d *Driver) Run(ctx context.Context, p StartParams) error {
 	if p.ConversationID == "" {
 		p.ConversationID = "default"
 	}
-	registry := tools.Registry()
+	if d.MCP != nil {
+		if err := d.MCP.Start(ctx); err != nil {
+			return fmt.Errorf("start MCP servers: %w", err)
+		}
+	}
+	registry := d.registry()
 	toolDefs := buildToolDefs(registry)
 	systemPrompt := buildSystemPrompt(registry, p.WorkspaceRoot)
 
@@ -231,18 +238,37 @@ func (h *streamHandler) finish() (string, []llm.ToolCall) {
 
 // ExecTool dispatches a tool either locally or via the TS host.
 func (d *Driver) ExecTool(taskID, callID, name string, input json.RawMessage) (string, error) {
-	for _, t := range tools.Registry() {
+	for _, t := range d.registry() {
 		if t.Name != name {
 			continue
 		}
 		if t.LocalExec != nil {
-			_ = d.Conn.Notify("tool.localCall", map[string]any{
-				"callId":           callID,
-				"taskId":           taskID,
-				"name":             name,
-				"input":            input,
-				"requiresApproval": false,
-			})
+			if t.RequiresApproval {
+				var approval struct {
+					Approved bool `json:"approved"`
+				}
+				err := d.Conn.Request("tool.approve", map[string]any{
+					"callId":           callID,
+					"taskId":           taskID,
+					"name":             name,
+					"input":            input,
+					"requiresApproval": true,
+				}, &approval)
+				if err != nil {
+					return "", err
+				}
+				if !approval.Approved {
+					return "", fmt.Errorf("user rejected")
+				}
+			} else {
+				_ = d.Conn.Notify("tool.localCall", map[string]any{
+					"callId":           callID,
+					"taskId":           taskID,
+					"name":             name,
+					"input":            input,
+					"requiresApproval": false,
+				})
+			}
 			startedAt := time.Now()
 			result, err := t.LocalExec(d.WorkspaceRoot, input)
 			if err != nil {
@@ -284,6 +310,14 @@ func (d *Driver) ExecTool(taskID, callID, name string, input json.RawMessage) (s
 		return result.Content, nil
 	}
 	return "", fmt.Errorf("unknown tool: %s", name)
+}
+
+func (d *Driver) registry() []tools.Tool {
+	registry := tools.Registry()
+	if d.MCP != nil {
+		registry = append(registry, d.MCP.Tools()...)
+	}
+	return registry
 }
 
 func buildToolDefs(registry []tools.Tool) []llm.ToolDef {

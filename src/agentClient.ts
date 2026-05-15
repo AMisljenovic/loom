@@ -5,9 +5,13 @@ import { JsonRpc } from "./rpc";
 import type {
   ConfigUpdateParams,
   ConfigUpdateResult,
+  McpConfig,
+  McpConfigureResult,
+  McpServerStatus,
   TaskStartParams,
   MessageDelta,
   ToolCall,
+  ToolApprovalResult,
   ToolResult,
   TaskDone,
   TaskUsage,
@@ -21,6 +25,8 @@ export interface AgentEvents {
   onToolStart: (c: ToolCall) => void;
   onToolResult: (r: ToolResult) => void;
   onToolCall: (c: ToolCall) => Promise<ToolResult>;
+  onToolApprove: (c: ToolCall) => Promise<ToolApprovalResult>;
+  onMcpStatus: (s: McpServerStatus) => void;
   onDone: (d: TaskDone) => void;
   onUsage: (u: TaskUsage) => void;
   onConversationUpdated: (u: ConversationUpdated) => void;
@@ -86,6 +92,9 @@ export class AgentClient {
       const result = await this.events.onToolCall(params);
       return result;
     });
+    this.rpc.onRequest("tool.approve", async (params: ToolCall) => {
+      return this.events.onToolApprove(params);
+    });
     this.rpc.onRequest("tool.localCall", (params: ToolCall) => {
       this.events.onToolStart(params);
     });
@@ -109,6 +118,9 @@ export class AgentClient {
     });
     this.rpc.onRequest("task.summarized", (params: { taskId: string; conversationId: string; droppedCount: number }) => {
       this.events.onSummarized(params);
+    });
+    this.rpc.onRequest("mcp.serverStatus", (params: McpServerStatus) => {
+      this.events.onMcpStatus(params);
     });
   }
 
@@ -147,6 +159,14 @@ export class AgentClient {
   async updateConfig(cfg: LlmConfig): Promise<void> {
     if (!this.rpc) throw new Error("agent not started");
     const result = await this.rpc.request<ConfigUpdateResult>("config.update", toAgentConfig(cfg));
+    if (!result.ok) {
+      throw new Error(result.error);
+    }
+  }
+
+  async configureMcp(cfg: McpConfig): Promise<void> {
+    if (!this.rpc) throw new Error("agent not started");
+    const result = await this.rpc.request<McpConfigureResult>("mcp.configure", cfg);
     if (!result.ok) {
       throw new Error(result.error);
     }

@@ -3,8 +3,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { AgentClient, LlmConfig } from "../agentClient";
-import { matchAlwaysAllow } from "../approval/rules";
+import { consumeHostApprovalPolicy } from "../approval/hostPolicy";
 import { loadDotEnv } from "../env";
+import { resolveMcpConfig } from "../mcpConfig";
 import { secretKeyFor } from "../secrets";
 import type {
   AlwaysAllowRule,
@@ -13,6 +14,8 @@ import type {
   HostToWebview,
   LlmConfigView,
   LlmProvider,
+  McpConfig,
+  McpServerStatus,
   Msg,
   ReasoningEffort,
   TaskDone,
@@ -67,6 +70,16 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.state = this.loadState();
     this.autoApprove = this.ctx.workspaceState.get<boolean>(AUTO_APPROVE_KEY, false);
     this.alwaysAllow = this.loadAlwaysAllow();
+    this.ctx.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("loom.mcp")) {
+        this.configureMcpSoon();
+      }
+    }));
+    const watcher = vscode.workspace.createFileSystemWatcher("**/.vscode/mcp.json");
+    watcher.onDidCreate(() => this.configureMcpSoon(), this, this.ctx.subscriptions);
+    watcher.onDidChange(() => this.configureMcpSoon(), this, this.ctx.subscriptions);
+    watcher.onDidDelete(() => this.configureMcpSoon(), this, this.ctx.subscriptions);
+    this.ctx.subscriptions.push(watcher);
   }
 
   resolveWebviewView(view: vscode.WebviewView) {
@@ -179,6 +192,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       this.agent = this.createAgent(workspaceRoot);
       await this.agent.start(cfg);
     }
+    await this.configureMcp();
 
     if (this.hydratedConversationId !== this.state.conversationId) {
       await this.agent.hydrateConversation({
@@ -283,6 +297,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
           }
         }
       },
+      onToolApprove: async (call: ToolCall) => this.approveLocalTool(call),
+      onMcpStatus: (status) => this.handleMcpStatus(status),
       onDone: (done) => this.handleDone(done),
       onUsage: (usage) => this.handleUsage(usage),
       onConversationUpdated: (update) => this.handleConversationUpdated(update),
@@ -482,19 +498,11 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   }
 
   private isApprovedByHostPolicy(call: ToolCall): boolean {
-    if (this.autoApprove || matchAlwaysAllow(call, this.alwaysAllow)) {
-      return true;
-    }
-    const remaining = this.sessionBulkCounters.get(call.name) ?? 0;
-    if (remaining <= 0) {
-      return false;
-    }
-    if (remaining === 1) {
-      this.sessionBulkCounters.delete(call.name);
-    } else {
-      this.sessionBulkCounters.set(call.name, remaining - 1);
-    }
-    return true;
+    return consumeHostApprovalPolicy(call, {
+      autoApprove: this.autoApprove,
+      alwaysAllow: this.alwaysAllow,
+      sessionBulkCounters: this.sessionBulkCounters,
+    });
   }
 
   private addAlwaysAllowRule(rule: AlwaysAllowRule) {
@@ -595,6 +603,61 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       await this.postLlmConfig();
     } catch (e: unknown) {
       this.post({ type: "error", error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  private async configureMcp() {
+    if (!this.agent) {
+      return;
+    }
+    const cfg = this.resolveMcpConfig();
+    await this.agent.configureMcp(cfg);
+  }
+
+  private configureMcpSoon() {
+    void this.configureMcp().catch((e: unknown) => {
+      this.post({ type: "error", error: e instanceof Error ? e.message : String(e) });
+    });
+  }
+
+  private resolveMcpConfig(): McpConfig {
+    const settings = vscode.workspace.getConfiguration("loom");
+    return resolveMcpConfig({
+      workspaceRoot: this.workspaceRoot(),
+      settingsServers: settings.get("mcp.servers"),
+    });
+  }
+
+  private async approveLocalTool(call: ToolCall): Promise<{ approved: boolean }> {
+    this.toolStartTimes.set(call.callId, Date.now());
+    if (this.isApprovedByHostPolicy(call)) {
+      this.post({ type: "toolCall", call: { ...call, requiresApproval: false } });
+      return { approved: true };
+    }
+
+    this.post({ type: "toolCall", call });
+    const approved = await new Promise<boolean>((resolve) => {
+      this.pendingApprovals.set(call.callId, resolve);
+      this.pendingApprovalCalls.set(call.callId, call);
+    });
+    if (!approved) {
+      this.post({
+        type: "toolResult",
+        callId: call.callId,
+        ok: false,
+        summary: "rejected",
+        durationMs: this.finishToolTiming(call.callId),
+      });
+      return { approved: false };
+    }
+    return { approved: true };
+  }
+
+  private handleMcpStatus(status: McpServerStatus) {
+    this.post({ type: "mcpStatus", status }, false);
+    if (status.state === "error" || status.state === "failed" || status.state === "crashed") {
+      const details = status.message ? `: ${status.message}` : "";
+      this.post({ type: "error", error: `MCP ${status.server} ${status.state}${details}` });
     }
   }
 

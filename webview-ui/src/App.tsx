@@ -4,6 +4,7 @@ import type {
   ConversationUsage,
   LlmConfigView,
   LlmProvider,
+  McpServerStatus,
   Msg,
   ReasoningEffort,
   ToolStatus,
@@ -47,6 +48,7 @@ export function App() {
   const [autoApprove, setAutoApprove] = useState(false);
   const [alwaysAllowRules, setAlwaysAllowRules] = useState<AlwaysAllowRule[]>([]);
   const [pendingDiffs, setPendingDiffs] = useState<Map<string, string>>(() => new Map());
+  const [mcpStatuses, setMcpStatuses] = useState<Record<string, McpServerStatus>>({});
   const [showAlwaysAllow, setShowAlwaysAllow] = useState(false);
   const assistantRef = useRef<number | null>(null);
   const interruptQueuedRef = useRef(false);
@@ -60,6 +62,7 @@ export function App() {
         setUsage(m.usage ?? { inputTokens: 0, outputTokens: 0 });
         setLlmConfig(m.llmConfig ?? defaultLlmConfig);
         setPendingDiffs(new Map());
+        setMcpStatuses({});
         setBusy(false);
         assistantRef.current = null;
         interruptQueuedRef.current = false;
@@ -87,6 +90,10 @@ export function App() {
           next.set(m.callId, m.unified);
           return next;
         });
+        return;
+      }
+      if (m.type === "mcpStatus") {
+        setMcpStatuses((prev) => ({ ...prev, [m.status.server]: m.status }));
         return;
       }
       if (m.type === "toolResult") {
@@ -247,6 +254,7 @@ export function App() {
       <StatusStrip
         usage={usage}
         llmConfig={llmConfig}
+        mcpStatuses={mcpStatuses}
         autoApprove={autoApprove}
         onAutoApproveChange={setAutoApproveEnabled}
         onShowAlwaysAllow={openAlwaysAllow}
@@ -268,20 +276,24 @@ export function App() {
 function StatusStrip({
   usage,
   llmConfig,
+  mcpStatuses,
   autoApprove,
   onAutoApproveChange,
   onShowAlwaysAllow,
 }: {
   usage: ConversationUsage;
   llmConfig: LlmConfigView;
+  mcpStatuses: Record<string, McpServerStatus>;
   autoApprove: boolean;
   onAutoApproveChange: (enabled: boolean) => void;
   onShowAlwaysAllow: () => void;
 }) {
   const cost = estimateCost(usage);
+  const mcpSummary = formatMcpSummary(mcpStatuses);
   return (
     <div style={styles.statusStrip}>
       <ProviderPicker config={llmConfig} />
+      {mcpSummary && <span title={mcpSummary.detail}>{mcpSummary.label}</span>}
       <button
         type="button"
         onClick={() => onAutoApproveChange(!autoApprove)}
@@ -295,6 +307,17 @@ function StatusStrip({
       {cost !== undefined && <span>≈ ${cost.toFixed(cost < 0.01 ? 4 : 2)}</span>}
     </div>
   );
+}
+
+function formatMcpSummary(statuses: Record<string, McpServerStatus>): { label: string; detail: string } | undefined {
+  const entries = Object.values(statuses);
+  if (entries.length === 0) return undefined;
+  const ready = entries.filter((status) => status.state === "ready").length;
+  const label = `MCP ${ready}/${entries.length}`;
+  const detail = entries
+    .map((status) => `${status.server}: ${status.state}${status.toolCount !== undefined ? ` (${status.toolCount} tools)` : ""}${status.message ? ` - ${status.message}` : ""}`)
+    .join("\n");
+  return { label, detail };
 }
 
 function ProviderPicker({ config }: { config: LlmConfigView }) {

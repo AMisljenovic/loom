@@ -11,6 +11,8 @@ A VS Code extension with three runtimes:
 - Go agent binary (`agent/`)
 
 Layers communicate via JSON-RPC 2.0 over stdio with LSP-style framing.
+External MCP servers are a separate Go-side integration and use
+newline-delimited JSON-RPC over stdio.
 
 ## Style
 
@@ -23,6 +25,7 @@ Layers communicate via JSON-RPC 2.0 over stdio with LSP-style framing.
 ## Where to put things
 
 - Agent loop → `agent/internal/loop/`
+- MCP client/manager → `agent/internal/mcp/`
 - LLM SDK code → `agent/internal/llm/` (isolated; the loop never imports the SDK)
 - Go-side tools → `agent/internal/tools/tools.go`
 - TS-side tools → `src/tools/index.ts`
@@ -38,6 +41,8 @@ Layers communicate via JSON-RPC 2.0 over stdio with LSP-style framing.
 5. Approval UX shortcuts live host-side in `src/panel/ChatPanel.ts`.
    `loom.autoApprove` and `loom.alwaysAllow` are workspaceState keys; session
    bulk counters are in-memory only. The Go loop remains serial.
+6. Keep the two stdio codecs separate: Loom's extension-agent bridge is
+   LSP-framed, while MCP server stdio is newline-delimited JSON-RPC.
 
 ## Pre-commit hook
 

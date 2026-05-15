@@ -10,6 +10,7 @@ import (
 	"github.com/your-org/loom/internal/conversation"
 	"github.com/your-org/loom/internal/llm"
 	"github.com/your-org/loom/internal/loop"
+	"github.com/your-org/loom/internal/mcp"
 	"github.com/your-org/loom/internal/rpc"
 )
 
@@ -67,6 +68,10 @@ func main() {
 	conn := rpc.New(os.Stdin, os.Stdout)
 	conversations := conversation.NewStore()
 	providers := &providerHolder{provider: provider}
+	mcpManager := mcp.NewManager(func(status mcp.ServerStatus) {
+		_ = conn.Notify("mcp.serverStatus", status)
+	})
+	defer mcpManager.Close()
 	var taskMu sync.Mutex
 	taskCancels := make(map[string]context.CancelFunc)
 
@@ -84,6 +89,7 @@ func main() {
 			WorkspaceRoot: p.WorkspaceRoot,
 			LLM:           providers.Get(),
 			Conversations: conversations,
+			MCP:           mcpManager,
 		}
 		go func() {
 			defer func() {
@@ -163,6 +169,17 @@ func main() {
 			return map[string]any{"ok": false, "error": err.Error()}, nil
 		}
 		providers.Set(next)
+		return map[string]any{"ok": true}, nil
+	})
+
+	conn.Handle("mcp.configure", func(params json.RawMessage) (any, error) {
+		cfg, err := mcp.ParseConfig(params)
+		if err != nil {
+			return map[string]any{"ok": false, "error": err.Error()}, nil
+		}
+		if err := mcpManager.Configure(context.Background(), cfg); err != nil {
+			return map[string]any{"ok": false, "error": err.Error()}, nil
+		}
 		return map[string]any{"ok": true}, nil
 	})
 
