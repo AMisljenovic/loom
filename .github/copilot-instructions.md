@@ -55,6 +55,11 @@ newline-delimited JSON-RPC over stdio.
 8. Prompt caching (Anthropic cache_control, OpenAI automatic) depends on a
    byte-stable system + tools prefix. Sort any newly-added dynamic tool
    list deterministically.
+9. Conversation sessions are stored TS-side in `workspaceState`
+   (`loom.sessions.index` + `loom.sessions.body:<id>` per session). The Go
+   conversation store is already multi-session; do not add list management
+   on the Go side. Switching active sessions must cancel any in-flight task
+   first.
 
 ## Pre-commit hook
 

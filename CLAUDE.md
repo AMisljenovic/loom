@@ -49,6 +49,13 @@ change to a message type must be made on both sides.
   `//go:build cgo`. The non-CGO build path compiles fine and reports an
   empty index; `find_symbol` / `find_references` return "no matches".
   `semantic_search` only registers when `LOOM_EMBED_PROVIDER` is set.
+- **Conversation sessions are multi-row.** TS keeps a `SessionsIndex` in
+  `workspaceState["loom.sessions.index"]` plus one body per session under
+  `loom.sessions.body:<id>`. The legacy `loom.conversation` single-state key
+  is migrated on first load. The Go store ([agent/internal/conversation/](agent/internal/conversation/))
+  was already keyed by `conversationId`, so multi-session is a TS+webview
+  feature; do not add list-management logic in Go. Switching sessions
+  cancels any in-flight task before swapping to avoid stream cross-talk.
 
 ## Where things live
 

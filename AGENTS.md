@@ -82,6 +82,10 @@ No test suite yet. When adding one:
 10. Anthropic + OpenAI prompt caching depend on a byte-stable system-prompt +
     tools prefix. MCP tools are sorted by name in `Driver.registry()`; keep
     any new tool ordering deterministic.
+11. Conversation sessions are owned by the TypeScript host. `SessionsIndex` +
+    per-session body live in `workspaceState`; the Go side is unchanged
+    (already keyed by `conversationId`). Switching sessions must cancel any
+    in-flight task first or streamed deltas land in the wrong session.
 
 ## Pre-commit hook
 
