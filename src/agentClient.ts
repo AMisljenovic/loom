@@ -37,6 +37,7 @@ export interface AgentEvents {
   onSummarized: (s: { taskId: string; conversationId: string; droppedCount: number }) => void;
   onIndexStatus: (s: IndexStatusNotify) => void;
   onError: (err: string) => void;
+  onLog?: (line: string) => void;
 }
 
 export type LlmConfig =
@@ -104,7 +105,7 @@ export class AgentClient {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...buildSpawnEnv(cfg), ...buildExtrasEnv(this.extras) },
     });
-    this.proc.stderr.on("data", (d) => console.error("[agent]", d.toString()));
+    this.proc.stderr.on("data", (d) => this.events.onLog?.(`[agent] ${d.toString()}`));
     this.proc.on("exit", (code) => {
       if (!this.disposed) {
         this.events.onError(`agent exited with code ${code}`);

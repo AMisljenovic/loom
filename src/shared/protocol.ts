@@ -246,7 +246,7 @@ export interface SessionsIndex {
 
 export type WebviewToHost =
   | { type: "ready" }
-  | { type: "submit"; prompt: string }
+  | { type: "submit"; prompt: string; modeId?: string }
   | { type: "cancel" }
   | { type: "newConversation" }
   | { type: "switchSession"; conversationId: string }
@@ -283,4 +283,5 @@ export type HostToWebview =
   | { type: "summarized"; droppedCount: number }
   | { type: "error"; error: string }
   | { type: "modes"; modes: ModeDefinition[]; currentModeId: string }
+  | { type: "modeAutoChanged"; modeId: string; label: string; prompt?: string }
   | { type: "themeConfig"; accent: string; density: string; themeBias: string };

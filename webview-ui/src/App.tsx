@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { detectModeSwitchIntent } from "../../src/shared/modeIntent";
 import type {
   AlwaysAllowRule,
   ConversationUsage,
@@ -74,13 +75,48 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [modes, setModes] = useState<ModeDefinition[]>([]);
   const [currentModeId, setCurrentModeId] = useState<string>("code");
+  const [notice, setNotice] = useState<string | null>(null);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const assistantRef = useRef<number | null>(null);
   const interruptQueuedRef = useRef(false);
+  const deltaBufferRef = useRef("");
+  const deltaFrameRef = useRef<number | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
+
+  const announce = (text: string) => {
+    setNotice(text);
+    if (noticeTimerRef.current !== null) {
+      window.clearTimeout(noticeTimerRef.current);
+    }
+    noticeTimerRef.current = window.setTimeout(() => setNotice(null), 3200);
+  };
 
   useEffect(() => {
     post({ type: "ready" });
+    const flushDelta = () => {
+      const text = deltaBufferRef.current;
+      if (!text) return;
+      deltaBufferRef.current = "";
+      deltaFrameRef.current = null;
+      setMessages((prev) => {
+        const next = [...prev];
+        if (assistantRef.current === null) {
+          next.push({ role: "assistant", text });
+          assistantRef.current = next.length - 1;
+        } else {
+          const cur = next[assistantRef.current] as Msg & { role: "assistant" };
+          next[assistantRef.current] = { ...cur, text: cur.text + text };
+        }
+        return next;
+      });
+    };
+    const queueDelta = (text: string) => {
+      deltaBufferRef.current += text;
+      if (deltaFrameRef.current === null) {
+        deltaFrameRef.current = window.requestAnimationFrame(flushDelta);
+      }
+    };
     const handler = (e: MessageEvent) => {
       const m = e.data;
       if (m.type === "themeConfig") {
@@ -101,6 +137,11 @@ export function App() {
         setBusy(false);
         assistantRef.current = null;
         interruptQueuedRef.current = false;
+        deltaBufferRef.current = "";
+        if (deltaFrameRef.current !== null) {
+          window.cancelAnimationFrame(deltaFrameRef.current);
+          deltaFrameRef.current = null;
+        }
         return;
       }
       if (m.type === "llmConfig") { setLlmConfig(m.llmConfig ?? defaultLlmConfig); return; }
@@ -111,6 +152,11 @@ export function App() {
       if (m.type === "modes") {
         setModes(Array.isArray(m.modes) ? m.modes : []);
         setCurrentModeId(typeof m.currentModeId === "string" ? m.currentModeId : "code");
+        return;
+      }
+      if (m.type === "modeAutoChanged") {
+        setCurrentModeId(typeof m.modeId === "string" ? m.modeId : "code");
+        announce(`Switched to ${m.label ?? m.modeId} mode${m.prompt ? " for this task" : ""}.`);
         return;
       }
       if (m.type === "diffPreview") {
@@ -133,17 +179,14 @@ export function App() {
         setPendingDiffs((prev) => { if (!prev.has(m.callId)) return prev; const next = new Map(prev); next.delete(m.callId); return next; });
         setPendingOutputs((prev) => { if (!prev.has(m.callId)) return prev; const next = new Map(prev); next.delete(m.callId); return next; });
       }
+      if (m.type === "delta") {
+        queueDelta(m.text);
+        return;
+      }
+      flushDelta();
       setMessages((prev) => {
         const next = [...prev];
-        if (m.type === "delta") {
-          if (assistantRef.current === null) {
-            next.push({ role: "assistant", text: m.text });
-            assistantRef.current = next.length - 1;
-          } else {
-            const cur = next[assistantRef.current] as Msg & { role: "assistant" };
-            next[assistantRef.current] = { ...cur, text: cur.text + m.text };
-          }
-        } else if (m.type === "toolCall") {
+        if (m.type === "toolCall") {
           next.push({ role: "tool", name: m.call.name, status: m.call.requiresApproval ? "pending" : "approved", callId: m.call.callId, input: m.call.input, expanded: false });
         } else if (m.type === "toolProgress") {
           return updateTool(next, m.callId, (tool) => ({ ...tool, status: tool.status === "approved" ? "running" : tool.status, expanded: tool.expanded ?? true }));
@@ -175,28 +218,50 @@ export function App() {
       });
     };
     window.addEventListener("message", handler);
-    return () => window.removeEventListener("message", handler);
+    return () => {
+      window.removeEventListener("message", handler);
+      if (deltaFrameRef.current !== null) {
+        window.cancelAnimationFrame(deltaFrameRef.current);
+      }
+      if (noticeTimerRef.current !== null) {
+        window.clearTimeout(noticeTimerRef.current);
+      }
+    };
   }, []);
 
   const submit = () => {
     let prompt = input.trim();
     if (!prompt) return;
+    let submitModeId: string | undefined;
     for (const [slash, preset] of Object.entries(SLASH_PRESETS)) {
       if (prompt === slash || prompt.startsWith(slash + " ")) {
         const modeId = preset.mode;
         prompt = preset.prefix + prompt.slice(slash.length).trimStart();
         setCurrentModeId(modeId);
         post({ type: "setMode", modeId });
+        submitModeId = modeId;
         break;
       }
+    }
+    const modeIntent = detectModeSwitchIntent(prompt, modes);
+    if (modeIntent) {
+      setCurrentModeId(modeIntent.modeId);
+      post({ type: "setMode", modeId: modeIntent.modeId });
+      submitModeId = modeIntent.modeId;
+      announce(`Switched to ${modeIntent.label} mode${modeIntent.prompt ? " for this task" : ""}.`);
+      if (!modeIntent.prompt) {
+        setInput("");
+        return;
+      }
+      prompt = modeIntent.prompt;
     }
     setMessages((m) => [...m, { role: "user", text: prompt }]);
     if (busy) {
       interruptQueuedRef.current = true;
       post({ type: "cancel" });
-      post({ type: "submit", prompt });
+      post({ type: "submit", prompt, modeId: submitModeId });
     } else {
-      post({ type: "submit", prompt });
+      post({ type: "submit", prompt, modeId: submitModeId });
       setBusy(true);
     }
     setInput("");
@@ -208,7 +273,7 @@ export function App() {
 
   return (
     <div className="panel" ref={rootRef}>
-      <PanelHeader busy={busy} onSettings={() => setShowSettings((v) => !v)} />
+      <PanelHeader busy={busy} />
       <ConversationList
         index={sessions}
         showArchived={showArchived}
@@ -218,29 +283,32 @@ export function App() {
         onEndRename={() => setRenamingId(null)}
       />
       {autoApprove && <AutoApproveBanner onDisable={() => post({ type: "setAutoApprove", enabled: false })} />}
+      {notice && <div className="notice-toast" role="status">{notice}</div>}
       {showFirstRun ? (
         <FirstRun state={firstRun} onSample={(p) => setInput(p)} />
       ) : isEmpty ? (
         <EmptyState mode={currentMode} onSuggest={(p) => { setInput(p); }} />
       ) : (
-        <Thread messages={messages} pendingDiffs={pendingDiffs} pendingOutputs={pendingOutputs} />
+        <Thread messages={messages} pendingDiffs={pendingDiffs} pendingOutputs={pendingOutputs} busy={busy} />
       )}
       <InputArea busy={busy} input={input} onInput={setInput} onSubmit={submit} />
-      <Toolbar
-        llmConfig={llmConfig}
-        usage={usage}
-        mcpStatuses={mcpStatuses}
-        indexStatus={indexStatus}
-        modes={modes}
-        currentModeId={currentModeId}
-        alwaysAllowRules={alwaysAllowRules}
-        onShowAllowlist={() => { post({ type: "requestAlwaysAllowList" }); setShowAllowlist(true); }}
-        onShowSettings={() => setShowSettings((v) => !v)}
-        onShowModel={() => setShowModel((v) => !v)}
-      />
-      {showAllowlist && <AllowlistPopover rules={alwaysAllowRules} onClose={() => setShowAllowlist(false)} />}
-      {showModel && <ModelPopover config={llmConfig} onClose={() => setShowModel(false)} />}
-      {showSettings && <SettingsPopover autoApprove={autoApprove} onClose={() => setShowSettings(false)} />}
+      <div style={{ position: "relative" }}>
+        <Toolbar
+          llmConfig={llmConfig}
+          usage={usage}
+          mcpStatuses={mcpStatuses}
+          indexStatus={indexStatus}
+          modes={modes}
+          currentModeId={currentModeId}
+          alwaysAllowRules={alwaysAllowRules}
+          onShowAllowlist={() => { post({ type: "requestAlwaysAllowList" }); setShowAllowlist(true); }}
+          onShowSettings={() => setShowSettings((v) => !v)}
+          onShowModel={() => setShowModel((v) => !v)}
+        />
+        {showAllowlist && <AllowlistPopover rules={alwaysAllowRules} onClose={() => setShowAllowlist(false)} />}
+        {showModel && <ModelPopover config={llmConfig} onClose={() => setShowModel(false)} />}
+        {showSettings && <SettingsPopover autoApprove={autoApprove} onClose={() => setShowSettings(false)} />}
+      </div>
     </div>
   );
 }

@@ -62,6 +62,11 @@ change to a message type must be made on both sides.
   webview sets `data-accent`/`data-density`/`data-theme` on the root element;
   CSS token overrides cascade from there. VS Code theme class
   (`.vscode-dark`/`.vscode-light`) handles chrome; Loom owns accent+density.
+- **Mode switching is host-owned.** Natural-language mode switches are parsed
+  in shared code (`src/shared/modeIntent.ts`). The webview can pre-apply the
+  parser for responsiveness, but `ChatPanel.ts` owns persisted mode state.
+- **Markdown rendering is webview-only.** Session state stores raw assistant
+  text. The webview renders safe Markdown without raw HTML.
 - **First-run setup is host-owned.** `ChatPanel.ts` stores
   `workspaceState["loom.firstRun.completed"]`, posts `firstRunState`, and
   keeps API keys on the existing SecretStorage path. The webview renders the

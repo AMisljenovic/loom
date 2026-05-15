@@ -71,6 +71,11 @@ newline-delimited JSON-RPC over stdio.
     user-facing errors only.
 13. Use checked-in exported marketplace assets from `assets/` and `media/`;
     do not replace them with generated assets.
+14. Natural-language mode switches are parsed by shared code in
+    `src/shared/modeIntent.ts`. The host owns persisted mode state; the webview
+    may pre-apply the same parser for responsiveness.
+15. Assistant Markdown rendering stays webview-only and sanitized. Store raw
+    message text in session state; render Markdown without raw HTML.
 
 ## Pre-commit hook
 

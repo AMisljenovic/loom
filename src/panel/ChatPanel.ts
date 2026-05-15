@@ -8,6 +8,7 @@ import { loadDotEnv } from "../env";
 import { resolveMcpConfig } from "../mcpConfig";
 import { BUILTIN_MODES, mergeModes } from "../modes";
 import { secretKeyFor } from "../secrets";
+import { detectModeSwitchIntent } from "../shared/modeIntent";
 import type {
   AlwaysAllowRule,
   ConversationState,
@@ -76,11 +77,15 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private activeTaskId?: string;
   private busy = false;
   private queuedPrompt?: string;
+  private queuedModeId?: string;
   private assistantIndex: number | null = null;
   private hydratedConversationId?: string;
   private webviewMessageQueue: Promise<void> = Promise.resolve();
+  private readonly output: vscode.OutputChannel;
 
   constructor(private readonly ctx: vscode.ExtensionContext) {
+    this.output = vscode.window.createOutputChannel("Loom");
+    this.ctx.subscriptions.push(this.output);
     this.sessions = this.loadSessions();
     this.state = this.loadSessionBody(this.sessions.activeId);
     this.autoApprove = this.ctx.workspaceState.get<boolean>(AUTO_APPROVE_KEY, false);
@@ -129,12 +134,13 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     } else if (m.type === "submit") {
       if (this.busy) {
         this.queuedPrompt = m.prompt;
+        this.queuedModeId = this.validModeId(m.modeId) ? m.modeId : undefined;
         if (this.activeTaskId) {
           await this.agent?.cancel(this.activeTaskId);
         }
         return;
       }
-      await this.runTask(m.prompt);
+      await this.runTask(m.prompt, m.modeId);
     } else if (m.type === "cancel") {
       if (this.activeTaskId) {
         await this.agent?.cancel(this.activeTaskId);
@@ -194,7 +200,16 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     }
   }
 
-  private async runTask(prompt: string) {
+  private async runTask(prompt: string, requestedModeId?: string) {
+    if (this.validModeId(requestedModeId)) {
+      this.currentModeId = requestedModeId;
+      this.schedulePersist();
+      this.postModes();
+    }
+    const preparedPrompt = await this.applyModeIntent(prompt);
+    if (!preparedPrompt) {
+      return;
+    }
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
     if (!(await this.ensureAgent(workspaceRoot))) {
       return;
@@ -203,7 +218,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     const taskId = randomUUID();
     this.activeTaskId = taskId;
     this.busy = true;
-    this.state.messages.push({ role: "user", text: prompt });
+    this.state.messages.push({ role: "user", text: preparedPrompt });
     this.assistantIndex = null;
     this.schedulePersist();
 
@@ -213,7 +228,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       await this.agent?.startTask({
         taskId,
         conversationId: this.state.conversationId,
-        prompt,
+        prompt: preparedPrompt,
         workspaceRoot,
         cwd: workspaceRoot,
         mode: activeMode,
@@ -372,7 +387,29 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       onSummarized: ({ droppedCount }) => this.post({ type: "summarized", droppedCount }),
       onIndexStatus: (status) => this.post({ type: "indexStatus", status }, false),
       onError: (error) => this.post({ type: "error", error }),
+      onLog: (line) => this.log(line),
     }, this.buildSpawnExtras());
+  }
+
+  private async applyModeIntent(prompt: string): Promise<string | undefined> {
+    const intent = detectModeSwitchIntent(prompt, this.getModes());
+    if (!intent) {
+      return prompt;
+    }
+
+    this.currentModeId = intent.modeId;
+    this.schedulePersist();
+    this.postModes();
+    this.post({
+      type: "modeAutoChanged",
+      modeId: intent.modeId,
+      label: intent.label,
+      prompt: intent.prompt,
+    }, false);
+    if (!intent.prompt) {
+      this.post({ type: "done", reason: "completed" }, false);
+    }
+    return intent.prompt;
   }
 
   private async handleDone({ taskId, reason }: TaskDone) {
@@ -383,9 +420,11 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.busy = false;
 
     const next = this.queuedPrompt;
+    const nextModeId = this.queuedModeId;
     this.queuedPrompt = undefined;
+    this.queuedModeId = undefined;
     if (next && reason === "cancelled") {
-      await this.runTask(next);
+      await this.runTask(next, nextModeId);
     }
   }
 
@@ -828,6 +867,10 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     return mergeModes(BUILTIN_MODES, Array.isArray(userModes) ? userModes : []);
   }
 
+  private validModeId(modeId: string | undefined): modeId is string {
+    return typeof modeId === "string" && this.getModes().some((mode) => mode.id === modeId);
+  }
+
   private postModes() {
     this.post({ type: "modes", modes: this.getModes(), currentModeId: this.currentModeId }, false);
   }
@@ -1071,7 +1114,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     const provider = (pick("provider", "MY_AGENT_PROVIDER") || "anthropic") as LlmProvider;
 
     const dotenvFound = Object.keys(dotenv).length > 0;
-    console.error(
+    this.log(
       `[loom] resolveLlmConfig: workspaceRoot=${workspaceRoot || "<none>"} ` +
       `.env=${dotenvFound ? `loaded from ${dotenvSource}` : "missing"} provider=${provider}`
     );
@@ -1171,6 +1214,10 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     });
     html = html.replaceAll("__CSP_SOURCE__", webview.cspSource);
     return html;
+  }
+
+  private log(line: string) {
+    this.output.appendLine(line.trimEnd());
   }
 }
 

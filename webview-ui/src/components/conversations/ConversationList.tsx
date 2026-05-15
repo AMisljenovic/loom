@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { SessionMeta, SessionsIndex } from "../../../../src/shared/protocol";
 import * as Ico from "../../brand/icons";
 import { formatAge } from "../../util/format";
@@ -88,7 +89,10 @@ interface ConversationRowProps {
 function ConversationRow({ meta, isActive, isRenaming, onBeginRename, onEndRename }: ConversationRowProps) {
     const [draft, setDraft] = useState(meta.title);
     const [menuOpen, setMenuOpen] = useState(false);
+    const [menuPos, setMenuPos] = useState({ top: 0, right: 0 });
     const menuRef = useRef<HTMLDivElement>(null);
+    const moreRef = useRef<HTMLButtonElement>(null);
+    const portalRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         if (isRenaming) setDraft(meta.title);
@@ -97,7 +101,10 @@ function ConversationRow({ meta, isActive, isRenaming, onBeginRename, onEndRenam
     useEffect(() => {
         if (!menuOpen) return;
         const onDocClick = (e: MouseEvent) => {
-            if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+            if (
+                !menuRef.current?.contains(e.target as Node) &&
+                !portalRef.current?.contains(e.target as Node)
+            ) setMenuOpen(false);
         };
         document.addEventListener("mousedown", onDocClick);
         return () => document.removeEventListener("mousedown", onDocClick);
@@ -149,16 +156,28 @@ function ConversationRow({ meta, isActive, isRenaming, onBeginRename, onEndRenam
 
             <span className="convo-age">{formatAge(meta.updatedAt)}</span>
 
-            <div ref={menuRef} style={{ position: "relative", flexShrink: 0 }}>
+            <div ref={menuRef} style={{ flexShrink: 0 }}>
                 <button
+                    ref={moreRef}
                     className="convo-more"
                     aria-label="Session menu"
-                    onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        if (!menuOpen && moreRef.current) {
+                            const r = moreRef.current.getBoundingClientRect();
+                            setMenuPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+                        }
+                        setMenuOpen((v) => !v);
+                    }}
                 >
                     <Ico.More size={12} />
                 </button>
-                {menuOpen && (
-                    <div className="context-menu" style={{ right: 0, top: "100%" }}>
+                {menuOpen && createPortal(
+                    <div
+                        ref={portalRef}
+                        className="context-menu"
+                        style={{ position: "fixed", top: menuPos.top, right: menuPos.right }}
+                    >
                         <button className="ctx-item" onClick={() => { setMenuOpen(false); onBeginRename(); }}>
                             <Ico.Edit size={12} /> Rename
                         </button>
@@ -179,7 +198,8 @@ function ConversationRow({ meta, isActive, isRenaming, onBeginRename, onEndRenam
                         <button className="ctx-item danger" onClick={() => { setMenuOpen(false); post({ type: "deleteSession", conversationId: meta.conversationId }); }}>
                             <Ico.Trash size={12} /> Delete
                         </button>
-                    </div>
+                    </div>,
+                    document.body
                 )}
             </div>
         </div>

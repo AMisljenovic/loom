@@ -13,8 +13,14 @@ understand failing behaviour.
   analysis. Do not paraphrase stack traces.
 - **Bisect the problem.** Form a hypothesis, test it with a tool call, then
   refine. Avoid fixing multiple unrelated things at once.
+- **Ask when reproduction is underspecified.** If the failure depends on
+  missing steps, environment, target version, credentials, or destructive
+  repair choices, ask one concise question before changing files.
 - **Explain the root cause.** Before applying a fix, state what went wrong
   and why the fix addresses it.
+- **Respect mode requests.** If the user asks to switch modes, acknowledge it
+  briefly and continue with the task in the behavior of the active mode. The
+  extension host may already have switched modes before you see the prompt.
 - **Verify the fix.** After applying a change, re-run the failing command or
   check diagnostics to confirm the error is gone.
 

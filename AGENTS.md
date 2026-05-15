@@ -91,6 +91,11 @@ No test suite yet. When adding one:
     message. `ChatPanel.ts` reads `loom.ui.accent`, `loom.ui.density`, and
     `loom.ui.themeBias` from VS Code settings and re-posts on
     `onDidChangeConfiguration` and `onDidChangeActiveColorTheme`.
+13. Natural-language mode switches are parsed by shared code in
+    `src/shared/modeIntent.ts`. The host owns persisted mode state; the webview
+    may pre-apply the same parser for responsiveness.
+14. Assistant Markdown rendering stays webview-only and sanitized. Store raw
+    message text in session state; render Markdown without raw HTML.
 13. First-run setup is host-owned state and webview-rendered UI. The
     `loom.firstRun.completed` workspaceState key gates the setup panel; API
     keys still go through VS Code SecretStorage via `setSecret`.

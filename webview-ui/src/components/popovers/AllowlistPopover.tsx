@@ -18,15 +18,17 @@ export function AllowlistPopover({ rules, onClose }: AllowlistPopoverProps) {
                 </button>
             </div>
             {rules.length === 0 ? (
-                <div className="pop-empty">No rules yet. Use the approval flow to add rules.</div>
+                <div className="allow-empty">No rules yet. Use the approval flow to add rules.</div>
             ) : (
-                <ul className="allowlist-list">
+                <ul className="allow-list">
                     {rules.map((rule) => (
-                        <li key={rule.id} className="allowlist-item">
-                            <div className="al-tool">{rule.tool}</div>
-                            <div className="al-scope">{formatRule(rule)}</div>
+                        <li key={rule.id} className="allow-rule">
+                            <div>
+                                <div className="ar-name">{rule.tool}</div>
+                                <div className="ar-scope">{formatRule(rule)}</div>
+                            </div>
                             <button
-                                className="icon-button al-remove"
+                                className="allow-del"
                                 onClick={() => post({ type: "removeAlwaysAllowRule", id: rule.id })}
                                 title="Remove rule"
                                 aria-label="Remove rule"

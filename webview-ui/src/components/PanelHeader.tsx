@@ -4,10 +4,9 @@ import { post } from "../vscode";
 
 interface PanelHeaderProps {
     busy: boolean;
-    onSettings: () => void;
 }
 
-export function PanelHeader({ busy, onSettings }: PanelHeaderProps) {
+export function PanelHeader({ busy }: PanelHeaderProps) {
     return (
         <div className="panel-header">
             <div className="brand">
@@ -25,14 +24,6 @@ export function PanelHeader({ busy, onSettings }: PanelHeaderProps) {
                     aria-label="New conversation"
                 >
                     <Ico.Plus size={13} />
-                </button>
-                <button
-                    className="icon-button"
-                    title="Settings"
-                    onClick={onSettings}
-                    aria-label="Settings"
-                >
-                    <Ico.Settings size={13} />
                 </button>
             </div>
         </div>
