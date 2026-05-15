@@ -5,6 +5,7 @@ import type {
   LlmConfigView,
   LlmProvider,
   McpServerStatus,
+  ModeDefinition,
   Msg,
   ReasoningEffort,
   ToolStatus,
@@ -50,6 +51,8 @@ export function App() {
   const [pendingDiffs, setPendingDiffs] = useState<Map<string, string>>(() => new Map());
   const [mcpStatuses, setMcpStatuses] = useState<Record<string, McpServerStatus>>({});
   const [showAlwaysAllow, setShowAlwaysAllow] = useState(false);
+  const [modes, setModes] = useState<ModeDefinition[]>([]);
+  const [currentModeId, setCurrentModeId] = useState<string>("code");
   const assistantRef = useRef<number | null>(null);
   const interruptQueuedRef = useRef(false);
 
@@ -82,6 +85,11 @@ export function App() {
       }
       if (m.type === "alwaysAllowList") {
         setAlwaysAllowRules(Array.isArray(m.rules) ? m.rules : []);
+        return;
+      }
+      if (m.type === "modes") {
+        setModes(Array.isArray(m.modes) ? m.modes : []);
+        setCurrentModeId(typeof m.currentModeId === "string" ? m.currentModeId : "code");
         return;
       }
       if (m.type === "diffPreview") {
@@ -170,9 +178,25 @@ export function App() {
     return () => window.removeEventListener("message", handler);
   }, []);
 
+  const SLASH_PRESETS: Record<string, { mode: string; prefix: string }> = {
+    "/explain": { mode: "ask", prefix: "Explain: " },
+    "/test": { mode: "code", prefix: "Write tests for: " },
+    "/refactor": { mode: "code", prefix: "Refactor: " },
+  };
+
   const submit = () => {
-    const prompt = input.trim();
+    let prompt = input.trim();
     if (!prompt) return;
+    let modeId = currentModeId;
+    for (const [slash, preset] of Object.entries(SLASH_PRESETS)) {
+      if (prompt === slash || prompt.startsWith(slash + " ")) {
+        modeId = preset.mode;
+        prompt = preset.prefix + prompt.slice(slash.length).trimStart();
+        setCurrentModeId(modeId);
+        vscode.postMessage({ type: "setMode", modeId });
+        break;
+      }
+    }
     setMessages((m) => [...m, { role: "user", text: prompt }]);
     if (busy) {
       interruptQueuedRef.current = true;
@@ -260,6 +284,20 @@ export function App() {
         onShowAlwaysAllow={openAlwaysAllow}
       />
       <div style={styles.composer}>
+        {modes.length > 0 && (
+          <select
+            value={currentModeId}
+            onChange={(e) => {
+              setCurrentModeId(e.target.value);
+              vscode.postMessage({ type: "setMode", modeId: e.target.value });
+            }}
+            style={styles.modeSelect}
+          >
+            {modes.map((m) => (
+              <option key={m.id} value={m.id}>{m.label}</option>
+            ))}
+          </select>
+        )}
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -890,6 +928,16 @@ const styles: Record<string, React.CSSProperties> = {
   input: {
     flex: 1,
     padding: 4,
+  },
+  modeSelect: {
+    background: "var(--vscode-input-background)",
+    color: "var(--vscode-input-foreground)",
+    border: "1px solid var(--vscode-input-border, var(--vscode-panel-border))",
+    borderRadius: 2,
+    padding: "2px 4px",
+    fontSize: "inherit",
+    flexShrink: 0,
+    marginRight: 4,
   },
   send: {
     marginLeft: 4,

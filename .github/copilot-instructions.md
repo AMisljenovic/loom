@@ -30,6 +30,8 @@ newline-delimited JSON-RPC over stdio.
 - Go-side tools → `agent/internal/tools/tools.go`
 - TS-side tools → `src/tools/index.ts`
 - Wire types → `src/shared/protocol.ts` (mirror in Go)
+- Per-mode system prompts → `agent/internal/prompts/*.md` (embedded via `embed.FS`)
+- Built-in mode definitions → `src/modes.ts`
 - Webview UI → `webview-ui/src/`
 
 ## Rules

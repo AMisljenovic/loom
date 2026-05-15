@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	agentprompts "github.com/your-org/loom/internal/prompts"
 	"github.com/your-org/loom/internal/conversation"
 	"github.com/your-org/loom/internal/llm"
 	"github.com/your-org/loom/internal/mcp"
@@ -25,12 +26,23 @@ type Driver struct {
 	MCP           *mcp.Manager
 }
 
+// ModeDefinition mirrors the TypeScript ModeDefinition in src/shared/protocol.ts.
+type ModeDefinition struct {
+	ID               string   `json:"id"`
+	Label            string   `json:"label"`
+	SystemPromptPath string   `json:"systemPromptPath,omitempty"`
+	SystemPrompt     string   `json:"systemPrompt,omitempty"`
+	ToolDenylist     []string `json:"toolDenylist,omitempty"`
+	ToolAllowlist    []string `json:"toolAllowlist"`
+}
+
 type StartParams struct {
-	TaskID         string `json:"taskId"`
-	ConversationID string `json:"conversationId"`
-	Prompt         string `json:"prompt"`
-	WorkspaceRoot  string `json:"workspaceRoot"`
-	CWD            string `json:"cwd"`
+	TaskID         string          `json:"taskId"`
+	ConversationID string          `json:"conversationId"`
+	Prompt         string          `json:"prompt"`
+	WorkspaceRoot  string          `json:"workspaceRoot"`
+	CWD            string          `json:"cwd"`
+	Mode           *ModeDefinition `json:"mode,omitempty"`
 }
 
 func (d *Driver) Run(ctx context.Context, p StartParams) error {
@@ -42,9 +54,9 @@ func (d *Driver) Run(ctx context.Context, p StartParams) error {
 			return fmt.Errorf("start MCP servers: %w", err)
 		}
 	}
-	registry := d.registry()
+	registry := applyMode(d.registry(), p.Mode)
 	toolDefs := buildToolDefs(registry)
-	systemPrompt := buildSystemPrompt(registry, p.WorkspaceRoot)
+	systemPrompt := buildSystemPrompt(p.Mode, registry, p.WorkspaceRoot)
 
 	entry := d.Conversations.Get(p.ConversationID)
 	entry.Lock()
@@ -332,14 +344,71 @@ func buildToolDefs(registry []tools.Tool) []llm.ToolDef {
 	return defs
 }
 
-func buildSystemPrompt(registry []tools.Tool, workspaceRoot string) string {
+// applyMode filters the registry according to the mode's allowlist or denylist.
+// A non-nil ToolAllowlist (even if empty) restricts tools to only those listed.
+// A non-empty ToolDenylist removes the named tools.
+// nil mode returns the registry unchanged.
+func applyMode(registry []tools.Tool, mode *ModeDefinition) []tools.Tool {
+	if mode == nil {
+		return registry
+	}
+	if mode.ToolAllowlist != nil {
+		allowed := make(map[string]bool, len(mode.ToolAllowlist))
+		for _, name := range mode.ToolAllowlist {
+			allowed[name] = true
+		}
+		filtered := make([]tools.Tool, 0, len(mode.ToolAllowlist))
+		for _, t := range registry {
+			if allowed[t.Name] {
+				filtered = append(filtered, t)
+			}
+		}
+		return filtered
+	}
+	if len(mode.ToolDenylist) > 0 {
+		denied := make(map[string]bool, len(mode.ToolDenylist))
+		for _, name := range mode.ToolDenylist {
+			denied[name] = true
+		}
+		filtered := make([]tools.Tool, 0, len(registry))
+		for _, t := range registry {
+			if !denied[t.Name] {
+				filtered = append(filtered, t)
+			}
+		}
+		return filtered
+	}
+	return registry
+}
+
+func buildSystemPrompt(mode *ModeDefinition, registry []tools.Tool, workspaceRoot string) string {
+	var base string
+	if mode != nil && mode.SystemPrompt != "" {
+		base = mode.SystemPrompt
+	} else {
+		id := "code"
+		if mode != nil && mode.ID != "" {
+			id = mode.ID
+		}
+		if content, err := agentprompts.Load(id); err == nil {
+			base = content
+		} else {
+			// Fallback to minimal inline prompt if the file is missing.
+			base = "You are an AI coding assistant running inside a VS Code extension. " +
+				"You have access to tools to inspect, edit with diffs, diagnose, search, and run commands in the user's workspace."
+		}
+	}
 	var b strings.Builder
-	b.WriteString("You are an AI coding assistant running inside a VS Code extension. ")
-	b.WriteString("You have access to tools to inspect, edit with diffs, diagnose, search, and run commands in the user's workspace.\n\n")
+	b.WriteString(strings.TrimRight(base, "\n"))
+	b.WriteString("\n\n")
 	fmt.Fprintf(&b, "Workspace root: %s\n\n", workspaceRoot)
-	b.WriteString("Available tools:\n")
-	for _, t := range registry {
-		fmt.Fprintf(&b, "- %s: %s\n", t.Name, t.Description)
+	if len(registry) > 0 {
+		b.WriteString("Available tools:\n")
+		for _, t := range registry {
+			fmt.Fprintf(&b, "- %s: %s\n", t.Name, t.Description)
+		}
+	} else {
+		b.WriteString("No tools are available in this mode.\n")
 	}
 	return b.String()
 }

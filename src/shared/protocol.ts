@@ -55,12 +55,22 @@ export interface McpServerStatus {
   attempt?: number;
 }
 
+export interface ModeDefinition {
+  id: string;
+  label: string;
+  systemPromptPath?: string;
+  systemPrompt?: string;
+  toolDenylist?: string[];
+  toolAllowlist?: string[];
+}
+
 export interface TaskStartParams {
   taskId: TaskId;
   conversationId: string;
   prompt: string;
   workspaceRoot: string;
   cwd: string;
+  mode?: ModeDefinition;
 }
 
 export interface MessageDelta {
@@ -187,7 +197,8 @@ export type WebviewToHost =
   | { type: "approve"; callId: CallId; approved: boolean; rememberRule?: AlwaysAllowRule; sessionCount?: number }
   | { type: "setAutoApprove"; enabled: boolean }
   | { type: "removeAlwaysAllowRule"; id: string }
-  | { type: "requestAlwaysAllowList" };
+  | { type: "requestAlwaysAllowList" }
+  | { type: "setMode"; modeId: string };
 
 export type HostToWebview =
   | { type: "delta"; text: string }
@@ -203,4 +214,5 @@ export type HostToWebview =
   | { type: "usage"; usage: ConversationUsage }
   | { type: "mcpStatus"; status: McpServerStatus }
   | { type: "summarized"; droppedCount: number }
-  | { type: "error"; error: string };
+  | { type: "error"; error: string }
+  | { type: "modes"; modes: ModeDefinition[]; currentModeId: string };

@@ -16,6 +16,7 @@ import type {
   LlmProvider,
   McpConfig,
   McpServerStatus,
+  ModeDefinition,
   Msg,
   ReasoningEffort,
   TaskDone,
@@ -24,6 +25,7 @@ import type {
   ToolResult,
   WebviewToHost,
 } from "../shared/protocol";
+import { BUILTIN_MODES, mergeModes } from "../modes";
 import {
   cachePreparedApplyDiff,
   discardPreparedApplyDiff,
@@ -41,6 +43,7 @@ import { createUnifiedDiff } from "../tools/unifiedDiff";
 const STATE_KEY = "loom.conversation";
 const AUTO_APPROVE_KEY = "loom.autoApprove";
 const ALWAYS_ALLOW_KEY = "loom.alwaysAllow";
+const MODE_KEY = "loom.currentMode";
 const LOCAL_BASE_URL = "http://localhost:11434/v1";
 const LOCAL_MODEL = "llama3.1";
 const ANTHROPIC_MODEL = "claude-opus-4-7";
@@ -57,6 +60,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private state: ConversationState;
   private autoApprove = false;
   private alwaysAllow: AlwaysAllowRule[] = [];
+  private currentModeId: string = "code";
   private sessionBulkCounters = new Map<string, number>();
   private persistTimer?: NodeJS.Timeout;
   private activeTaskId?: string;
@@ -70,6 +74,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.state = this.loadState();
     this.autoApprove = this.ctx.workspaceState.get<boolean>(AUTO_APPROVE_KEY, false);
     this.alwaysAllow = this.loadAlwaysAllow();
+    this.currentModeId = this.ctx.workspaceState.get<string>(MODE_KEY) ?? "code";
     this.ctx.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("loom.mcp")) {
         this.configureMcpSoon();
@@ -151,6 +156,10 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       this.postAlwaysAllowList();
     } else if (m.type === "requestAlwaysAllowList") {
       this.postAlwaysAllowList();
+    } else if (m.type === "setMode") {
+      this.currentModeId = m.modeId;
+      this.schedulePersist();
+      this.postModes();
     }
   }
 
@@ -168,12 +177,15 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.schedulePersist();
 
     try {
+      const modes = this.getModes();
+      const activeMode = modes.find((m) => m.id === this.currentModeId);
       await this.agent?.startTask({
         taskId,
         conversationId: this.state.conversationId,
         prompt,
         workspaceRoot,
         cwd: workspaceRoot,
+        mode: activeMode,
       });
     } catch (e: unknown) {
       this.activeTaskId = undefined;
@@ -375,6 +387,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     }, false);
     this.postAutoApprove();
     this.postAlwaysAllowList();
+    this.postModes();
   }
 
   private mirrorHostMessage(msg: HostToWebview) {
@@ -494,6 +507,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       this.ctx.workspaceState.update(STATE_KEY, this.state),
       this.ctx.workspaceState.update(AUTO_APPROVE_KEY, this.autoApprove),
       this.ctx.workspaceState.update(ALWAYS_ALLOW_KEY, this.alwaysAllow),
+      this.ctx.workspaceState.update(MODE_KEY, this.currentModeId),
     ]);
   }
 
@@ -554,6 +568,15 @@ export class ChatPanel implements vscode.WebviewViewProvider {
 
   private postAlwaysAllowList() {
     this.post({ type: "alwaysAllowList", rules: this.alwaysAllow }, false);
+  }
+
+  private getModes(): ModeDefinition[] {
+    const userModes = vscode.workspace.getConfiguration("loom").get<ModeDefinition[]>("modes", []);
+    return mergeModes(BUILTIN_MODES, Array.isArray(userModes) ? userModes : []);
+  }
+
+  private postModes() {
+    this.post({ type: "modes", modes: this.getModes(), currentModeId: this.currentModeId }, false);
   }
 
   private finishToolTiming(callId: string): number {

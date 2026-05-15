@@ -65,6 +65,10 @@ No test suite yet. When adding one:
 6. Loom's internal extension-agent RPC uses LSP `Content-Length` framing.
    External MCP stdio servers use newline-delimited JSON-RPC in
    `agent/internal/mcp/`; do not mix these codecs.
+7. Agent modes are defined in `src/modes.ts` (TS side) and sent with each
+   `task.start`. Per-mode system prompts live in `agent/internal/prompts/*.md`
+   and are embedded in the Go binary via `embed.FS`. The Go loop remains
+   stateless with respect to mode configuration.
 
 ## Pre-commit hook
 

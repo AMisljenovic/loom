@@ -139,6 +139,31 @@
             },
             "required": ["command"]
           }
+        },
+        "loom.modes": {
+          "type": "array",
+          "default": [],
+          "order": 60,
+          "markdownDescription": "**Loom: Custom Modes**\n\nUser-defined agent modes. Each entry overrides a built-in mode of the same `id` or adds a new one.",
+          "items": {
+            "type": "object",
+            "required": ["id", "label", "systemPrompt"],
+            "properties": {
+              "id": { "type": "string", "description": "Unique mode identifier. Overrides a built-in if it matches code, architect, ask, or debug." },
+              "label": { "type": "string", "description": "Display label shown in the mode dropdown." },
+              "systemPrompt": { "type": "string", "description": "Inline system prompt for this mode." },
+              "toolDenylist": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Tool names to block in this mode. Mutually exclusive with toolAllowlist."
+              },
+              "toolAllowlist": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "If present, only these tools are available. An empty array means no tools. Mutually exclusive with toolDenylist."
+              }
+            }
+          }
         }
       }
     }

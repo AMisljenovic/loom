@@ -52,6 +52,8 @@ change to a message type must be made on both sides.
 | MCP client/manager | `agent/internal/mcp/` |
 | Anthropic SDK wrapper | `agent/internal/llm/llm.go` |
 | Tool registry | `agent/internal/tools/tools.go` |
+| Per-mode system prompts | `agent/internal/prompts/*.md` (embedded via `embed.FS`) |
+| Built-in mode definitions | `src/modes.ts` |
 | JSON-RPC codec (Go) | `agent/internal/rpc/rpc.go` |
 | Chat UI | `webview-ui/src/App.tsx` |
 
