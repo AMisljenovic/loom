@@ -60,9 +60,23 @@ No test suite yet. When adding one:
 3. Shared types in `src/shared/protocol.ts`. Mirror in Go.
 4. Webview has no business logic — it renders and forwards messages.
 
+## Pre-commit hook
+
+`npm install` installs a Husky pre-commit hook (`scripts/check-docs-sync.mjs`)
+that blocks a commit when staged changes touch `src/`, `agent/`,
+`webview-ui/src/`, `package.json`, `scripts/`, or `.github/workflows/` but
+none of these three doc files are also staged:
+
+- `CLAUDE.md`
+- `AGENTS.md`
+- `.github/copilot-instructions.md`
+
+Keep them in sync. Bypass with `SKIP_DOCS_CHECK=1 git commit ...` or
+`git commit --no-verify` when a doc update is genuinely unnecessary.
+
 ## Pull request expectations
 
 - One concern per PR
-- Update `CLAUDE.md` / `AGENTS.md` if architecture changes
+- Update `CLAUDE.md` / `AGENTS.md` / `.github/copilot-instructions.md` if architecture changes (enforced by pre-commit hook)
 - Run `npm run build` clean
 - Conventional commits (`feat:`, `fix:`, `chore:`, etc.)

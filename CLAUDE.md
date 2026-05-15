@@ -79,6 +79,22 @@ There is no automated test suite yet. When adding one, prefer:
 - TS: vitest (lighter than jest for this size)
 - Do not add Playwright/e2e until v0.2.
 
+### Pre-commit hook
+
+`npm install` runs Husky's `prepare` step, which installs `.husky/pre-commit`.
+The hook runs `scripts/check-docs-sync.mjs`, which blocks a commit when staged
+changes touch source/build areas (`src/`, `agent/`, `webview-ui/src/`,
+`package.json`, `scripts/`, `.github/workflows/`) but none of the three
+AI-agent instruction files are also staged:
+
+- `CLAUDE.md`
+- `AGENTS.md`
+- `.github/copilot-instructions.md`
+
+Keep all three in sync — they are mirrors aimed at different agents. Bypass
+the check with `SKIP_DOCS_CHECK=1 git commit ...` or `git commit --no-verify`
+when a change genuinely needs no doc update (e.g. a typo fix in source).
+
 ## Conventions
 
 **TypeScript:**

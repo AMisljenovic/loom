@@ -35,3 +35,12 @@ Layers communicate via JSON-RPC 2.0 over stdio with LSP-style framing.
 2. VS Code API calls stay in TypeScript.
 3. Webview has no business logic.
 4. Any wire-protocol change updates both sides in the same commit.
+
+## Pre-commit hook
+
+A Husky pre-commit hook (`scripts/check-docs-sync.mjs`, installed by
+`npm install`) blocks commits that touch `src/`, `agent/`, `webview-ui/src/`,
+`package.json`, `scripts/`, or `.github/workflows/` without also staging one
+of `CLAUDE.md`, `AGENTS.md`, or `.github/copilot-instructions.md`. Keep all
+three in sync. Bypass with `SKIP_DOCS_CHECK=1` or `--no-verify` when no doc
+change is warranted.

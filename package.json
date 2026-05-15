@@ -130,12 +130,14 @@
     "build:agent:all": "node scripts/build-agent.mjs --all",
     "build": "npm run build:agent && npm run build:webview && npm run build:ts",
     "watch": "node esbuild.config.mjs --watch",
-    "package": "node scripts/package.mjs"
+    "package": "node scripts/package.mjs",
+    "prepare": "husky"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.90.0",
     "esbuild": "^0.21.0",
+    "husky": "^9.1.6",
     "typescript": "^5.4.0",
     "@vscode/vsce": "^2.27.0"
   }

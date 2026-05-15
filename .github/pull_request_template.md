@@ -34,7 +34,7 @@ How did you verify this works?
 
 # Checklist
 
-- [ ] Updated `CLAUDE.md` / `AGENTS.md` if architecture changed
+- [ ] Updated `CLAUDE.md` / `AGENTS.md` / `.github/copilot-instructions.md` if architecture changed (enforced by the `pre-commit` hook — see `scripts/check-docs-sync.mjs`)
 - [ ] No `any` introduced in TypeScript
 - [ ] No `fmt.Print*` to stdout in Go (logs go to stderr)
 - [ ] Conventional commit format (`feat:`, `fix:`, `chore:`, etc.)
