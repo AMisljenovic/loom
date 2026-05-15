@@ -137,7 +137,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.90.0",
-    "@vscode/vsce": "^2.27.0",
+    "@vscode/vsce": "^3.9.1",
     "esbuild": "^0.21.0",
     "husky": "^9.1.6",
     "typescript": "^5.4.0",
