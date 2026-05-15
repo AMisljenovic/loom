@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { estimateCost } from "../../src/shared/pricing";
 import type {
   AlwaysAllowRule,
   ConversationUsage,
@@ -10,7 +11,6 @@ import type {
   ReasoningEffort,
   ToolStatus,
 } from "../../src/shared/protocol";
-import { estimateCost } from "../../src/shared/pricing";
 import { InlineDiff } from "./components/InlineDiff";
 
 // VS Code webview API handle

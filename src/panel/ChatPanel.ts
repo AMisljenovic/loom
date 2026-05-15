@@ -6,6 +6,7 @@ import { AgentClient, LlmConfig } from "../agentClient";
 import { consumeHostApprovalPolicy } from "../approval/hostPolicy";
 import { loadDotEnv } from "../env";
 import { resolveMcpConfig } from "../mcpConfig";
+import { BUILTIN_MODES, mergeModes } from "../modes";
 import { secretKeyFor } from "../secrets";
 import type {
   AlwaysAllowRule,
@@ -25,7 +26,6 @@ import type {
   ToolResult,
   WebviewToHost,
 } from "../shared/protocol";
-import { BUILTIN_MODES, mergeModes } from "../modes";
 import {
   cachePreparedApplyDiff,
   discardPreparedApplyDiff,
