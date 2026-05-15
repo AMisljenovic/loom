@@ -12,29 +12,39 @@
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
-    "onCommand:myAgent.open"
+    "onCommand:loom.open",
+    "onCommand:loom.setAnthropicKey",
+    "onCommand:loom.setOpenAIKey"
   ],
   "contributes": {
     "commands": [
       {
-        "command": "myAgent.open",
+        "command": "loom.open",
         "title": "My Agent: Open Chat"
+      },
+      {
+        "command": "loom.setAnthropicKey",
+        "title": "Loom: Set Anthropic API Key"
+      },
+      {
+        "command": "loom.setOpenAIKey",
+        "title": "Loom: Set OpenAI API Key"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "myAgent",
+          "id": "loom",
           "title": "My Agent",
           "icon": "$(sparkle)"
         }
       ]
     },
     "views": {
-      "myAgent": [
+      "loom": [
         {
           "type": "webview",
-          "id": "myAgent.chat",
+          "id": "loom.chat",
           "name": "Chat"
         }
       ]
@@ -42,41 +52,50 @@
     "configuration": {
       "title": "My Agent",
       "properties": {
-        "myAgent.provider": {
+        "loom.provider": {
           "type": "string",
           "enum": [
             "openai",
-            "anthropic"
+            "anthropic",
+            "local"
           ],
           "default": "anthropic",
-          "description": "LLM provider. Can also be set via MY_AGENT_PROVIDER in .env."
+          "order": 10,
+          "markdownDescription": "**Loom: Provider**\n\nLLM provider. Can also be set via `MY_AGENT_PROVIDER` in `.env`."
         },
-        "myAgent.anthropicApiKey": {
+        "loom.anthropicApiKey": {
           "type": "string",
           "default": "",
-          "description": "Anthropic API key (or set ANTHROPIC_API_KEY in .env / env)."
+          "order": 20,
+          "markdownDescription": "**Loom: Anthropic**\n\nDeprecated plaintext Anthropic API key fallback.",
+          "deprecationMessage": "Use the 'Loom: Set Anthropic API Key' command instead."
         },
-        "myAgent.model": {
+        "loom.model": {
           "type": "string",
           "default": "claude-opus-4-7",
-          "description": "Anthropic model id (or set MY_AGENT_MODEL in .env)."
+          "order": 21,
+          "markdownDescription": "**Loom: Anthropic**\n\nAnthropic model id. Can also be set via `MY_AGENT_MODEL` in `.env`."
         },
-        "myAgent.openai.apiKey": {
+        "loom.openai.apiKey": {
           "type": "string",
           "default": "",
-          "description": "OpenAI API key (or set OPENAI_API_KEY in .env / env). Required when provider=openai."
+          "order": 30,
+          "markdownDescription": "**Loom: OpenAI**\n\nDeprecated plaintext OpenAI API key fallback.",
+          "deprecationMessage": "Use the 'Loom: Set OpenAI API Key' command instead."
         },
-        "myAgent.openai.baseUrl": {
+        "loom.openai.baseUrl": {
           "type": "string",
           "default": "",
-          "description": "OpenAI base URL. Leave empty for api.openai.com, or point at an OpenAI-compatible endpoint (Ollama, Groq, OpenRouter, LM Studio). Also OPENAI_BASE_URL."
+          "order": 31,
+          "markdownDescription": "**Loom: OpenAI**\n\nOpenAI base URL. Leave empty for api.openai.com, or point at an OpenAI-compatible endpoint. Also `OPENAI_BASE_URL`."
         },
-        "myAgent.openai.model": {
+        "loom.openai.model": {
           "type": "string",
           "default": "gpt-5",
-          "description": "OpenAI model id (or set OPENAI_MODEL in .env)."
+          "order": 32,
+          "markdownDescription": "**Loom: OpenAI**\n\nOpenAI model id. Can also be set via `OPENAI_MODEL` in `.env`."
         },
-        "myAgent.openai.reasoningEffort": {
+        "loom.openai.reasoningEffort": {
           "type": "string",
           "enum": [
             "",
@@ -85,7 +104,20 @@
             "high"
           ],
           "default": "",
-          "description": "Reasoning effort for reasoning-capable models. Empty disables. Also OPENAI_REASONING_EFFORT."
+          "order": 33,
+          "markdownDescription": "**Loom: OpenAI**\n\nReasoning effort for reasoning-capable models. Empty uses provider default. Also `OPENAI_REASONING_EFFORT`."
+        },
+        "loom.local.baseUrl": {
+          "type": "string",
+          "default": "http://localhost:11434/v1",
+          "order": 40,
+          "markdownDescription": "**Loom: Local**\n\nOpenAI-compatible local endpoint base URL."
+        },
+        "loom.local.model": {
+          "type": "string",
+          "default": "llama3.1",
+          "order": 41,
+          "markdownDescription": "**Loom: Local**\n\nLocal OpenAI-compatible model id."
         }
       }
     }

@@ -95,7 +95,7 @@ models.
 - **Model selection** — list of known models per provider, plus "custom"
   input
 - **Settings UI** — proper VS Code settings tree, not just
-  `myAgent.anthropicApiKey`
+  `loom.anthropicApiKey`
 - **Key storage** — use `vscode.SecretStorage` instead of plaintext settings
 
 **Success test:** Switch from GPT-4 to Claude Opus to a local Llama

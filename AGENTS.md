@@ -39,7 +39,7 @@ bundle.
 ## Run
 
 Open the repo in VS Code and press **F5** to launch an Extension Development
-Host. Set `myAgent.anthropicApiKey` or export `ANTHROPIC_API_KEY` first.
+Host. Run **Loom: Set Anthropic API Key** or export `ANTHROPIC_API_KEY` first.
 
 ## Test
 

@@ -3,8 +3,35 @@
 
 export type TaskId = string;
 export type CallId = string;
+export type LlmProvider = "openai" | "anthropic" | "local";
+export type AgentLlmProvider = "openai" | "anthropic";
+export type ReasoningEffort = "" | "low" | "medium" | "high";
+
+export interface LlmConfigView {
+  provider: LlmProvider;
+  model: string;
+  baseUrl?: string;
+  reasoningEffort?: ReasoningEffort;
+  hasApiKey?: boolean;
+  apiKeys?: {
+    anthropic: boolean;
+    openai: boolean;
+  };
+}
 
 // ---- Extension <-> Go agent ----
+
+export interface ConfigUpdateParams {
+  provider: AgentLlmProvider;
+  model: string;
+  apiKey: string;
+  baseUrl?: string;
+  reasoningEffort?: ReasoningEffort;
+}
+
+export type ConfigUpdateResult =
+  | { ok: true }
+  | { ok: false; error: string };
 
 export interface TaskStartParams {
   taskId: TaskId;
@@ -88,6 +115,7 @@ export interface ConversationUpdated {
   lastInputTokens: number;
   lastOutputTokens: number;
   model: string;
+  llmConfig?: LlmConfigView;
 }
 
 export interface TaskSummarized {
@@ -119,6 +147,8 @@ export type WebviewToHost =
   | { type: "submit"; prompt: string }
   | { type: "cancel" }
   | { type: "newConversation" }
+  | { type: "setLlmConfig"; config: Omit<LlmConfigView, "hasApiKey"> }
+  | { type: "setSecret"; provider: Exclude<LlmProvider, "local">; apiKey: string }
   | { type: "approve"; callId: CallId; approved: boolean };
 
 export type HostToWebview =
@@ -127,7 +157,8 @@ export type HostToWebview =
   | { type: "toolProgress"; callId: CallId; chunk: string }
   | { type: "toolResult"; callId: CallId; ok: boolean; summary: string; durationMs: number }
   | { type: "done"; reason: TaskDone["reason"] }
-  | { type: "restore"; messages: Msg[]; conversationId: string; usage: ConversationUsage }
+  | { type: "restore"; messages: Msg[]; conversationId: string; usage: ConversationUsage; llmConfig: LlmConfigView }
+  | { type: "llmConfig"; llmConfig: LlmConfigView }
   | { type: "usage"; usage: ConversationUsage }
   | { type: "summarized"; droppedCount: number }
   | { type: "error"; error: string };

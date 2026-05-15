@@ -71,7 +71,7 @@ bash scripts/package.sh
 
 To run in dev: open the repo in VS Code, press **F5**. This launches an
 Extension Development Host with the extension loaded. Set
-`myAgent.anthropicApiKey` in settings or export `ANTHROPIC_API_KEY` before
+the **Loom: Set Anthropic API Key** command or export `ANTHROPIC_API_KEY` before
 testing.
 
 There is no automated test suite yet. When adding one, prefer:

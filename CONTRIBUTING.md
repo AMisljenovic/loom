@@ -38,7 +38,7 @@ scripts/              build + package scripts
 1. Open the repo in VS Code.
 2. Press **F5** to launch an Extension Development Host with the extension
    loaded.
-3. Set `myAgent.anthropicApiKey` in the dev host's settings, or export
+3. Run **Loom: Set Anthropic API Key** in the dev host, or export
    `ANTHROPIC_API_KEY` before launching.
 4. Open the **My Agent** view in the activity bar.
 5. Make changes. Rebuild the affected layer:

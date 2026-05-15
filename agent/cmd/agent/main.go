@@ -30,6 +30,31 @@ type hydrateParams struct {
 	LastOutputTokens int64         `json:"lastOutputTokens"`
 }
 
+type configUpdateParams struct {
+	Provider        string `json:"provider"`
+	Model           string `json:"model"`
+	APIKey          string `json:"apiKey"`
+	BaseURL         string `json:"baseUrl"`
+	ReasoningEffort string `json:"reasoningEffort"`
+}
+
+type providerHolder struct {
+	mu       sync.RWMutex
+	provider llm.Provider
+}
+
+func (h *providerHolder) Get() llm.Provider {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.provider
+}
+
+func (h *providerHolder) Set(provider llm.Provider) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.provider = provider
+}
+
 func main() {
 	log.SetOutput(os.Stderr)
 	log.SetFlags(0)
@@ -41,6 +66,7 @@ func main() {
 
 	conn := rpc.New(os.Stdin, os.Stdout)
 	conversations := conversation.NewStore()
+	providers := &providerHolder{provider: provider}
 	var taskMu sync.Mutex
 	taskCancels := make(map[string]context.CancelFunc)
 
@@ -56,7 +82,7 @@ func main() {
 		d := &loop.Driver{
 			Conn:          conn,
 			WorkspaceRoot: p.WorkspaceRoot,
-			LLM:           provider,
+			LLM:           providers.Get(),
 			Conversations: conversations,
 		}
 		go func() {
@@ -112,6 +138,31 @@ func main() {
 			LastInputTokens:  p.LastInputTokens,
 			LastOutputTokens: p.LastOutputTokens,
 		})
+		return map[string]any{"ok": true}, nil
+	})
+
+	conn.Handle("config.update", func(params json.RawMessage) (any, error) {
+		var p configUpdateParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		next, err := llm.New(llm.Config{
+			Provider: p.Provider,
+			OpenAI: llm.OpenAIConfig{
+				APIKey:          p.APIKey,
+				BaseURL:         p.BaseURL,
+				Model:           p.Model,
+				ReasoningEffort: p.ReasoningEffort,
+			},
+			Anthropic: llm.AnthropicConfig{
+				APIKey: p.APIKey,
+				Model:  p.Model,
+			},
+		})
+		if err != nil {
+			return map[string]any{"ok": false, "error": err.Error()}, nil
+		}
+		providers.Set(next)
 		return map[string]any{"ok": true}, nil
 	})
 

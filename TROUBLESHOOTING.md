@@ -69,10 +69,10 @@ of `agent-win32-x64.exe`, the rename step failed. Re-run the build.
 The binary for your current platform hasn't been built. Run
 `npm run build:agent`.
 
-### "Set myAgent.anthropicApiKey or ANTHROPIC_API_KEY"
+### "Run Loom: Set Anthropic API Key or set ANTHROPIC_API_KEY"
 
 The extension needs an API key. Either:
-- Set `myAgent.anthropicApiKey` in VS Code settings, or
+- Run **Loom: Set Anthropic API Key**, or
 - Export `ANTHROPIC_API_KEY` before launching VS Code
 
 The env var is read at the time the extension activates, not at task start,

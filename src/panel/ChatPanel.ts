@@ -2,13 +2,17 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { AgentClient, LlmConfig, LlmProvider } from "../agentClient";
+import { AgentClient, LlmConfig } from "../agentClient";
 import { loadDotEnv } from "../env";
+import { secretKeyFor } from "../secrets";
 import type {
   ConversationState,
   ConversationUpdated,
   HostToWebview,
+  LlmConfigView,
+  LlmProvider,
   Msg,
+  ReasoningEffort,
   TaskDone,
   TaskUsage,
   ToolCall,
@@ -28,10 +32,14 @@ import {
   setDiffPreview,
 } from "../tools/diffPreview";
 
-const STATE_KEY = "myAgent.conversation";
+const STATE_KEY = "loom.conversation";
+const LOCAL_BASE_URL = "http://localhost:11434/v1";
+const LOCAL_MODEL = "llama3.1";
+const ANTHROPIC_MODEL = "claude-opus-4-7";
+const OPENAI_MODEL = "gpt-5";
 
 export class ChatPanel implements vscode.WebviewViewProvider {
-  public static readonly viewType = "myAgent.chat";
+  public static readonly viewType = "loom.chat";
 
   private view?: vscode.WebviewView;
   private agent?: AgentClient;
@@ -44,6 +52,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private queuedPrompt?: string;
   private assistantIndex: number | null = null;
   private hydratedConversationId?: string;
+  private webviewMessageQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly ctx: vscode.ExtensionContext) {
     this.state = this.loadState();
@@ -56,7 +65,11 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       localResourceRoots: [vscode.Uri.joinPath(this.ctx.extensionUri, "dist", "webview")],
     };
     view.webview.html = this.getHtml(view.webview);
-    view.webview.onDidReceiveMessage((m: WebviewToHost) => this.onWebviewMessage(m));
+    view.webview.onDidReceiveMessage((m: WebviewToHost) => {
+      this.webviewMessageQueue = this.webviewMessageQueue
+        .then(() => this.onWebviewMessage(m))
+        .catch((e: unknown) => this.post({ type: "error", error: e instanceof Error ? e.message : String(e) }));
+    });
   }
 
   private post(msg: HostToWebview, mirror = true) {
@@ -68,7 +81,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
 
   private async onWebviewMessage(m: WebviewToHost) {
     if (m.type === "ready") {
-      this.restoreWebview();
+      await this.restoreWebview();
     } else if (m.type === "submit") {
       if (this.busy) {
         this.queuedPrompt = m.prompt;
@@ -84,6 +97,13 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       }
     } else if (m.type === "newConversation") {
       await this.newConversation();
+    } else if (m.type === "setSecret") {
+      if (m.apiKey.trim()) {
+        await this.ctx.secrets.store(secretKeyFor(m.provider), m.apiKey.trim());
+      }
+      await this.postLlmConfig();
+    } else if (m.type === "setLlmConfig") {
+      await this.applyLlmConfig(m.config);
     } else if (m.type === "approve") {
       this.pendingApprovals.get(m.callId)?.(m.approved);
       this.pendingApprovals.delete(m.callId);
@@ -120,7 +140,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
 
   private async ensureAgent(workspaceRoot: string): Promise<boolean> {
     if (!this.agent) {
-      const cfg = this.resolveLlmConfig(workspaceRoot, this.ctx.extensionPath);
+      const cfg = await this.resolveLlmConfig(workspaceRoot, this.ctx.extensionPath);
       if ("error" in cfg) {
         this.post({ type: "error", error: cfg.error });
         return false;
@@ -267,6 +287,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.state.lastInputTokens = update.lastInputTokens;
     this.state.lastOutputTokens = update.lastOutputTokens;
     this.schedulePersist();
+    void this.postLlmConfig();
   }
 
   private async newConversation() {
@@ -281,15 +302,16 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.pendingApprovals.clear();
     this.toolStartTimes.clear();
     this.persistNow();
-    this.restoreWebview();
+    await this.restoreWebview();
   }
 
-  private restoreWebview() {
+  private async restoreWebview() {
     this.post({
       type: "restore",
       messages: this.state.messages,
       conversationId: this.state.conversationId,
       usage: this.state.usage,
+      llmConfig: await this.currentLlmConfigView(),
     }, false);
   }
 
@@ -418,32 +440,92 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     await closeDiffPreview(callId);
   }
 
-  // Resolves LLM config from VS Code settings, the workspace .env file, and
-  // process.env (in that precedence). Returns either the validated config or
-  // a user-facing error message. extensionPath is used as a fallback location
-  // for .env so developers running the extension via F5 in this repo get
-  // their .env picked up even if no workspace folder is open.
-  private resolveLlmConfig(
+  private async applyLlmConfig(config: Omit<LlmConfigView, "hasApiKey">) {
+    const provider = this.validProvider(config.provider) ? config.provider : "anthropic";
+    const settings = vscode.workspace.getConfiguration("loom");
+    const target = this.configurationTarget();
+    await settings.update("provider", provider, target);
+    if (provider === "anthropic") {
+      await settings.update("model", config.model || ANTHROPIC_MODEL, target);
+    } else if (provider === "openai") {
+      await settings.update("openai.model", config.model || OPENAI_MODEL, target);
+      await settings.update("openai.baseUrl", config.baseUrl ?? "", target);
+      await settings.update("openai.reasoningEffort", this.validReasoningEffort(config.reasoningEffort), target);
+    } else {
+      await settings.update("local.model", config.model || LOCAL_MODEL, target);
+      await settings.update("local.baseUrl", config.baseUrl || LOCAL_BASE_URL, target);
+    }
+
+    const cfg = await this.resolveLlmConfig(this.workspaceRoot(), this.ctx.extensionPath);
+    if ("error" in cfg) {
+      this.post({ type: "error", error: cfg.error });
+      await this.postLlmConfig();
+      return;
+    }
+    try {
+      await this.agent?.updateConfig(cfg);
+      await this.postLlmConfig();
+    } catch (e: unknown) {
+      this.post({ type: "error", error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  private async postLlmConfig() {
+    this.post({ type: "llmConfig", llmConfig: await this.currentLlmConfigView() }, false);
+  }
+
+  private async currentLlmConfigView(): Promise<LlmConfigView> {
+    const workspaceRoot = this.workspaceRoot();
+    const { pick } = this.configPickers(workspaceRoot, this.ctx.extensionPath);
+    const rawProvider = pick("provider", "MY_AGENT_PROVIDER") || "anthropic";
+    const provider = this.validProvider(rawProvider) ? rawProvider : "anthropic";
+    const apiKeys = {
+      anthropic: await this.hasApiKey("anthropic", "anthropicApiKey", "ANTHROPIC_API_KEY"),
+      openai: await this.hasApiKey("openai", "openai.apiKey", "OPENAI_API_KEY"),
+    };
+    if (provider === "openai") {
+      const reasoningEffort = this.validReasoningEffort(pick("openai.reasoningEffort", "OPENAI_REASONING_EFFORT"));
+      return {
+        provider,
+        model: pick("openai.model", "OPENAI_MODEL") || OPENAI_MODEL,
+        baseUrl: pick("openai.baseUrl", "OPENAI_BASE_URL") || undefined,
+        reasoningEffort,
+        hasApiKey: apiKeys.openai,
+        apiKeys,
+      };
+    }
+    if (provider === "local") {
+      return {
+        provider,
+        model: pick("local.model", "OPENAI_MODEL") || LOCAL_MODEL,
+        baseUrl: pick("local.baseUrl", "OPENAI_BASE_URL") || LOCAL_BASE_URL,
+        hasApiKey: true,
+        apiKeys,
+      };
+    }
+    return {
+      provider,
+      model: pick("model", "MY_AGENT_MODEL") || ANTHROPIC_MODEL,
+      hasApiKey: apiKeys.anthropic,
+      apiKeys,
+    };
+  }
+
+  // Resolves LLM config from SecretStorage, VS Code settings, the workspace
+  // .env file, and process.env (in that precedence).
+  private async resolveLlmConfig(
     workspaceRoot: string,
     extensionPath: string,
-  ): LlmConfig | { error: string } {
-    const settings = vscode.workspace.getConfiguration("myAgent");
-    let dotenv = loadDotEnv(workspaceRoot);
-    let dotenvSource = workspaceRoot;
-    if (Object.keys(dotenv).length === 0 && extensionPath) {
-      dotenv = loadDotEnv(extensionPath);
-      dotenvSource = extensionPath;
-    }
-    // Use inspect() so the package.json `default` value never beats .env.
-    const pick = (settingKey: string, envKey: string): string => {
-      const ins = settings.inspect<string>(settingKey);
-      const explicit =
-        ins?.workspaceFolderValue ??
-        ins?.workspaceValue ??
-        ins?.globalValue;
-      if (explicit) return explicit;
-      if (dotenv[envKey]) return dotenv[envKey];
-      return process.env[envKey] ?? "";
+  ): Promise<LlmConfig | { error: string }> {
+    const { pick, dotenv, dotenvSource } = this.configPickers(workspaceRoot, extensionPath);
+    const pickApiKey = async (
+      providerName: "anthropic" | "openai",
+      settingKey: string,
+      envKey: string,
+    ): Promise<string> => {
+      const secret = await this.ctx.secrets.get(secretKeyFor(providerName));
+      if (secret) return secret;
+      return pick(settingKey, envKey);
     };
 
     const provider = (pick("provider", "MY_AGENT_PROVIDER") || "anthropic") as LlmProvider;
@@ -455,16 +537,13 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     );
 
     if (provider === "openai") {
-      const apiKey = pick("openai.apiKey", "OPENAI_API_KEY");
+      const apiKey = await pickApiKey("openai", "openai.apiKey", "OPENAI_API_KEY");
       if (!apiKey) {
-        return { error: "Set myAgent.openai.apiKey, OPENAI_API_KEY in .env, or in the environment." };
+        return { error: "Run Loom: Set OpenAI API Key, set loom.openai.apiKey, OPENAI_API_KEY in .env, or set it in the environment." };
       }
-      const model = pick("openai.model", "OPENAI_MODEL") || "gpt-5";
+      const model = pick("openai.model", "OPENAI_MODEL") || OPENAI_MODEL;
       const baseUrl = pick("openai.baseUrl", "OPENAI_BASE_URL");
-      const reasoningEffort = pick("openai.reasoningEffort", "OPENAI_REASONING_EFFORT");
-      const validEffort = ["", "low", "medium", "high"].includes(reasoningEffort)
-        ? (reasoningEffort as "" | "low" | "medium" | "high")
-        : "";
+      const validEffort = this.validReasoningEffort(pick("openai.reasoningEffort", "OPENAI_REASONING_EFFORT"));
       return {
         provider: "openai",
         openai: { apiKey, model, baseUrl: baseUrl || undefined, reasoningEffort: validEffort },
@@ -472,15 +551,71 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     }
 
     if (provider === "anthropic") {
-      const apiKey = pick("anthropicApiKey", "ANTHROPIC_API_KEY");
+      const apiKey = await pickApiKey("anthropic", "anthropicApiKey", "ANTHROPIC_API_KEY");
       if (!apiKey) {
-        return { error: "Set myAgent.anthropicApiKey, ANTHROPIC_API_KEY in .env, or in the environment." };
+        return { error: "Run Loom: Set Anthropic API Key, set loom.anthropicApiKey, ANTHROPIC_API_KEY in .env, or set it in the environment." };
       }
-      const model = pick("model", "MY_AGENT_MODEL") || "claude-opus-4-7";
+      const model = pick("model", "MY_AGENT_MODEL") || ANTHROPIC_MODEL;
       return { provider: "anthropic", anthropic: { apiKey, model } };
     }
 
-    return { error: `Unknown provider "${provider}" - expected openai or anthropic.` };
+    if (provider === "local") {
+      const model = pick("local.model", "OPENAI_MODEL") || LOCAL_MODEL;
+      const baseUrl = pick("local.baseUrl", "OPENAI_BASE_URL") || LOCAL_BASE_URL;
+      return { provider: "local", local: { model, baseUrl } };
+    }
+
+    return { error: `Unknown provider "${provider}" - expected openai, anthropic, or local.` };
+  }
+
+  private async hasApiKey(
+    provider: "anthropic" | "openai",
+    settingKey: string,
+    envKey: string,
+  ): Promise<boolean> {
+    const secret = await this.ctx.secrets.get(secretKeyFor(provider));
+    if (secret) return true;
+    const { pick } = this.configPickers(this.workspaceRoot(), this.ctx.extensionPath);
+    return Boolean(pick(settingKey, envKey));
+  }
+
+  private configPickers(workspaceRoot: string, extensionPath: string) {
+    const settings = vscode.workspace.getConfiguration("loom");
+    let dotenv = loadDotEnv(workspaceRoot);
+    let dotenvSource = workspaceRoot;
+    if (Object.keys(dotenv).length === 0 && extensionPath) {
+      dotenv = loadDotEnv(extensionPath);
+      dotenvSource = extensionPath;
+    }
+    const pick = (settingKey: string, envKey: string): string => {
+      const ins = settings.inspect<string>(settingKey);
+      const explicit =
+        ins?.workspaceFolderValue ??
+        ins?.workspaceValue ??
+        ins?.globalValue;
+      if (explicit) return explicit;
+      if (dotenv[envKey]) return dotenv[envKey];
+      return process.env[envKey] ?? "";
+    };
+    return { pick, dotenv, dotenvSource };
+  }
+
+  private workspaceRoot(): string {
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+  }
+
+  private configurationTarget(): vscode.ConfigurationTarget {
+    return vscode.workspace.workspaceFolders?.length
+      ? vscode.ConfigurationTarget.Workspace
+      : vscode.ConfigurationTarget.Global;
+  }
+
+  private validProvider(provider: string): provider is LlmProvider {
+    return provider === "anthropic" || provider === "openai" || provider === "local";
+  }
+
+  private validReasoningEffort(value: string | undefined): ReasoningEffort {
+    return value === "low" || value === "medium" || value === "high" ? value : "";
   }
 
   private getHtml(webview: vscode.Webview): string {

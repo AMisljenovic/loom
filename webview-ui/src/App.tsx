@@ -1,16 +1,42 @@
 import React, { useEffect, useRef, useState } from "react";
-import type { ConversationUsage, Msg, ToolStatus } from "../../src/shared/protocol";
+import type {
+  ConversationUsage,
+  LlmConfigView,
+  LlmProvider,
+  Msg,
+  ReasoningEffort,
+  ToolStatus,
+} from "../../src/shared/protocol";
 import { estimateCost } from "../../src/shared/pricing";
 
 // VS Code webview API handle
 declare function acquireVsCodeApi(): { postMessage: (m: unknown) => void };
 const vscode = acquireVsCodeApi();
 
+const defaultLlmConfig: LlmConfigView = {
+  provider: "anthropic",
+  model: "claude-opus-4-7",
+  hasApiKey: false,
+  apiKeys: { anthropic: false, openai: false },
+};
+
+const providerLabels: Record<LlmProvider, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  local: "Local",
+};
+
+const modelOptions: Record<Exclude<LlmProvider, "local">, string[]> = {
+  anthropic: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+  openai: ["gpt-5", "gpt-4o", "o3-mini"],
+};
+
 export function App() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [usage, setUsage] = useState<ConversationUsage>({ inputTokens: 0, outputTokens: 0 });
+  const [llmConfig, setLlmConfig] = useState<LlmConfigView>(defaultLlmConfig);
   const assistantRef = useRef<number | null>(null);
   const interruptQueuedRef = useRef(false);
 
@@ -21,9 +47,14 @@ export function App() {
       if (m.type === "restore") {
         setMessages(m.messages ?? []);
         setUsage(m.usage ?? { inputTokens: 0, outputTokens: 0 });
+        setLlmConfig(m.llmConfig ?? defaultLlmConfig);
         setBusy(false);
         assistantRef.current = null;
         interruptQueuedRef.current = false;
+        return;
+      }
+      if (m.type === "llmConfig") {
+        setLlmConfig(m.llmConfig ?? defaultLlmConfig);
         return;
       }
       if (m.type === "usage") {
@@ -157,7 +188,7 @@ export function App() {
           </div>
         ))}
       </div>
-      <StatusStrip usage={usage} />
+      <StatusStrip usage={usage} llmConfig={llmConfig} />
       <div style={styles.composer}>
         <input
           value={input}
@@ -172,13 +203,157 @@ export function App() {
   );
 }
 
-function StatusStrip({ usage }: { usage: ConversationUsage }) {
+function StatusStrip({ usage, llmConfig }: { usage: ConversationUsage; llmConfig: LlmConfigView }) {
   const cost = estimateCost(usage);
   return (
     <div style={styles.statusStrip}>
+      <ProviderPicker config={llmConfig} />
       <span>↑ {formatTokens(usage.inputTokens)}</span>
       <span>↓ {formatTokens(usage.outputTokens)}</span>
       {cost !== undefined && <span>≈ ${cost.toFixed(cost < 0.01 ? 4 : 2)}</span>}
+    </div>
+  );
+}
+
+function ProviderPicker({ config }: { config: LlmConfigView }) {
+  const [open, setOpen] = useState(false);
+  const [provider, setProvider] = useState<LlmProvider>(config.provider);
+  const [model, setModel] = useState(config.model);
+  const [baseUrl, setBaseUrl] = useState(config.baseUrl ?? "");
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(config.reasoningEffort ?? "");
+  const [apiKey, setApiKey] = useState("");
+
+  useEffect(() => {
+    setProvider(config.provider);
+    setModel(config.model);
+    setBaseUrl(config.baseUrl ?? (config.provider === "local" ? "http://localhost:11434/v1" : ""));
+    setReasoningEffort(config.reasoningEffort ?? "");
+    setApiKey("");
+  }, [config]);
+
+  const hasKey = provider === "local"
+    ? true
+    : config.apiKeys?.[provider] ?? (config.provider === provider ? Boolean(config.hasApiKey) : false);
+  const showKey = provider !== "local" && !hasKey;
+  const listedModels = provider === "local" ? [] : modelOptions[provider];
+  const customModel = provider !== "local" && !listedModels.includes(model);
+
+  const changeProvider = (nextProvider: LlmProvider) => {
+    setProvider(nextProvider);
+    setModel(defaultModelFor(nextProvider));
+    setBaseUrl(nextProvider === "local" ? "http://localhost:11434/v1" : "");
+    setReasoningEffort("");
+    setApiKey("");
+  };
+
+  const apply = () => {
+    const finalModel = model.trim() || defaultModelFor(provider);
+    if (showKey && apiKey.trim()) {
+      vscode.postMessage({ type: "setSecret", provider, apiKey: apiKey.trim() });
+    }
+    vscode.postMessage({
+      type: "setLlmConfig",
+      config: {
+        provider,
+        model: finalModel,
+        baseUrl: provider === "local" || provider === "openai" ? baseUrl.trim() : undefined,
+        reasoningEffort: provider === "openai" ? reasoningEffort : undefined,
+      },
+    });
+    setOpen(false);
+    setApiKey("");
+  };
+
+  return (
+    <div style={styles.providerPicker}>
+      <button type="button" onClick={() => setOpen((v) => !v)} style={styles.providerPill}>
+        {providerLabels[config.provider]} / {config.model}
+      </button>
+      {open && (
+        <div style={styles.providerPanel}>
+          <label style={styles.fieldLabel}>
+            Provider
+            <select
+              value={provider}
+              onChange={(e) => changeProvider(e.target.value as LlmProvider)}
+              style={styles.field}
+            >
+              <option value="anthropic">Anthropic</option>
+              <option value="openai">OpenAI</option>
+              <option value="local">Local</option>
+            </select>
+          </label>
+          {provider === "local" ? (
+            <label style={styles.fieldLabel}>
+              Model
+              <input value={model} onChange={(e) => setModel(e.target.value)} style={styles.field} />
+            </label>
+          ) : (
+            <>
+              <label style={styles.fieldLabel}>
+                Model
+                <select
+                  value={customModel ? "__custom__" : model}
+                  onChange={(e) => setModel(e.target.value === "__custom__" ? "" : e.target.value)}
+                  style={styles.field}
+                >
+                  {listedModels.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                  <option value="__custom__">Custom...</option>
+                </select>
+              </label>
+              {customModel && (
+                <label style={styles.fieldLabel}>
+                  Custom model
+                  <input value={model} onChange={(e) => setModel(e.target.value)} style={styles.field} />
+                </label>
+              )}
+            </>
+          )}
+          {(provider === "local" || provider === "openai") && (
+            <label style={styles.fieldLabel}>
+              Base URL
+              <input
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder={provider === "local" ? "http://localhost:11434/v1" : ""}
+                style={styles.field}
+              />
+            </label>
+          )}
+          {provider === "openai" && (
+            <label style={styles.fieldLabel}>
+              Reasoning effort
+              <select
+                value={reasoningEffort}
+                onChange={(e) => setReasoningEffort(e.target.value as ReasoningEffort)}
+                style={styles.field}
+              >
+                <option value="">Default</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+          )}
+          {showKey && (
+            <label style={styles.fieldLabel}>
+              API key
+              <input
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                type="password"
+                style={styles.field}
+              />
+            </label>
+          )}
+          <div style={styles.providerActions}>
+            <button type="button" onClick={() => setOpen(false)}>Cancel</button>
+            <button type="button" onClick={apply}>Apply</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -272,6 +447,12 @@ function formatTokens(tokens: number): string {
   return String(tokens);
 }
 
+function defaultModelFor(provider: LlmProvider): string {
+  if (provider === "openai") return "gpt-5";
+  if (provider === "local") return "llama3.1";
+  return "claude-opus-4-7";
+}
+
 const styles: Record<string, React.CSSProperties> = {
   shell: {
     display: "flex",
@@ -363,11 +544,60 @@ const styles: Record<string, React.CSSProperties> = {
   },
   statusStrip: {
     display: "flex",
+    alignItems: "center",
     gap: 12,
     padding: "4px 8px",
     color: "var(--vscode-descriptionForeground)",
     borderTop: "1px solid var(--vscode-panel-border)",
     fontSize: 12,
+  },
+  providerPicker: {
+    position: "relative",
+    marginRight: "auto",
+  },
+  providerPill: {
+    border: "1px solid var(--vscode-button-border, var(--vscode-panel-border))",
+    borderRadius: 999,
+    padding: "2px 8px",
+    color: "var(--vscode-button-foreground)",
+    background: "var(--vscode-button-background)",
+    font: "inherit",
+    cursor: "pointer",
+    maxWidth: 220,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  providerPanel: {
+    position: "absolute",
+    left: 0,
+    bottom: "calc(100% + 6px)",
+    zIndex: 10,
+    width: 260,
+    padding: 8,
+    border: "1px solid var(--vscode-panel-border)",
+    background: "var(--vscode-editor-background)",
+    boxShadow: "0 4px 16px rgba(0, 0, 0, 0.24)",
+  },
+  fieldLabel: {
+    display: "grid",
+    gap: 4,
+    marginBottom: 8,
+    color: "var(--vscode-foreground)",
+  },
+  field: {
+    width: "100%",
+    boxSizing: "border-box",
+    color: "var(--vscode-input-foreground)",
+    background: "var(--vscode-input-background)",
+    border: "1px solid var(--vscode-input-border, var(--vscode-panel-border))",
+    padding: "4px 6px",
+    font: "inherit",
+  },
+  providerActions: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: 6,
   },
   input: {
     flex: 1,

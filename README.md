@@ -40,7 +40,7 @@ npm run build:agent:all
 
 1. Open the folder in VS Code.
 2. Press **F5** — this launches the Extension Development Host.
-3. Set `myAgent.anthropicApiKey` in settings (or export `ANTHROPIC_API_KEY`).
+3. Run **Loom: Set Anthropic API Key** (or export `ANTHROPIC_API_KEY`).
 4. Open the **My Agent** view in the activity bar.
 
 ## Package

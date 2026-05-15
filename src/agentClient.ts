@@ -3,6 +3,8 @@ import * as fs from "node:fs";
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { JsonRpc } from "./rpc";
 import type {
+  ConfigUpdateParams,
+  ConfigUpdateResult,
   TaskStartParams,
   MessageDelta,
   ToolCall,
@@ -11,6 +13,7 @@ import type {
   TaskUsage,
   ConversationUpdated,
   LlmMessage,
+  ReasoningEffort,
 } from "./shared/protocol";
 
 export interface AgentEvents {
@@ -25,21 +28,30 @@ export interface AgentEvents {
   onError: (err: string) => void;
 }
 
-export type LlmProvider = "openai" | "anthropic";
-
-export interface LlmConfig {
-  provider: LlmProvider;
-  openai?: {
-    apiKey: string;
-    baseUrl?: string;
-    model: string;
-    reasoningEffort?: "" | "low" | "medium" | "high";
+export type LlmConfig =
+  | {
+    provider: "openai";
+    openai: {
+      apiKey: string;
+      baseUrl?: string;
+      model: string;
+      reasoningEffort?: ReasoningEffort;
+    };
+  }
+  | {
+    provider: "anthropic";
+    anthropic: {
+      apiKey: string;
+      model: string;
+    };
+  }
+  | {
+    provider: "local";
+    local: {
+      baseUrl: string;
+      model: string;
+    };
   };
-  anthropic?: {
-    apiKey: string;
-    model: string;
-  };
-}
 
 export class AgentClient {
   private proc?: ChildProcessWithoutNullStreams;
@@ -132,6 +144,14 @@ export class AgentClient {
     return this.rpc.request("conversation.reset", { conversationId });
   }
 
+  async updateConfig(cfg: LlmConfig): Promise<void> {
+    if (!this.rpc) throw new Error("agent not started");
+    const result = await this.rpc.request<ConfigUpdateResult>("config.update", toAgentConfig(cfg));
+    if (!result.ok) {
+      throw new Error(result.error);
+    }
+  }
+
   dispose() {
     this.proc?.kill();
   }
@@ -145,17 +165,43 @@ export class AgentClient {
 }
 
 function buildSpawnEnv(cfg: LlmConfig): Record<string, string> {
+  const agentCfg = toAgentConfig(cfg);
   const env: Record<string, string> = {
-    MY_AGENT_PROVIDER: cfg.provider,
+    MY_AGENT_PROVIDER: agentCfg.provider,
   };
-  if (cfg.provider === "openai" && cfg.openai) {
-    env.OPENAI_API_KEY = cfg.openai.apiKey;
-    env.OPENAI_MODEL = cfg.openai.model;
-    if (cfg.openai.baseUrl) env.OPENAI_BASE_URL = cfg.openai.baseUrl;
-    if (cfg.openai.reasoningEffort) env.OPENAI_REASONING_EFFORT = cfg.openai.reasoningEffort;
-  } else if (cfg.provider === "anthropic" && cfg.anthropic) {
-    env.ANTHROPIC_API_KEY = cfg.anthropic.apiKey;
-    env.MY_AGENT_MODEL = cfg.anthropic.model;
+  if (agentCfg.provider === "openai") {
+    env.OPENAI_API_KEY = agentCfg.apiKey;
+    env.OPENAI_MODEL = agentCfg.model;
+    if (agentCfg.baseUrl) env.OPENAI_BASE_URL = agentCfg.baseUrl;
+    if (agentCfg.reasoningEffort) env.OPENAI_REASONING_EFFORT = agentCfg.reasoningEffort;
+  } else {
+    env.ANTHROPIC_API_KEY = agentCfg.apiKey;
+    env.MY_AGENT_MODEL = agentCfg.model;
   }
   return env;
+}
+
+function toAgentConfig(cfg: LlmConfig): ConfigUpdateParams {
+  if (cfg.provider === "local") {
+    return {
+      provider: "openai",
+      apiKey: "local",
+      model: cfg.local.model,
+      baseUrl: cfg.local.baseUrl,
+    };
+  }
+  if (cfg.provider === "openai") {
+    return {
+      provider: "openai",
+      apiKey: cfg.openai.apiKey,
+      model: cfg.openai.model,
+      baseUrl: cfg.openai.baseUrl,
+      reasoningEffort: cfg.openai.reasoningEffort,
+    };
+  }
+  return {
+    provider: "anthropic",
+    apiKey: cfg.anthropic.apiKey,
+    model: cfg.anthropic.model,
+  };
 }
