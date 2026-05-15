@@ -18,23 +18,23 @@ const (
 
 // Message is one entry in the conversation history.
 //
-// - RoleUser:      Content holds the prompt.
-// - RoleAssistant: Content holds the assistant text (may be empty if the turn
-//                  produced only tool calls). ToolCalls holds the calls the
-//                  model wants to invoke.
-// - RoleTool:      Content holds the tool result. ToolCallID identifies which
-//                  assistant tool call this is the answer to.
+//   - RoleUser:      Content holds the prompt.
+//   - RoleAssistant: Content holds the assistant text (may be empty if the turn
+//     produced only tool calls). ToolCalls holds the calls the
+//     model wants to invoke.
+//   - RoleTool:      Content holds the tool result. ToolCallID identifies which
+//     assistant tool call this is the answer to.
 type Message struct {
-	Role       Role
-	Content    string
-	ToolCalls  []ToolCall
-	ToolCallID string
+	Role       Role       `json:"role"`
+	Content    string     `json:"content"`
+	ToolCalls  []ToolCall `json:"toolCalls,omitempty"`
+	ToolCallID string     `json:"toolCallId,omitempty"`
 }
 
 type ToolCall struct {
-	ID    string
-	Name  string
-	Input json.RawMessage
+	ID    string          `json:"id"`
+	Name  string          `json:"name"`
+	Input json.RawMessage `json:"input"`
 }
 
 type ToolDef struct {
@@ -53,20 +53,33 @@ type StreamHandler interface {
 	OnToolUse(call ToolCall)
 }
 
+type TokenUsage struct {
+	InputTokens  int64 `json:"inputTokens"`
+	OutputTokens int64 `json:"outputTokens"`
+}
+
+type StreamResult struct {
+	StopReason string     `json:"stopReason"`
+	Usage      TokenUsage `json:"usage"`
+}
+
 // Provider abstracts a single LLM backend. Stream blocks until the turn ends
 // and returns the stop reason:
 //
-//   "tool_calls"  — model wants the caller to execute ToolCalls and feed
-//                   results back in the next Stream call.
-//   "end_turn"    — model is done; the loop should exit.
+//	"tool_calls"  — model wants the caller to execute ToolCalls and feed
+//	                results back in the next Stream call.
+//	"end_turn"    — model is done; the loop should exit.
 //
 // Any other value is treated as end-of-turn by the loop.
 type Provider interface {
+	Model() string
+	MaxContextTokens() int64
 	Stream(
 		ctx context.Context,
 		systemPrompt string,
 		messages []Message,
 		tools []ToolDef,
 		h StreamHandler,
-	) (stopReason string, err error)
+	) (StreamResult, error)
+	Complete(ctx context.Context, systemPrompt string, messages []Message) (string, TokenUsage, error)
 }

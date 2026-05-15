@@ -8,6 +8,9 @@ import type {
   ToolCall,
   ToolResult,
   TaskDone,
+  TaskUsage,
+  ConversationUpdated,
+  LlmMessage,
 } from "./shared/protocol";
 
 export interface AgentEvents {
@@ -16,6 +19,9 @@ export interface AgentEvents {
   onToolResult: (r: ToolResult) => void;
   onToolCall: (c: ToolCall) => Promise<ToolResult>;
   onDone: (d: TaskDone) => void;
+  onUsage: (u: TaskUsage) => void;
+  onConversationUpdated: (u: ConversationUpdated) => void;
+  onSummarized: (s: { taskId: string; conversationId: string; droppedCount: number }) => void;
   onError: (err: string) => void;
 }
 
@@ -38,6 +44,7 @@ export interface LlmConfig {
 export class AgentClient {
   private proc?: ChildProcessWithoutNullStreams;
   private rpc?: JsonRpc;
+  private activeTaskId?: string;
 
   constructor(
     private readonly extensionPath: string,
@@ -77,17 +84,52 @@ export class AgentClient {
       this.events.onDelta(params);
     });
     this.rpc.onRequest("task.done", (params: TaskDone) => {
+      if (this.activeTaskId === params.taskId) {
+        this.activeTaskId = undefined;
+      }
       this.events.onDone(params);
+    });
+    this.rpc.onRequest("task.usage", (params: TaskUsage) => {
+      this.events.onUsage(params);
+    });
+    this.rpc.onRequest("conversation.updated", (params: ConversationUpdated) => {
+      this.events.onConversationUpdated(params);
+    });
+    this.rpc.onRequest("task.summarized", (params: { taskId: string; conversationId: string; droppedCount: number }) => {
+      this.events.onSummarized(params);
     });
   }
 
   async startTask(params: TaskStartParams) {
     if (!this.rpc) throw new Error("agent not started");
+    this.activeTaskId = params.taskId;
     return this.rpc.request("task.start", params);
   }
 
-  async cancel(taskId: string) {
-    this.rpc?.notify("task.cancel", { taskId });
+  async cancel(taskId = this.activeTaskId) {
+    if (!this.rpc || !taskId) return;
+    return this.rpc.request("task.cancel", { taskId });
+  }
+
+  async hydrateConversation(params: {
+    conversationId: string;
+    messages: LlmMessage[];
+    cumulativeInput: number;
+    cumulativeOutput: number;
+    lastInputTokens?: number;
+    lastOutputTokens?: number;
+  }) {
+    if (!this.rpc) throw new Error("agent not started");
+    return this.rpc.request("conversation.hydrate", {
+      ...params,
+      lastInputTokens: params.lastInputTokens ?? 0,
+      lastOutputTokens: params.lastOutputTokens ?? 0,
+    });
+  }
+
+  async resetConversation(conversationId: string) {
+    if (!this.rpc) return;
+    return this.rpc.request("conversation.reset", { conversationId });
   }
 
   dispose() {

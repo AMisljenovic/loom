@@ -1,34 +1,35 @@
 import React, { useEffect, useRef, useState } from "react";
+import type { ConversationUsage, Msg, ToolStatus } from "../../src/shared/protocol";
+import { estimateCost } from "../../src/shared/pricing";
 
 // VS Code webview API handle
 declare function acquireVsCodeApi(): { postMessage: (m: unknown) => void };
 const vscode = acquireVsCodeApi();
 
-type ToolStatus = "pending" | "approved" | "rejected" | "running" | "done" | "error";
-
-type Msg =
-  | { role: "user"; text: string }
-  | { role: "assistant"; text: string }
-  | {
-    role: "tool";
-    name: string;
-    status: ToolStatus;
-    callId: string;
-    input?: unknown;
-    output?: string;
-    durationMs?: number;
-    expanded?: boolean;
-  };
-
 export function App() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [usage, setUsage] = useState<ConversationUsage>({ inputTokens: 0, outputTokens: 0 });
   const assistantRef = useRef<number | null>(null);
+  const interruptQueuedRef = useRef(false);
 
   useEffect(() => {
+    vscode.postMessage({ type: "ready" });
     const handler = (e: MessageEvent) => {
       const m = e.data;
+      if (m.type === "restore") {
+        setMessages(m.messages ?? []);
+        setUsage(m.usage ?? { inputTokens: 0, outputTokens: 0 });
+        setBusy(false);
+        assistantRef.current = null;
+        interruptQueuedRef.current = false;
+        return;
+      }
+      if (m.type === "usage") {
+        setUsage(m.usage);
+        return;
+      }
       setMessages((prev) => {
         const next = [...prev];
         if (m.type === "delta") {
@@ -68,10 +69,24 @@ export function App() {
             };
           });
         } else if (m.type === "done") {
-          setBusy(false);
+          if (m.reason === "cancelled" && assistantRef.current !== null) {
+            const cur = next[assistantRef.current];
+            if (cur?.role === "assistant" && cur.text && !cur.text.endsWith(" [interrupted]")) {
+              next[assistantRef.current] = { ...cur, text: `${cur.text} [interrupted]` };
+            }
+          }
+          const keepBusy = m.reason === "cancelled" && interruptQueuedRef.current;
+          interruptQueuedRef.current = false;
+          setBusy(keepBusy);
           assistantRef.current = null;
+        } else if (m.type === "summarized") {
+          next.push({
+            role: "assistant",
+            text: `Context summarized (${m.droppedCount} older messages compacted).`,
+          });
         } else if (m.type === "error") {
           next.push({ role: "assistant", text: `Error: ${m.error}` });
+          interruptQueuedRef.current = false;
           setBusy(false);
         }
         return next;
@@ -82,11 +97,23 @@ export function App() {
   }, []);
 
   const submit = () => {
-    if (!input.trim() || busy) return;
-    setMessages((m) => [...m, { role: "user", text: input }]);
-    vscode.postMessage({ type: "submit", prompt: input });
+    const prompt = input.trim();
+    if (!prompt) return;
+    setMessages((m) => [...m, { role: "user", text: prompt }]);
+    if (busy) {
+      interruptQueuedRef.current = true;
+      vscode.postMessage({ type: "cancel" });
+      vscode.postMessage({ type: "submit", prompt });
+    } else {
+      vscode.postMessage({ type: "submit", prompt });
+      setBusy(true);
+    }
     setInput("");
-    setBusy(true);
+  };
+
+  const newConversation = () => {
+    if (busy) return;
+    vscode.postMessage({ type: "newConversation" });
   };
 
   const approve = (callId: string, approved: boolean) => {
@@ -112,6 +139,9 @@ export function App() {
 
   return (
     <div style={styles.shell}>
+      <div style={styles.toolbar}>
+        <button onClick={newConversation} disabled={busy} style={styles.secondaryButton}>New conversation</button>
+      </div>
       <div style={styles.transcript}>
         {messages.map((m, i) => (
           <div key={i} style={styles.message}>
@@ -127,6 +157,7 @@ export function App() {
           </div>
         ))}
       </div>
+      <StatusStrip usage={usage} />
       <div style={styles.composer}>
         <input
           value={input}
@@ -134,10 +165,20 @@ export function App() {
           onKeyDown={(e) => e.key === "Enter" && submit()}
           placeholder="Ask the agent..."
           style={styles.input}
-          disabled={busy}
         />
-        <button onClick={submit} disabled={busy} style={styles.send}>Send</button>
+        <button onClick={submit} disabled={!input.trim()} style={styles.send}>Send</button>
       </div>
+    </div>
+  );
+}
+
+function StatusStrip({ usage }: { usage: ConversationUsage }) {
+  const cost = estimateCost(usage);
+  return (
+    <div style={styles.statusStrip}>
+      <span>↑ {formatTokens(usage.inputTokens)}</span>
+      <span>↓ {formatTokens(usage.outputTokens)}</span>
+      {cost !== undefined && <span>≈ ${cost.toFixed(cost < 0.01 ? 4 : 2)}</span>}
     </div>
   );
 }
@@ -225,6 +266,12 @@ function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+function formatTokens(tokens: number): string {
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
+  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}k`;
+  return String(tokens);
+}
+
 const styles: Record<string, React.CSSProperties> = {
   shell: {
     display: "flex",
@@ -236,6 +283,15 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     overflowY: "auto",
     padding: 8,
+  },
+  toolbar: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: 6,
+    padding: "8px 8px 0",
+  },
+  secondaryButton: {
+    font: "inherit",
   },
   message: {
     marginBottom: 12,
@@ -304,6 +360,14 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     padding: 8,
     borderTop: "1px solid var(--vscode-panel-border)",
+  },
+  statusStrip: {
+    display: "flex",
+    gap: 12,
+    padding: "4px 8px",
+    color: "var(--vscode-descriptionForeground)",
+    borderTop: "1px solid var(--vscode-panel-border)",
+    fontSize: 12,
   },
   input: {
     flex: 1,

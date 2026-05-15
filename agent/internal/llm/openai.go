@@ -66,7 +66,7 @@ func (p *openaiProvider) Stream(
 	messages []Message,
 	tools []ToolDef,
 	h StreamHandler,
-) (string, error) {
+) (StreamResult, error) {
 	oaiMsgs := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages)+1)
 	if systemPrompt != "" {
 		oaiMsgs = append(oaiMsgs, openai.SystemMessage(systemPrompt))
@@ -118,8 +118,9 @@ func (p *openaiProvider) Stream(
 	}
 
 	params := openai.ChatCompletionNewParams{
-		Model:    p.model,
-		Messages: oaiMsgs,
+		Model:         p.model,
+		Messages:      oaiMsgs,
+		StreamOptions: openai.ChatCompletionStreamOptionsParam{IncludeUsage: openai.Bool(true)},
 	}
 	if len(oaiTools) > 0 {
 		params.Tools = oaiTools
@@ -159,13 +160,63 @@ func (p *openaiProvider) Stream(
 		}
 	}
 	if err := stream.Err(); err != nil {
-		return "", err
+		return StreamResult{}, err
 	}
 
+	result := StreamResult{
+		StopReason: "end_turn",
+		Usage: TokenUsage{
+			InputTokens:  acc.Usage.PromptTokens,
+			OutputTokens: acc.Usage.CompletionTokens,
+		},
+	}
 	switch finishReason {
 	case "tool_calls":
-		return "tool_calls", nil
-	default:
-		return "end_turn", nil
+		result.StopReason = "tool_calls"
 	}
+	return result, nil
+}
+
+func (p *openaiProvider) Complete(ctx context.Context, systemPrompt string, messages []Message) (string, TokenUsage, error) {
+	oaiMsgs := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages)+1)
+	if systemPrompt != "" {
+		oaiMsgs = append(oaiMsgs, openai.SystemMessage(systemPrompt))
+	}
+	for _, m := range messages {
+		switch m.Role {
+		case RoleUser:
+			oaiMsgs = append(oaiMsgs, openai.UserMessage(m.Content))
+		case RoleAssistant:
+			oaiMsgs = append(oaiMsgs, openai.AssistantMessage(m.Content))
+		case RoleTool:
+			oaiMsgs = append(oaiMsgs, openai.UserMessage("Tool result: "+m.Content))
+		}
+	}
+	params := openai.ChatCompletionNewParams{
+		Model:    p.model,
+		Messages: oaiMsgs,
+	}
+	if p.effort != "" {
+		params.ReasoningEffort = p.effort
+	}
+	resp, err := p.client.Chat.Completions.New(ctx, params)
+	if err != nil {
+		return "", TokenUsage{}, err
+	}
+	text := ""
+	if len(resp.Choices) > 0 {
+		text = resp.Choices[0].Message.Content
+	}
+	return text, TokenUsage{
+		InputTokens:  resp.Usage.PromptTokens,
+		OutputTokens: resp.Usage.CompletionTokens,
+	}, nil
+}
+
+func (p *openaiProvider) Model() string {
+	return p.model
+}
+
+func (p *openaiProvider) MaxContextTokens() int64 {
+	return ModelContextLimit(p.model)
 }

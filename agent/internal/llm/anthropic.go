@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -46,15 +47,15 @@ func (p *anthropicProvider) Stream(
 	messages []Message,
 	tools []ToolDef,
 	h StreamHandler,
-) (string, error) {
+) (StreamResult, error) {
 	antMsgs, err := toAnthropicMessages(messages)
 	if err != nil {
-		return "", err
+		return StreamResult{}, err
 	}
 
 	antTools, err := toAnthropicTools(tools)
 	if err != nil {
-		return "", err
+		return StreamResult{}, err
 	}
 
 	params := anthropic.MessageNewParams{
@@ -75,7 +76,7 @@ func (p *anthropicProvider) Stream(
 	for stream.Next() {
 		event := stream.Current()
 		if err := acc.Accumulate(event); err != nil {
-			return "", fmt.Errorf("accumulate stream event: %w", err)
+			return StreamResult{}, fmt.Errorf("accumulate stream event: %w", err)
 		}
 
 		switch ev := event.AsAny().(type) {
@@ -104,13 +105,57 @@ func (p *anthropicProvider) Stream(
 		}
 	}
 	if err := stream.Err(); err != nil {
-		return "", err
+		return StreamResult{}, err
 	}
 
-	if acc.StopReason == anthropic.StopReasonToolUse {
-		return "tool_calls", nil
+	result := StreamResult{
+		StopReason: "end_turn",
+		Usage: TokenUsage{
+			InputTokens:  acc.Usage.InputTokens,
+			OutputTokens: acc.Usage.OutputTokens,
+		},
 	}
-	return "end_turn", nil
+	if acc.StopReason == anthropic.StopReasonToolUse {
+		result.StopReason = "tool_calls"
+	}
+	return result, nil
+}
+
+func (p *anthropicProvider) Complete(ctx context.Context, systemPrompt string, messages []Message) (string, TokenUsage, error) {
+	antMsgs, err := toAnthropicMessages(messages)
+	if err != nil {
+		return "", TokenUsage{}, err
+	}
+	params := anthropic.MessageNewParams{
+		Model:     anthropic.Model(p.model),
+		MaxTokens: p.maxTokens,
+		Messages:  antMsgs,
+	}
+	if systemPrompt != "" {
+		params.System = []anthropic.TextBlockParam{{Text: systemPrompt}}
+	}
+	msg, err := p.client.Messages.New(ctx, params)
+	if err != nil {
+		return "", TokenUsage{}, err
+	}
+	var b strings.Builder
+	for _, block := range msg.Content {
+		if block.Type == "text" {
+			b.WriteString(block.Text)
+		}
+	}
+	return b.String(), TokenUsage{
+		InputTokens:  msg.Usage.InputTokens,
+		OutputTokens: msg.Usage.OutputTokens,
+	}, nil
+}
+
+func (p *anthropicProvider) Model() string {
+	return p.model
+}
+
+func (p *anthropicProvider) MaxContextTokens() int64 {
+	return ModelContextLimit(p.model)
 }
 
 func toAnthropicMessages(messages []Message) ([]anthropic.MessageParam, error) {
