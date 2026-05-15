@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/your-org/loom/internal/llm"
 	"github.com/your-org/loom/internal/rpc"
@@ -120,7 +121,31 @@ func (d *Driver) ExecTool(taskID, callID, name string, input json.RawMessage) (s
 			continue
 		}
 		if t.LocalExec != nil {
-			return t.LocalExec(d.WorkspaceRoot, input)
+			_ = d.Conn.Notify("tool.localCall", map[string]any{
+				"callId":           callID,
+				"taskId":           taskID,
+				"name":             name,
+				"input":            input,
+				"requiresApproval": false,
+			})
+			startedAt := time.Now()
+			result, err := t.LocalExec(d.WorkspaceRoot, input)
+			if err != nil {
+				_ = d.Conn.Notify("tool.localResult", map[string]any{
+					"callId":     callID,
+					"ok":         false,
+					"error":      err.Error(),
+					"durationMs": time.Since(startedAt).Milliseconds(),
+				})
+				return "", err
+			}
+			_ = d.Conn.Notify("tool.localResult", map[string]any{
+				"callId":     callID,
+				"ok":         true,
+				"content":    result,
+				"durationMs": time.Since(startedAt).Milliseconds(),
+			})
+			return result, nil
 		}
 		var result struct {
 			CallID  string `json:"callId"`
@@ -161,7 +186,7 @@ func buildToolDefs(registry []tools.Tool) []llm.ToolDef {
 func buildSystemPrompt(registry []tools.Tool, workspaceRoot string) string {
 	var b strings.Builder
 	b.WriteString("You are an AI coding assistant running inside a VS Code extension. ")
-	b.WriteString("You have access to tools to read, write, and run commands in the user's workspace.\n\n")
+	b.WriteString("You have access to tools to inspect, edit with diffs, diagnose, search, and run commands in the user's workspace.\n\n")
 	fmt.Fprintf(&b, "Workspace root: %s\n\n", workspaceRoot)
 	b.WriteString("Available tools:\n")
 	for _, t := range registry {

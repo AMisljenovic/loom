@@ -1,7 +1,9 @@
 import * as vscode from "vscode";
 import { ChatPanel } from "./panel/ChatPanel";
+import { registerApplyDiffContentProvider } from "./tools/diffPreview";
 
 export function activate(context: vscode.ExtensionContext) {
+  registerApplyDiffContentProvider(context);
   const panel = new ChatPanel(context);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(ChatPanel.viewType, panel)

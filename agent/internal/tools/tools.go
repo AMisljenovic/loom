@@ -31,7 +31,9 @@ func Registry() []Tool {
 				"required": []string{"path"},
 			},
 			LocalExec: func(root string, raw json.RawMessage) (string, error) {
-				var in struct{ Path string `json:"path"` }
+				var in struct {
+					Path string `json:"path"`
+				}
 				if err := json.Unmarshal(raw, &in); err != nil {
 					return "", err
 				}
@@ -54,7 +56,9 @@ func Registry() []Tool {
 				"required": []string{"path"},
 			},
 			LocalExec: func(root string, raw json.RawMessage) (string, error) {
-				var in struct{ Path string `json:"path"` }
+				var in struct {
+					Path string `json:"path"`
+				}
 				if err := json.Unmarshal(raw, &in); err != nil {
 					return "", err
 				}
@@ -74,18 +78,61 @@ func Registry() []Tool {
 			},
 		},
 		{
-			Name:             "write_file",
-			Description:      "Write content to a file relative to the workspace root.",
+			Name:        "search",
+			Description: "Search the codebase with a regex query, optional relative path, include globs, and maxResults; returns path:line:snippet matches.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"query":      map[string]any{"type": "string"},
+					"path":       map[string]any{"type": "string"},
+					"globs":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"maxResults": map[string]any{"type": "number"},
+				},
+				"required": []string{"query"},
+			},
+			LocalExec: func(root string, raw json.RawMessage) (string, error) {
+				var in SearchInput
+				if err := json.Unmarshal(raw, &in); err != nil {
+					return "", err
+				}
+				return Search(root, in)
+			},
+		},
+		{
+			Name:        "get_diagnostics",
+			Description: "Get VS Code diagnostics for the whole workspace or a relative file path, filtered by severity error, warning, or all.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path":     map[string]any{"type": "string"},
+					"severity": map[string]any{"type": "string", "enum": []string{"error", "warning", "all"}},
+				},
+			},
+			// No LocalExec - executed on the TS side.
+		},
+		{
+			Name:             "apply_diff",
+			Description:      "Modify or create a file relative to the workspace root using edits. For existing files, provide unique oldText/newText pairs. For new files, provide one edit with empty oldText and the full file content as newText.",
 			RequiresApproval: true,
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"path":    map[string]any{"type": "string"},
-					"content": map[string]any{"type": "string"},
+					"path": map[string]any{"type": "string"},
+					"edits": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"oldText": map[string]any{"type": "string"},
+								"newText": map[string]any{"type": "string"},
+							},
+							"required": []string{"oldText", "newText"},
+						},
+					},
 				},
-				"required": []string{"path", "content"},
+				"required": []string{"path", "edits"},
 			},
-			// No LocalExec — executed on the TS side.
+			// No LocalExec - executed on the TS side.
 		},
 		{
 			Name:             "run_command",

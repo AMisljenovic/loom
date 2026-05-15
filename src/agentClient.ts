@@ -12,6 +12,8 @@ import type {
 
 export interface AgentEvents {
   onDelta: (d: MessageDelta) => void;
+  onToolStart: (c: ToolCall) => void;
+  onToolResult: (r: ToolResult) => void;
   onToolCall: (c: ToolCall) => Promise<ToolResult>;
   onDone: (d: TaskDone) => void;
   onError: (err: string) => void;
@@ -64,6 +66,12 @@ export class AgentClient {
     this.rpc.onRequest("tool.call", async (params: ToolCall) => {
       const result = await this.events.onToolCall(params);
       return result;
+    });
+    this.rpc.onRequest("tool.localCall", (params: ToolCall) => {
+      this.events.onToolStart(params);
+    });
+    this.rpc.onRequest("tool.localResult", (params: ToolResult) => {
+      this.events.onToolResult(params);
     });
     this.rpc.onRequest("message.delta", (params: MessageDelta) => {
       this.events.onDelta(params);

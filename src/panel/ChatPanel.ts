@@ -7,9 +7,21 @@ import { loadDotEnv } from "../env";
 import type {
   HostToWebview,
   ToolCall,
+  ToolResult,
   WebviewToHost,
 } from "../shared/protocol";
-import { executeTool } from "../tools";
+import {
+  cachePreparedApplyDiff,
+  discardPreparedApplyDiff,
+  executeTool,
+  prepareApplyDiff,
+} from "../tools";
+import {
+  clearDiffPreview,
+  closeDiffPreview,
+  openDiffPreview,
+  setDiffPreview,
+} from "../tools/diffPreview";
 
 export class ChatPanel implements vscode.WebviewViewProvider {
   public static readonly viewType = "myAgent.chat";
@@ -17,6 +29,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private agent?: AgentClient;
   private pendingApprovals = new Map<string, (ok: boolean) => void>();
+  private toolStartTimes = new Map<string, number>();
 
   constructor(private readonly ctx: vscode.ExtensionContext) { }
 
@@ -56,25 +69,79 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       }
       this.agent = new AgentClient(this.ctx.extensionPath, {
         onDelta: ({ text }) => this.post({ type: "delta", text }),
+        onToolStart: (call: ToolCall) => {
+          this.toolStartTimes.set(call.callId, Date.now());
+          this.post({ type: "toolCall", call });
+        },
+        onToolResult: (result: ToolResult) => {
+          const measured = this.finishToolTiming(result.callId);
+          const durationMs = result.durationMs ?? measured;
+          this.post({
+            type: "toolResult",
+            callId: result.callId,
+            ok: result.ok,
+            summary: result.content ?? result.error ?? "",
+            durationMs,
+          });
+        },
         onToolCall: async (call: ToolCall) => {
+          this.toolStartTimes.set(call.callId, Date.now());
           if (call.requiresApproval) {
+            if (call.name === "apply_diff") {
+              try {
+                const plan = await prepareApplyDiff(call, { workspaceRoot });
+                cachePreparedApplyDiff(plan);
+                setDiffPreview(call.callId, plan.relPath, plan.before, plan.after);
+                await openDiffPreview(call.callId, plan.relPath);
+              } catch (e: unknown) {
+                const result = this.failedToolResult(call.callId, e);
+                this.post({ type: "toolCall", call });
+                this.post({
+                  type: "toolResult",
+                  callId: call.callId,
+                  ok: false,
+                  summary: result.error ?? "",
+                  durationMs: this.finishToolTiming(call.callId),
+                });
+                return result;
+              }
+            }
             this.post({ type: "toolCall", call });
             const approved = await new Promise<boolean>((resolve) => {
               this.pendingApprovals.set(call.callId, resolve);
             });
             if (!approved) {
-              this.post({ type: "toolResult", callId: call.callId, ok: false, summary: "rejected" });
+              await this.cleanupApplyDiff(call.callId);
+              this.post({
+                type: "toolResult",
+                callId: call.callId,
+                ok: false,
+                summary: "rejected",
+                durationMs: this.finishToolTiming(call.callId),
+              });
               return { callId: call.callId, ok: false, error: "user rejected" };
             }
+          } else {
+            this.post({ type: "toolCall", call });
           }
-          const result = await executeTool(call, async () => true);
-          this.post({
-            type: "toolResult",
-            callId: call.callId,
-            ok: result.ok,
-            summary: result.content ?? result.error ?? "",
-          });
-          return result;
+          try {
+            const result = await executeTool(call, async () => true, {
+              workspaceRoot,
+              onProgress: (chunk) => this.post({ type: "toolProgress", callId: call.callId, chunk }),
+            });
+            this.post({
+              type: "toolResult",
+              callId: call.callId,
+              ok: result.ok,
+              summary: result.content ?? result.error ?? "",
+              durationMs: this.finishToolTiming(call.callId),
+            });
+            return result;
+          } finally {
+            if (call.name === "apply_diff") {
+              await this.cleanupApplyDiff(call.callId);
+            }
+          }
         },
         onDone: ({ reason }) => this.post({ type: "done", reason }),
         onError: (error) => this.post({ type: "error", error }),
@@ -88,6 +155,26 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       workspaceRoot,
       cwd: workspaceRoot,
     });
+  }
+
+  private finishToolTiming(callId: string): number {
+    const startedAt = this.toolStartTimes.get(callId);
+    this.toolStartTimes.delete(callId);
+    return startedAt ? Date.now() - startedAt : 0;
+  }
+
+  private failedToolResult(callId: string, e: unknown): ToolResult {
+    return {
+      callId,
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+
+  private async cleanupApplyDiff(callId: string) {
+    discardPreparedApplyDiff(callId);
+    clearDiffPreview(callId);
+    await closeDiffPreview(callId);
   }
 
   // Resolves LLM config from VS Code settings, the workspace .env file, and

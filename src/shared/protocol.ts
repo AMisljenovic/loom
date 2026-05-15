@@ -31,6 +31,7 @@ export interface ToolResult {
   ok: boolean;
   content?: string;
   error?: string;
+  durationMs?: number;
 }
 
 export interface TaskDone {
@@ -48,6 +49,7 @@ export type WebviewToHost =
 export type HostToWebview =
   | { type: "delta"; text: string }
   | { type: "toolCall"; call: ToolCall }
-  | { type: "toolResult"; callId: CallId; ok: boolean; summary: string }
+  | { type: "toolProgress"; callId: CallId; chunk: string }
+  | { type: "toolResult"; callId: CallId; ok: boolean; summary: string; durationMs: number }
   | { type: "done"; reason: TaskDone["reason"] }
   | { type: "error"; error: string };
