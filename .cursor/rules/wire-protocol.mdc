@@ -1,0 +1,31 @@
+---
+description: Wire protocol changes require symmetric updates
+globs:
+  - "src/shared/protocol.ts"
+  - "src/rpc.ts"
+  - "src/agentClient.ts"
+  - "agent/internal/rpc/**"
+  - "agent/cmd/agent/main.go"
+---
+
+# Wire protocol
+
+You are editing files that define the contract between the TypeScript
+extension and the Go agent. Changes here must be symmetric.
+
+## Rules
+
+1. Every message type in `src/shared/protocol.ts` must have a matching shape
+   on the Go side (struct or `map[string]any` accessed consistently).
+2. When adding a method, register handlers on both sides in the same change.
+3. Use LSP-style `Content-Length` framing. Do not introduce newline-delimited
+   JSON or any other framing.
+4. Method naming uses dot namespaces: `task.*`, `message.*`, `tool.*`, `system.*`.
+5. Distinguish requests (have `id`, expect response) from notifications (no `id`).
+   Document the distinction in `CLAUDE.md` when adding a method.
+
+## Debugging desync
+
+If the codec gets stuck, the cause is almost always unframed bytes on the
+channel. Check for stray `fmt.Print*` to stdout in Go code — all logs must
+go to stderr.

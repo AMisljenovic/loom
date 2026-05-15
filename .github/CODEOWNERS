@@ -1,0 +1,11 @@
+# Default owners — replace with your GitHub handles
+* @your-org
+
+# Wire protocol changes need extra eyes
+/src/shared/protocol.ts  @your-org
+/src/rpc.ts              @your-org
+/agent/internal/rpc/     @your-org
+
+# Release pipeline
+/.github/workflows/      @your-org
+/scripts/                @your-org

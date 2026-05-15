@@ -1,0 +1,34 @@
+---
+description: Go conventions
+globs:
+  - "agent/**/*.go"
+---
+
+# Go conventions
+
+- Standard `gofmt`. Run `go vet ./...` from `agent/` before committing.
+- Errors are values. Wrap with `fmt.Errorf("context: %w", err)` — no
+  `errors.Wrap`.
+- Concurrency: channels over shared state. Every goroutine has a clear
+  termination story (context cancellation or channel close).
+- All logs go to stderr (`log.SetOutput(os.Stderr)` is set in main.go).
+  Never `fmt.Print*` to stdout — it corrupts the JSON-RPC stream.
+- The agent loop (`internal/loop/`) must not import the Anthropic SDK
+  directly. SDK types live in `internal/llm/`.
+
+## Package layout
+
+- `cmd/agent/` — entry point only, no business logic
+- `internal/rpc/` — JSON-RPC codec
+- `internal/loop/` — agent loop and tool dispatch
+- `internal/llm/` — LLM client wrapper (SDK isolation)
+- `internal/tools/` — tool registry and Go-side executors
+
+When adding functionality, place it in the smallest package that owns it.
+Do not create new top-level packages without updating `CLAUDE.md`.
+
+## Cross-platform
+
+- Always use `filepath.Join`, never string concatenation
+- Use `runtime.GOOS` only for behavioral branching, never for paths
+- File modes: `0o644` for files, `0o755` for executables

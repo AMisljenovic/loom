@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(npm install)",
+      "Bash(npm run build)",
+      "Bash(npm run build:*)",
+      "Bash(npm run watch)",
+      "Bash(go build:*)",
+      "Bash(go vet:*)",
+      "Bash(go test:*)",
+      "Bash(go mod:*)",
+      "Bash(gofmt:*)",
+      "Bash(bash scripts/build-agent.sh)",
+      "Bash(bash scripts/package.sh)",
+      "Read",
+      "Edit",
+      "Grep",
+      "Glob",
+      "Bash(dir \"c:\\\\Projects\\\\loom\" /s /b /a:f *.go)",
+      "Bash(dir \"c:\\\\Projects\\\\loom\\\\agent\")",
+      "Bash(go env *)",
+      "Bash(go get *)",
+      "Bash(npm run *)",
+      "Bash(npx tsc *)"
+    ],
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(vsce publish:*)",
+      "Bash(npx vsce publish:*)"
+    ]
+  }
+}

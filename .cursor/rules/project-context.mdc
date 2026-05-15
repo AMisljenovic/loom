@@ -1,0 +1,34 @@
+---
+description: Project context — applies to all files
+alwaysApply: true
+---
+
+# Project context
+
+This is a VS Code extension with a Go backend. Three layers:
+
+- **TypeScript extension host** (`src/`) — VS Code API, webview lifecycle
+- **React webview** (`webview-ui/`) — chat UI, talks via postMessage only
+- **Go agent binary** (`agent/`) — agent loop, LLM client, Go-side tools
+
+Layers communicate via JSON-RPC 2.0 with LSP-style `Content-Length` framing
+over stdio. See `src/shared/protocol.ts` for wire types.
+
+## Architectural invariants
+
+1. The agent loop lives in Go. Do not move it to TypeScript.
+2. VS Code API calls only happen in TypeScript. Go requests them via RPC.
+3. The webview has no business logic — it renders state and forwards input.
+4. Shared types are defined in `src/shared/protocol.ts` and mirrored in Go.
+
+## Build
+
+```bash
+npm run build
+```
+
+This runs the Go cross-compile (current platform), webview build, and
+extension bundle. See `CLAUDE.md` for the full reference.
+
+When you are unsure of a convention, read `CLAUDE.md`. It is the canonical
+project documentation for AI agents working in this repo.

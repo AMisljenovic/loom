@@ -1,0 +1,11 @@
+node_modules/
+dist/
+bin/
+out/
+*.vsix
+.DS_Store
+
+# Keep .vscode/ tracked (shared settings) but not user-local stuff
+.vscode/*.log
+
+.env

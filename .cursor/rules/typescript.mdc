@@ -1,0 +1,26 @@
+---
+description: TypeScript conventions
+globs:
+  - "src/**/*.ts"
+  - "webview-ui/**/*.ts"
+  - "webview-ui/**/*.tsx"
+---
+
+# TypeScript conventions
+
+- Strict mode is on. No `any` unless interfacing with untyped JSON; prefer
+  `unknown` plus a narrowing check.
+- Node built-ins use the `node:` prefix: `import * as path from "node:path"`.
+- Async/await only; no `.then()` chains.
+- No default exports for modules with multiple exports.
+- Imports ordered: node built-ins, external packages, internal modules.
+  No enforced rule yet, but keep it consistent.
+
+## React (webview-ui)
+
+- Function components and hooks only.
+- No external state management library — `useState` / `useReducer` only.
+- Use VS Code CSS variables for theming: `var(--vscode-font-family)`,
+  `var(--vscode-editor-background)`, etc.
+- All communication with the extension goes through `postMessage`, typed
+  by `WebviewToHost` and `HostToWebview` from `src/shared/protocol.ts`.

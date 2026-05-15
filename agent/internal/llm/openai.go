@@ -1,0 +1,171 @@
+package llm
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
+	"github.com/openai/openai-go/packages/param"
+	"github.com/openai/openai-go/shared"
+)
+
+type OpenAIConfig struct {
+	APIKey          string
+	BaseURL         string // empty -> SDK default (https://api.openai.com/v1)
+	Model           string
+	ReasoningEffort string // "" | "low" | "medium" | "high"
+}
+
+type openaiProvider struct {
+	client openai.Client
+	model  string
+	effort shared.ReasoningEffort
+}
+
+func newOpenAI(cfg OpenAIConfig) (Provider, error) {
+	if cfg.APIKey == "" {
+		return nil, errors.New("OPENAI_API_KEY is required when MY_AGENT_PROVIDER=openai")
+	}
+	if cfg.Model == "" {
+		return nil, errors.New("OPENAI_MODEL is required")
+	}
+
+	opts := []option.RequestOption{option.WithAPIKey(cfg.APIKey)}
+	if cfg.BaseURL != "" {
+		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
+	}
+
+	var effort shared.ReasoningEffort
+	switch strings.ToLower(strings.TrimSpace(cfg.ReasoningEffort)) {
+	case "":
+		// none
+	case "low":
+		effort = shared.ReasoningEffortLow
+	case "medium":
+		effort = shared.ReasoningEffortMedium
+	case "high":
+		effort = shared.ReasoningEffortHigh
+	default:
+		return nil, fmt.Errorf("invalid OPENAI_REASONING_EFFORT %q (expected low|medium|high)", cfg.ReasoningEffort)
+	}
+
+	return &openaiProvider{
+		client: openai.NewClient(opts...),
+		model:  cfg.Model,
+		effort: effort,
+	}, nil
+}
+
+func (p *openaiProvider) Stream(
+	ctx context.Context,
+	systemPrompt string,
+	messages []Message,
+	tools []ToolDef,
+	h StreamHandler,
+) (string, error) {
+	oaiMsgs := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages)+1)
+	if systemPrompt != "" {
+		oaiMsgs = append(oaiMsgs, openai.SystemMessage(systemPrompt))
+	}
+	for _, m := range messages {
+		switch m.Role {
+		case RoleUser:
+			oaiMsgs = append(oaiMsgs, openai.UserMessage(m.Content))
+		case RoleAssistant:
+			if len(m.ToolCalls) == 0 {
+				oaiMsgs = append(oaiMsgs, openai.AssistantMessage(m.Content))
+				continue
+			}
+			tcs := make([]openai.ChatCompletionMessageToolCallParam, len(m.ToolCalls))
+			for i, tc := range m.ToolCalls {
+				args := string(tc.Input)
+				if args == "" {
+					args = "{}"
+				}
+				tcs[i] = openai.ChatCompletionMessageToolCallParam{
+					ID: tc.ID,
+					Function: openai.ChatCompletionMessageToolCallFunctionParam{
+						Name:      tc.Name,
+						Arguments: args,
+					},
+				}
+			}
+			asst := openai.ChatCompletionAssistantMessageParam{ToolCalls: tcs}
+			if m.Content != "" {
+				asst.Content = openai.ChatCompletionAssistantMessageParamContentUnion{
+					OfString: param.NewOpt(m.Content),
+				}
+			}
+			oaiMsgs = append(oaiMsgs, openai.ChatCompletionMessageParamUnion{OfAssistant: &asst})
+		case RoleTool:
+			oaiMsgs = append(oaiMsgs, openai.ToolMessage(m.Content, m.ToolCallID))
+		}
+	}
+
+	oaiTools := make([]openai.ChatCompletionToolParam, len(tools))
+	for i, t := range tools {
+		oaiTools[i] = openai.ChatCompletionToolParam{
+			Function: shared.FunctionDefinitionParam{
+				Name:        t.Name,
+				Description: param.NewOpt(t.Description),
+				Parameters:  shared.FunctionParameters(t.InputSchema),
+			},
+		}
+	}
+
+	params := openai.ChatCompletionNewParams{
+		Model:    p.model,
+		Messages: oaiMsgs,
+	}
+	if len(oaiTools) > 0 {
+		params.Tools = oaiTools
+	}
+	if p.effort != "" {
+		params.ReasoningEffort = p.effort
+	}
+
+	stream := p.client.Chat.Completions.NewStreaming(ctx, params)
+	acc := openai.ChatCompletionAccumulator{}
+	var finishReason string
+
+	for stream.Next() {
+		chunk := stream.Current()
+		acc.AddChunk(chunk)
+
+		if len(chunk.Choices) > 0 {
+			choice := chunk.Choices[0]
+			if choice.Delta.Content != "" {
+				h.OnTextDelta(choice.Delta.Content)
+			}
+			if choice.FinishReason != "" {
+				finishReason = string(choice.FinishReason)
+			}
+		}
+
+		if tc, ok := acc.JustFinishedToolCall(); ok {
+			args := tc.Arguments
+			if args == "" {
+				args = "{}"
+			}
+			h.OnToolUse(ToolCall{
+				ID:    tc.ID,
+				Name:  tc.Name,
+				Input: json.RawMessage(args),
+			})
+		}
+	}
+	if err := stream.Err(); err != nil {
+		return "", err
+	}
+
+	switch finishReason {
+	case "tool_calls":
+		return "tool_calls", nil
+	default:
+		return "end_turn", nil
+	}
+}

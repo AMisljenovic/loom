@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install extension deps
+        run: npm ci
+
+      - name: Install webview deps
+        run: npm ci
+        working-directory: webview-ui
+
+      - name: Go vet
+        run: go vet ./...
+        working-directory: agent
+
+      - name: Build Go agent (current platform)
+        shell: bash
+        run: |
+          mkdir -p bin
+          cd agent
+          # Detect host triple to mirror what scripts/build-agent.sh does
+          GOOS=$(go env GOOS) GOARCH=$(go env GOARCH) go build -ldflags="-s -w" -o ../bin/agent-test ./cmd/agent
+
+      - name: Build webview
+        run: npm run build:webview
+
+      - name: Build extension
+        run: npm run build:ts
+
+  cross-compile:
+    name: Cross-compile all platforms
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - run: bash scripts/build-agent.sh
+      - name: Verify binaries
+        run: |
+          ls -la bin/
+          for f in bin/agent-*; do
+            size=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f")
+            echo "$f: $size bytes"
+            if [ "$size" -gt 26214400 ]; then
+              echo "::error::$f exceeds 25 MB"
+              exit 1
+            fi
+          done

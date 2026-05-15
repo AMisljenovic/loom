@@ -1,0 +1,37 @@
+# GitHub Copilot instructions
+
+This file is read by GitHub Copilot Chat for context about this repository.
+For full project documentation, see `CLAUDE.md`.
+
+## What this project is
+
+A VS Code extension with three runtimes:
+- TypeScript extension host (`src/`)
+- React webview (`webview-ui/`)
+- Go agent binary (`agent/`)
+
+Layers communicate via JSON-RPC 2.0 over stdio with LSP-style framing.
+
+## Style
+
+- TypeScript: strict mode, no `any`, prefer `unknown` + narrowing,
+  `node:` prefix for built-ins, async/await
+- Go: gofmt, `fmt.Errorf` with `%w` wrapping, channels over shared state,
+  stderr for all logs (never stdout)
+- React: function components, hooks only, VS Code CSS variables for theming
+
+## Where to put things
+
+- Agent loop → `agent/internal/loop/`
+- LLM SDK code → `agent/internal/llm/` (isolated; the loop never imports the SDK)
+- Go-side tools → `agent/internal/tools/tools.go`
+- TS-side tools → `src/tools/index.ts`
+- Wire types → `src/shared/protocol.ts` (mirror in Go)
+- Webview UI → `webview-ui/src/`
+
+## Rules
+
+1. Agent loop stays in Go.
+2. VS Code API calls stay in TypeScript.
+3. Webview has no business logic.
+4. Any wire-protocol change updates both sides in the same commit.

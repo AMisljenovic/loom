@@ -1,0 +1,69 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Package per-platform VSIX
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - run: npm ci
+      - run: npm ci
+        working-directory: webview-ui
+
+      - name: Cross-compile Go
+        run: bash scripts/build-agent.sh
+
+      - name: Build webview
+        run: npm run build:webview
+
+      - name: Build extension
+        run: npm run build:ts
+
+      - name: Package VSIX per platform
+        run: bash scripts/package.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix-packages
+          path: dist/*.vsix
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.vsix
+          draft: true
+          generate_release_notes: true
+
+  # publish:
+  #   name: Publish to VS Code Marketplace
+  #   needs: package
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/download-artifact@v4
+  #       with: { name: vsix-packages, path: dist }
+  #     - run: |
+  #         for vsix in dist/*.vsix; do
+  #           target=$(basename "$vsix" .vsix | sed 's/^loom-//')
+  #           npx vsce publish --target "$target" --packagePath "$vsix"
+  #         done
+  #       env:
+  #         VSCE_PAT: ${{ secrets.VSCE_PAT }}
