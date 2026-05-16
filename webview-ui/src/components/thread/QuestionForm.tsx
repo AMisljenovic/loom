@@ -1,5 +1,7 @@
-import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import type { Msg, QuestionSpec } from "../../../../src/shared/protocol";
+import * as Ico from "../../brand/icons";
+import { questionActivityLabel, selectedAnswerLabels } from "../../util/activity";
 import { post } from "../../vscode";
 import {
     draftToAnswers,
@@ -14,17 +16,17 @@ interface QuestionFormProps {
 
 export function QuestionForm({ msg }: QuestionFormProps) {
     const [draft, setDraft] = useState<DraftAnswers>(() => emptyDraft(msg.questions));
+    const [expanded, setExpanded] = useState(msg.status === "pending");
     const complete = isQuestionFormComplete(msg.questions, draft);
     const answered = msg.status === "answered";
     const cancelled = msg.status === "cancelled";
+    const activity = questionActivityLabel(msg);
 
-    const answerLabels = useMemo(() => {
-        const labels = new Map<string, Map<string, string>>();
-        for (const q of msg.questions) {
-            labels.set(q.id, new Map(q.options.map((o) => [o.id, o.label])));
+    useEffect(() => {
+        if (msg.status === "answered") {
+            setExpanded(false);
         }
-        return labels;
-    }, [msg.questions]);
+    }, [msg.status]);
 
     const submit = () => {
         if (!complete || answered) return;
@@ -32,19 +34,16 @@ export function QuestionForm({ msg }: QuestionFormProps) {
     };
 
     return (
-        <div className={`question-card${answered ? " answered" : ""}${cancelled ? " cancelled" : ""}`}>
-            <div className="question-head">
-                <span className="question-title">{msg.title || "Questions"}</span>
+        <div className={`question-card${answered ? " answered" : ""}${cancelled ? " cancelled" : ""}${expanded ? " open" : ""}`}>
+            <button className="question-head" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}>
+                <span className="question-title">{activity}</span>
                 <span className="question-status">{answered ? "answered" : cancelled ? "expired" : "waiting for you"}</span>
-            </div>
-            {cancelled ? null : answered ? (
+                <span className="tc-chev">{expanded ? <Ico.ChevDn size={9} /> : <Ico.Chev size={9} />}</span>
+            </button>
+            {cancelled || !expanded ? null : answered ? (
                 <div className="question-answers">
                     {msg.questions.map((q) => {
-                        const answer = msg.answers?.find((a) => a.questionId === q.id);
-                        const selected = answer?.selectedOptionIds
-                            .map((id) => answerLabels.get(q.id)?.get(id))
-                            .filter((label): label is string => Boolean(label)) ?? [];
-                        if (answer?.otherText) selected.push(answer.otherText);
+                        const selected = selectedAnswerLabels(q, msg.answers);
                         return (
                             <div className="question-answer" key={q.id}>
                                 <div className="question-text">{q.question}</div>

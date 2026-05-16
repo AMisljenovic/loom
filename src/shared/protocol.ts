@@ -128,6 +128,7 @@ export interface ReferenceAttachment {
 
 export type ProgressPhase =
   | "started"
+  | "thinking"
   | "reading"
   | "searching"
   | "changing"

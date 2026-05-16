@@ -11,6 +11,13 @@ describe("progress helpers", () => {
     expect(shouldAppendProgress(messages, "searching", "Searching src/App.tsx")).toBe(true);
   });
 
+  it("deduplicates punctuation and casing variants", () => {
+    const messages: Msg[] = [
+      { role: "progress", phase: "thinking", text: "Continuing with your answers.", createdAt: 1 },
+    ];
+    expect(shouldAppendProgress(messages, "thinking", "continuing   with your answers")).toBe(false);
+  });
+
   it("allows the same note after other message kinds", () => {
     const messages: Msg[] = [
       { role: "progress", phase: "reading", text: "Reading src/App.tsx", createdAt: 1 },

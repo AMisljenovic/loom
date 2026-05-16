@@ -49,6 +49,11 @@ describe("question helpers", () => {
     ])).toThrow("missing answer for formats");
   });
 
+  it("rejects malformed runtime answers without TypeError", () => {
+    expect(() => normalizeQuestionAnswers(request, undefined)).toThrow("answers must be an array");
+    expect(() => normalizeQuestionAnswers(request, [undefined])).toThrow("each answer must be an object");
+  });
+
   it("treats whitespace-only other text as empty", () => {
     expect(() => normalizeQuestionAnswers(request, [
       { questionId: "audience", selectedOptionIds: [], otherText: "  " },
@@ -150,4 +155,3 @@ describe("normalizeAskQuestionsInput", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 });
-

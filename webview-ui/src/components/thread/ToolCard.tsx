@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Msg } from "../../../../src/shared/protocol";
 import * as Ico from "../../brand/icons";
+import { summarizeToolInput, toolActivityLabel } from "../../util/activity";
 import { ApprovalActions } from "./ApprovalActions";
 import { ToolBody } from "./tools/index";
 
@@ -35,7 +36,8 @@ export function ToolCard({ msg, pendingDiff, liveOutput }: ToolCardProps) {
 
     const statusClass = msg.status;
     const isRunning = msg.status === "running";
-    const inputHint = summarizeInput(msg.name, msg.input);
+    const activity = toolActivityLabel(msg);
+    const inputHint = summarizeToolInput(msg.name, msg.input);
 
     return (
         <div className={`tool-card tc-${statusClass}${expanded ? " open" : ""}`}>
@@ -46,8 +48,8 @@ export function ToolCard({ msg, pendingDiff, liveOutput }: ToolCardProps) {
                 title={inputHint ? `${msg.name}: ${inputHint}` : msg.name}
             >
                 <span className="tc-icon"><ToolIcon name={msg.name} /></span>
+                <span className="tc-activity" title={activity}>{activity}</span>
                 <span className="tc-name">{msg.name}</span>
-                {inputHint && <span className="tc-hint" title={inputHint}>{inputHint}</span>}
                 <span className={`tc-pip${isRunning ? " running" : ""}`} />
                 <span className="tc-status">{STATUS_LABEL[msg.status] ?? msg.status}</span>
                 {msg.durationMs !== undefined && (
@@ -69,41 +71,4 @@ export function ToolCard({ msg, pendingDiff, liveOutput }: ToolCardProps) {
             )}
         </div>
     );
-}
-
-function summarizeInput(name: string, input: unknown): string | undefined {
-    if (!input || typeof input !== "object") return undefined;
-    const i = input as Record<string, unknown>;
-    const pick = (key: string): string | undefined => {
-        const v = i[key];
-        return typeof v === "string" && v ? v : undefined;
-    };
-    switch (name) {
-        case "read_file":
-        case "list_dir":
-        case "apply_diff":
-            return pick("path");
-        case "search":
-        case "find_symbol":
-        case "find_references":
-        case "semantic_search":
-            return pick("query");
-        case "run_command":
-        case "run_command_background":
-            return pick("command");
-        case "kill_process":
-        case "read_process_output":
-            return pick("processId");
-        case "load_skill": {
-            const ids = i.ids;
-            if (Array.isArray(ids)) return ids.join(", ");
-            return undefined;
-        }
-        case "get_diagnostics":
-            return pick("path") ?? pick("severity") ?? "workspace";
-        case "spawn_subagent":
-            return pick("task") ?? pick("type");
-        default:
-            return pick("path") ?? pick("query") ?? pick("command");
-    }
 }

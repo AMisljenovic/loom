@@ -60,9 +60,10 @@ newline-delimited JSON-RPC over stdio.
    Go-side tools.
 8. Prompt caching depends on a byte-stable system + tools prefix. Sort dynamic
    tool lists deterministically.
-9. Conversation sessions are stored TS-side in `workspaceState`
-   (`loom.sessions.index` + `loom.sessions.body:<id>` per session). Switching
-   active sessions must cancel any in-flight task first.
+9. Conversation sessions are stored TS-side: the small `loom.sessions.index`
+   stays in `workspaceState`, while bulky per-session bodies are JSON under
+   `ExtensionContext.storageUri` with legacy workspaceState bodies migrated
+   and cleared. Switching active sessions must cancel any in-flight task first.
 10. First-run setup is host-owned state (`loom.firstRun.completed`) rendered
     by the webview. API keys must still use VS Code SecretStorage.
 11. Extension shutdown/update cleanup must cancel active tasks, persist the
@@ -89,6 +90,10 @@ newline-delimited JSON-RPC over stdio.
     output conventions live in `agent/internal/prompts/_output_conventions.md`,
     and prompt changes must update `docs/prompt-changelog.md`. Run
     `npm run eval` when provider credentials are available.
+18. Every fix or implementation unit must include relevant unit tests. Run the
+    smallest focused test command while iterating, then the broader suite
+    before handoff (`go test ./...` from `agent/`, `npm run test:ts`, and
+    `npm run build` when the extension surface is touched).
 
 ## Pre-commit hook
 

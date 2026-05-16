@@ -636,6 +636,11 @@
     background: var(--accent);
 }
 
+.progress-thinking .progress-dot,
+.progress-writing .progress-dot {
+    background: var(--accent);
+}
+
 .progress-changing .progress-dot,
 .progress-completed .progress-dot {
     background: var(--ok);
@@ -921,15 +926,15 @@
 
 .tool-card .tc-head .tc-name {
     flex-shrink: 0;
-    max-width: 40%;
+    max-width: 22%;
 }
 
-.tool-card .tc-head .tc-hint {
+.tool-card .tc-head .tc-activity {
     flex: 1 1 auto;
     min-width: 0;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    font-size: 11.5px;
+    color: var(--text);
+    font-size: 12.5px;
+    font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -982,6 +987,14 @@
     display: flex;
     align-items: center;
     gap: 10px;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
 }
 
 .question-title {
@@ -1115,8 +1128,8 @@
 
 .tc-name {
     font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--text-strong);
+    font-size: 11px;
+    color: var(--text-faint);
     font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1189,7 +1202,7 @@
     font-family: var(--font-mono);
     font-size: 11.5px;
     line-height: 1.6;
-    max-height: 280px;
+    max-height: 520px;
     overflow: auto;
     scrollbar-width: thin;
     scrollbar-color: var(--border-strong) transparent;
@@ -1301,8 +1314,7 @@
 .read-src {
     padding: 0 10px;
     white-space: pre;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow: visible;
     font-family: var(--font-mono);
     font-size: 11.5px;
     color: var(--text-muted);
@@ -1338,12 +1350,24 @@
     padding: 1px 10px 1px 30px;
     color: var(--text-muted);
     white-space: pre;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow: visible;
 }
 
 .raw-view {
     padding: 10px 12px;
+}
+
+.raw-block {
+    margin: 0 0 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-muted);
+}
+
+.raw-block:last-child {
+    margin-bottom: 0;
 }
 
 .raw-pre {
@@ -1401,8 +1425,7 @@
 .diff-view .dsrc {
     padding: 0 8px;
     white-space: pre;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow: visible;
 }
 
 .diff-view .drow.add .dmk {

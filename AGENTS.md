@@ -43,9 +43,12 @@ Host. Run **Loom: Set Anthropic API Key** or export `ANTHROPIC_API_KEY` first.
 
 ## Test
 
-No test suite yet. When adding one:
+Every fix or implementation unit must include relevant unit tests. Run the
+smallest focused test command while iterating, then the broader suite before
+handoff:
 - Go: `go test ./...` from `agent/`
-- TS: vitest
+- TS: `npm run test:ts`
+- Full extension check: `npm run build`
 
 ## Code style
 
@@ -82,10 +85,12 @@ No test suite yet. When adding one:
 10. Anthropic + OpenAI prompt caching depend on a byte-stable system-prompt +
     tools prefix. MCP tools are sorted by name in `Driver.registry()`; keep
     any new tool ordering deterministic.
-11. Conversation sessions are owned by the TypeScript host. `SessionsIndex` +
-    per-session body live in `workspaceState`; the Go side is unchanged
-    (already keyed by `conversationId`). Switching sessions must cancel any
-    in-flight task first or streamed deltas land in the wrong session.
+11. Conversation sessions are owned by the TypeScript host. `SessionsIndex`
+    lives in `workspaceState`; bulky per-session bodies live as JSON under
+    `ExtensionContext.storageUri` with legacy `workspaceState` bodies migrated
+    and cleared. The Go side is unchanged (already keyed by `conversationId`).
+    Switching sessions must cancel any in-flight task first or streamed deltas
+    land in the wrong session.
 12. Webview theming uses `data-accent` / `data-density` / `data-theme`
     attributes on the root element, driven by a `themeConfig` `HostToWebview`
     message. `ChatPanel.ts` reads `loom.ui.accent`, `loom.ui.density`, and

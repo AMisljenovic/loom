@@ -54,6 +54,7 @@ import {
   referenceId,
   referenceLabel,
 } from "../shared/references";
+import { legacySessionBodyIds, normalizeStoredConversationState, sessionBodyFileName } from "../shared/sessionStorage";
 import {
   cachePreparedApplyDiff,
   discardPreparedApplyDiff,
@@ -107,6 +108,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private readonly output: vscode.OutputChannel;
   private activeSubAgents = new Map<string, { parentTaskId: string; type: string; task: string }>();
   private toolCallTasks = new Map<string, string>();
+  private activeToolCalls = new Map<string, ToolCall>();
+  private cancelledTaskIds = new Set<string>();
   private pendingQuestions = new Map<string, {
     request: AskQuestionsInput;
     resolve: (result: ToolResult) => void;
@@ -160,8 +163,14 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   }
 
   private post(msg: HostToWebview, mirror = true) {
-    if (mirror) {
-      this.mirrorHostMessage(msg);
+    try {
+      this.ensureStateShape();
+      if (mirror) {
+        this.mirrorHostMessage(msg);
+      }
+    } catch (e: unknown) {
+      this.log(`state mirror failed for ${msg.type}: ${e instanceof Error ? e.message : String(e)}`);
+      this.repairStateShape();
     }
     this.view?.webview.postMessage(msg);
   }
@@ -208,6 +217,17 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         break;
       default:
         this.emitProgress("reading", detail);
+    }
+  }
+
+  private emitProgressAfterToolResult(call: ToolCall, result: ToolResult) {
+    if (!result.ok) {
+      this.emitProgress("thinking", `${toolNoun(call)} stopped; checking the next step.`);
+      return;
+    }
+    const detail = toolResultProgressDetail(call);
+    if (detail) {
+      this.emitProgress("thinking", detail);
     }
   }
 
@@ -325,17 +345,21 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         this.queuedPrompt = m.prompt;
         this.queuedModeId = this.validModeId(m.modeId) ? m.modeId : undefined;
         this.queuedReferences = normalizeReferenceAttachments(m.references);
-        if (this.activeTaskId) {
-          await this.agent?.cancel(this.activeTaskId);
+        this.cancelActiveTask();
+        const next = this.queuedPrompt;
+        const nextModeId = this.queuedModeId;
+        const nextReferences = this.queuedReferences;
+        this.queuedPrompt = undefined;
+        this.queuedModeId = undefined;
+        this.queuedReferences = undefined;
+        if (next) {
+          await this.runTask(next, nextModeId, nextReferences);
         }
         return;
       }
       await this.runTask(m.prompt, m.modeId, m.references);
     } else if (m.type === "cancel") {
-      this.cancelPendingQuestions();
-      if (this.activeTaskId) {
-        await this.agent?.cancel(this.activeTaskId);
-      }
+      this.cancelActiveTask();
     } else if (m.type === "newConversation") {
       await this.newConversation();
     } else if (m.type === "pickReferences") {
@@ -407,6 +431,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   }
 
   private async runTask(prompt: string, requestedModeId?: string, references?: ReferenceAttachment[]) {
+    this.ensureStateShape();
     const taskReferences = normalizeReferenceAttachments(references);
     if (this.validModeId(requestedModeId)) {
       this.currentModeId = requestedModeId;
@@ -506,6 +531,9 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private createAgent(workspaceRoot: string): AgentClient {
     return new AgentClient(this.ctx.extensionPath, {
       onDelta: ({ taskId, text }) => {
+        if (this.cancelledTaskIds.has(taskId)) {
+          return;
+        }
         if (this.activeSubAgents.has(taskId)) {
           this.post({ type: "subagentDelta", subTaskId: taskId, text });
         } else {
@@ -646,8 +674,12 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   }
 
   private routeToolCall(call: ToolCall) {
+    if (this.cancelledTaskIds.has(call.taskId)) {
+      return;
+    }
     this.toolStartTimes.set(call.callId, Date.now());
     this.toolCallTasks.set(call.callId, call.taskId);
+    this.activeToolCalls.set(call.callId, call);
     const subAgent = this.activeSubAgents.get(call.taskId);
     if (subAgent) {
       this.post({
@@ -675,7 +707,14 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     const durationMs = result.durationMs ?? measured;
     const summary = result.content ?? result.error ?? "";
     const taskId = this.toolCallTasks.get(result.callId);
+    if (taskId && this.cancelledTaskIds.has(taskId)) {
+      this.toolCallTasks.delete(result.callId);
+      this.activeToolCalls.delete(result.callId);
+      return;
+    }
+    const call = this.activeToolCalls.get(result.callId);
     this.toolCallTasks.delete(result.callId);
+    this.activeToolCalls.delete(result.callId);
     if (taskId && this.activeSubAgents.has(taskId)) {
       this.post({
         type: "subagentToolResult",
@@ -694,11 +733,15 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       summary,
       durationMs,
     });
+    if (call) {
+      this.emitProgressAfterToolResult(call, result);
+    }
   }
 
   private async handleAskQuestions(call: ToolCall): Promise<ToolResult> {
     this.toolStartTimes.set(call.callId, Date.now());
     this.toolCallTasks.set(call.callId, call.taskId);
+    this.activeToolCalls.set(call.callId, call);
     let request: AskQuestionsInput;
     try {
       request = normalizeAskQuestionsInput(call.input);
@@ -706,6 +749,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       const result = this.failedToolResult(call.callId, e);
       result.durationMs = this.finishToolTiming(call.callId);
       this.toolCallTasks.delete(call.callId);
+      this.activeToolCalls.delete(call.callId);
       return result;
     }
     this.emitProgress("waiting", request.title ? `Waiting for answers: ${request.title}` : "Waiting for answers.");
@@ -728,12 +772,15 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       this.post({ type: "error", error });
       this.pendingQuestions.delete(callId);
       this.toolCallTasks.delete(callId);
+      this.activeToolCalls.delete(callId);
       pending.resolve({ callId, ok: false, error, durationMs: this.finishToolTiming(callId) });
       return;
     }
     this.pendingQuestions.delete(callId);
     this.toolCallTasks.delete(callId);
+    this.activeToolCalls.delete(callId);
     this.post({ type: "questionAnswered", callId, answers: normalized });
+    this.emitProgress("thinking", "Continuing with your answers.");
     pending.resolve({
       callId,
       ok: true,
@@ -750,16 +797,48 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         error: "cancelled",
         durationMs: this.finishToolTiming(callId),
       });
+      this.toolCallTasks.delete(callId);
+      this.activeToolCalls.delete(callId);
     }
     this.pendingQuestions.clear();
+  }
+
+  private cancelPendingApprovals() {
+    for (const [callId, resolve] of this.pendingApprovals) {
+      resolve(false);
+      this.pendingApprovals.delete(callId);
+      this.pendingApprovalCalls.delete(callId);
+    }
+  }
+
+  private cancelActiveTask() {
+    this.cancelPendingQuestions();
+    this.cancelPendingApprovals();
+    const taskId = this.activeTaskId;
+    if (!taskId) {
+      return;
+    }
+    this.cancelledTaskIds.add(taskId);
+    this.activeTaskId = undefined;
+    this.activeTaskModeId = undefined;
+    this.busy = false;
+    this.post({ type: "done", reason: "cancelled" });
+    this.emitProgress("completed", "Task cancelled.");
+    void this.agent?.cancel(taskId).catch((e: unknown) => {
+      this.log(`cancel failed for ${taskId}: ${e instanceof Error ? e.message : String(e)}`);
+    });
   }
 
   private async handleDone({ taskId, reason }: TaskDone) {
     if (this.activeSubAgents.has(taskId)) {
       return;
     }
+    if (this.cancelledTaskIds.delete(taskId) && this.activeTaskId !== taskId) {
+      return;
+    }
     if (reason !== "completed") {
       this.cancelPendingQuestions();
+      this.cancelPendingApprovals();
     }
     if (reason === "completed" && this.activeTaskModeId === "architect") {
       const assistant = this.assistantIndex === null ? undefined : this.state.messages[this.assistantIndex];
@@ -855,6 +934,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.sessionBulkCounters.clear();
     this.toolStartTimes.clear();
     this.toolCallTasks.clear();
+    this.activeToolCalls.clear();
     this.activeSubAgents.clear();
     this.activeProgressKeys.clear();
     this.queuedReferences = undefined;
@@ -889,6 +969,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.sessionBulkCounters.clear();
     this.toolStartTimes.clear();
     this.toolCallTasks.clear();
+    this.activeToolCalls.clear();
     this.activeSubAgents.clear();
     this.activeProgressKeys.clear();
     this.queuedReferences = undefined;
@@ -946,6 +1027,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     delete this.sessions.sessions[id];
     this.sessions.order = this.sessions.order.filter((x) => x !== id);
     void this.ctx.workspaceState.update(this.bodyKey(id), undefined);
+    this.deleteSessionBodyFile(id);
     if (id === this.state.conversationId) {
       const fallback = this.sessions.order.find((x) => this.sessions.sessions[x]?.state === "active");
       if (fallback) {
@@ -964,6 +1046,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   }
 
   private async restoreWebview() {
+    this.ensureStateShape();
     this.post({
       type: "restore",
       messages: this.state.messages,
@@ -998,6 +1081,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   }
 
   private mirrorHostMessage(msg: HostToWebview) {
+    this.ensureStateShape();
     if (msg.type === "delta") {
       if (this.assistantIndex === null || this.state.messages[this.assistantIndex]?.role !== "assistant") {
         this.state.messages.push({ role: "assistant", text: msg.text });
@@ -1167,8 +1251,13 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   }
 
   private loadSessions(): SessionsIndex {
+    this.clearLegacySessionBodiesFromWorkspaceState();
     const saved = this.ctx.workspaceState.get<SessionsIndex>(SESSIONS_INDEX_KEY);
     if (saved && saved.version === 1 && saved.activeId && saved.sessions) {
+      saved.order = Array.isArray(saved.order) ? saved.order : Object.keys(saved.sessions);
+      for (const id of Object.keys(saved.sessions)) {
+        this.migrateWorkspaceStateBodyToFile(id);
+      }
       // Defensive: make sure activeId is in the map.
       if (!saved.sessions[saved.activeId]) {
         const firstActive = saved.order.find((id) => saved.sessions[id]?.state === "active");
@@ -1187,7 +1276,9 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         sessions: { [legacy.conversationId]: meta },
       };
       // Persist the legacy body under its new key and clear the old key.
-      void this.ctx.workspaceState.update(this.bodyKey(legacy.conversationId), legacy);
+      if (!this.writeSessionBodyFile(legacy.conversationId, legacy)) {
+        void this.ctx.workspaceState.update(this.bodyKey(legacy.conversationId), legacy);
+      }
       void this.ctx.workspaceState.update(LEGACY_STATE_KEY, undefined);
       void this.ctx.workspaceState.update(SESSIONS_INDEX_KEY, index);
       return index;
@@ -1225,16 +1316,16 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   }
 
   private loadSessionBody(id: string): ConversationState {
-    const saved = this.ctx.workspaceState.get<ConversationState>(this.bodyKey(id));
-    if (saved?.conversationId && Array.isArray(saved.messages) && Array.isArray(saved.llmMessages)) {
-      return {
-        conversationId: saved.conversationId,
-        messages: saved.messages,
-        llmMessages: saved.llmMessages,
-        usage: saved.usage ?? { inputTokens: 0, outputTokens: 0 },
-        lastInputTokens: saved.lastInputTokens,
-        lastOutputTokens: saved.lastOutputTokens,
-      };
+    const fileBody = this.readSessionBodyFile(id);
+    if (fileBody) {
+      return fileBody;
+    }
+    const migrated = normalizeStoredConversationState(this.ctx.workspaceState.get<unknown>(this.bodyKey(id)), id);
+    if (migrated) {
+      if (this.writeSessionBodyFile(id, migrated)) {
+        void this.ctx.workspaceState.update(this.bodyKey(id), undefined);
+      }
+      return migrated;
     }
     return {
       conversationId: id,
@@ -1242,6 +1333,33 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       llmMessages: [],
       usage: { inputTokens: 0, outputTokens: 0 },
     };
+  }
+
+  private migrateWorkspaceStateBodyToFile(id: string) {
+    if (this.readSessionBodyFile(id)) {
+      void this.ctx.workspaceState.update(this.bodyKey(id), undefined);
+      return;
+    }
+    const migrated = normalizeStoredConversationState(this.ctx.workspaceState.get<unknown>(this.bodyKey(id)), id);
+    if (migrated) {
+      if (this.writeSessionBodyFile(id, migrated)) {
+        void this.ctx.workspaceState.update(this.bodyKey(id), undefined);
+      }
+    }
+  }
+
+  private clearLegacySessionBodiesFromWorkspaceState() {
+    for (const id of legacySessionBodyIds(this.ctx.workspaceState.keys(), SESSION_BODY_PREFIX)) {
+      const key = this.bodyKey(id);
+      const migrated = normalizeStoredConversationState(this.ctx.workspaceState.get<unknown>(key), id);
+      if (migrated) {
+        if (this.writeSessionBodyFile(id, migrated)) {
+          void this.ctx.workspaceState.update(key, undefined);
+        }
+      } else {
+        void this.ctx.workspaceState.update(key, undefined);
+      }
+    }
   }
 
   private loadAlwaysAllow(): AlwaysAllowRule[] {
@@ -1272,29 +1390,157 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   }
 
   private persistNow() {
-    if (this.persistTimer) {
-      clearTimeout(this.persistTimer);
-      this.persistTimer = undefined;
-    }
-    // Update meta from current state.
-    const meta = this.sessions.sessions[this.state.conversationId];
-    if (meta) {
-      meta.updatedAt = Date.now();
-      meta.messageCount = this.state.messages.length;
-      if (!meta.title) {
-        const derived = deriveTitleFromMessages(this.state.messages);
-        if (derived) {
-          meta.title = derived;
+    try {
+      if (this.persistTimer) {
+        clearTimeout(this.persistTimer);
+        this.persistTimer = undefined;
+      }
+      this.ensureStateShape();
+      // Update meta from current state.
+      const meta = this.sessions.sessions[this.state.conversationId];
+      if (meta) {
+        meta.updatedAt = Date.now();
+        meta.messageCount = this.state.messages.length;
+        if (!meta.title) {
+          const derived = deriveTitleFromMessages(this.state.messages);
+          if (derived) {
+            meta.title = derived;
+          }
         }
       }
+      const wroteBodyFile = this.writeSessionBodyFile(this.state.conversationId, this.state);
+      void Promise.all([
+        this.ctx.workspaceState.update(this.bodyKey(this.state.conversationId), wroteBodyFile ? undefined : this.state),
+        this.ctx.workspaceState.update(SESSIONS_INDEX_KEY, this.sessions),
+        this.ctx.workspaceState.update(AUTO_APPROVE_KEY, this.autoApprove),
+        this.ctx.workspaceState.update(ALWAYS_ALLOW_KEY, this.alwaysAllow),
+        this.ctx.workspaceState.update(MODE_KEY, this.currentModeId),
+      ]);
+    } catch (e: unknown) {
+      this.persistTimer = undefined;
+      this.log(`persist failed: ${e instanceof Error ? e.message : String(e)}`);
+      this.repairStateShape();
     }
-    void Promise.all([
-      this.ctx.workspaceState.update(this.bodyKey(this.state.conversationId), this.state),
-      this.ctx.workspaceState.update(SESSIONS_INDEX_KEY, this.sessions),
-      this.ctx.workspaceState.update(AUTO_APPROVE_KEY, this.autoApprove),
-      this.ctx.workspaceState.update(ALWAYS_ALLOW_KEY, this.alwaysAllow),
-      this.ctx.workspaceState.update(MODE_KEY, this.currentModeId),
-    ]);
+  }
+
+  private ensureStateShape() {
+    if (!this.state || typeof this.state !== "object") {
+      this.state = this.emptyState();
+    }
+    if (!this.state.conversationId) {
+      this.state.conversationId = this.sessions?.activeId || randomUUID();
+    }
+    if (!Array.isArray(this.state.messages)) {
+      this.state.messages = [];
+      this.assistantIndex = null;
+    }
+    if (!Array.isArray(this.state.llmMessages)) {
+      this.state.llmMessages = [];
+    }
+    if (!this.state.usage || typeof this.state.usage !== "object") {
+      this.state.usage = { inputTokens: 0, outputTokens: 0 };
+    }
+    if (!this.sessions || typeof this.sessions !== "object") {
+      this.sessions = { version: 1, activeId: this.state.conversationId, order: [], sessions: {} };
+    }
+    if (!this.sessions.sessions || typeof this.sessions.sessions !== "object") {
+      this.sessions.sessions = {};
+    }
+    if (!Array.isArray(this.sessions.order)) {
+      this.sessions.order = Object.keys(this.sessions.sessions);
+    }
+    if (!this.sessions.sessions[this.state.conversationId]) {
+      this.sessions.sessions[this.state.conversationId] = this.makeMeta(
+        this.state.conversationId,
+        deriveTitleFromMessages(this.state.messages),
+        this.state.messages.length,
+      );
+    }
+    if (!this.sessions.activeId || !this.sessions.sessions[this.sessions.activeId]) {
+      this.sessions.activeId = this.state.conversationId;
+    }
+    if (!this.sessions.order.includes(this.state.conversationId)) {
+      this.sessions.order = [this.state.conversationId, ...this.sessions.order];
+    }
+  }
+
+  private repairStateShape() {
+    const id = this.state?.conversationId || this.sessions?.activeId || randomUUID();
+    const messages = Array.isArray(this.state?.messages) ? this.state.messages : [];
+    const llmMessages = Array.isArray(this.state?.llmMessages) ? this.state.llmMessages : [];
+    const usage = this.state?.usage && typeof this.state.usage === "object"
+      ? this.state.usage
+      : { inputTokens: 0, outputTokens: 0 };
+    this.state = {
+      conversationId: id,
+      messages,
+      llmMessages,
+      usage,
+      lastInputTokens: this.state?.lastInputTokens,
+      lastOutputTokens: this.state?.lastOutputTokens,
+    };
+    this.sessions = {
+      version: 1,
+      activeId: id,
+      order: [id],
+      sessions: {
+        [id]: this.makeMeta(id, deriveTitleFromMessages(messages), messages.length),
+      },
+    };
+    this.assistantIndex = null;
+  }
+
+  private sessionBodyFile(id: string): string | undefined {
+    const root = this.ctx.storageUri?.fsPath;
+    if (!root) {
+      return undefined;
+    }
+    return path.join(root, "sessions", sessionBodyFileName(id));
+  }
+
+  private readSessionBodyFile(id: string): ConversationState | undefined {
+    const file = this.sessionBodyFile(id);
+    if (!file) {
+      return undefined;
+    }
+    try {
+      if (!fs.existsSync(file)) {
+        return undefined;
+      }
+      return normalizeStoredConversationState(JSON.parse(fs.readFileSync(file, "utf8")), id);
+    } catch (e: unknown) {
+      this.log(`read session body failed for ${id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    return undefined;
+  }
+
+  private writeSessionBodyFile(id: string, body: ConversationState): boolean {
+    const file = this.sessionBodyFile(id);
+    if (!file) {
+      return false;
+    }
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(body), "utf8");
+      return true;
+    } catch (e: unknown) {
+      this.log(`write session body failed for ${id}: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
+    }
+  }
+
+  private deleteSessionBodyFile(id: string) {
+    const file = this.sessionBodyFile(id);
+    if (!file) {
+      return;
+    }
+    try {
+      if (fs.existsSync(file)) {
+        fs.unlinkSync(file);
+      }
+    } catch (e: unknown) {
+      this.log(`delete session body failed for ${id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   private isApprovedByHostPolicy(call: ToolCall): boolean {
@@ -1501,6 +1747,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.sessionBulkCounters.clear();
     this.toolStartTimes.clear();
     this.toolCallTasks.clear();
+    this.activeToolCalls.clear();
     this.activeSubAgents.clear();
     this.activeProgressKeys.clear();
     this.queuedReferences = undefined;
@@ -1810,6 +2057,43 @@ function toolProgressDetail(call: ToolCall): string {
     case "kill_process": return call.requiresApproval ? `Waiting to stop process${suffix}.` : `Stopping process${suffix}.`;
     case "spawn_subagent": return `Starting research${suffix}.`;
     default: return `Using ${call.name}${suffix}.`;
+  }
+}
+
+function toolResultProgressDetail(call: ToolCall): string | undefined {
+  const input = (call.input && typeof call.input === "object") ? call.input as Record<string, unknown> : {};
+  const value = firstToolString(input, ["path", "query", "command", "task", "processId", "severity"]);
+  const suffix = value ? ` ${trimProgressDetail(value)}` : "";
+  switch (call.name) {
+    case "read_file": return `Read${suffix}; continuing with that context.`;
+    case "list_dir": return `Listed${suffix}; checking the relevant entries.`;
+    case "search": return `Search finished${suffix}; reviewing the matches.`;
+    case "find_symbol": return `Found symbol results${suffix}; checking the implementation.`;
+    case "find_references": return `Found references${suffix}; checking how they connect.`;
+    case "semantic_search": return `Semantic search finished${suffix}; reviewing the best matches.`;
+    case "get_diagnostics": return `Diagnostics checked${suffix}; deciding the next step.`;
+    case "load_skill": return `Loaded skill guidance${suffix}; applying it to the task.`;
+    case "apply_diff": return `Applied changes${suffix}; checking the result.`;
+    case "run_command": return `Command finished${suffix}; reviewing the output.`;
+    case "run_command_background": return `Process started${suffix}; continuing with its output when needed.`;
+    case "read_process_output": return `Read process output${suffix}; checking what it shows.`;
+    case "kill_process": return `Stopped process${suffix}; continuing.`;
+    case "spawn_subagent": return `Research finished${suffix}; folding the findings back in.`;
+    default: return `Finished ${call.name}${suffix}; continuing.`;
+  }
+}
+
+function toolNoun(call: ToolCall): string {
+  switch (call.name) {
+    case "read_file": return "File read";
+    case "list_dir": return "Directory listing";
+    case "search":
+    case "semantic_search": return "Search";
+    case "apply_diff": return "Change";
+    case "run_command":
+    case "run_command_background": return "Command";
+    case "spawn_subagent": return "Research";
+    default: return call.name;
   }
 }
 

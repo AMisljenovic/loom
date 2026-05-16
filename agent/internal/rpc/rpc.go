@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,12 +13,12 @@ import (
 )
 
 type Message struct {
-	JSONRPC string          `json:"jsonrpc"`
+	JSONRPC string           `json:"jsonrpc"`
 	ID      *json.RawMessage `json:"id,omitempty"`
-	Method  string          `json:"method,omitempty"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *RPCError       `json:"error,omitempty"`
+	Method  string           `json:"method,omitempty"`
+	Params  json.RawMessage  `json:"params,omitempty"`
+	Result  json.RawMessage  `json:"result,omitempty"`
+	Error   *RPCError        `json:"error,omitempty"`
 }
 
 type RPCError struct {
@@ -62,6 +63,10 @@ func (c *Conn) Notify(method string, params any) error {
 }
 
 func (c *Conn) Request(method string, params any, out any) error {
+	return c.RequestContext(context.Background(), method, params, out)
+}
+
+func (c *Conn) RequestContext(ctx context.Context, method string, params any, out any) error {
 	id := c.nextID.Add(1)
 	ch := make(chan *Message, 1)
 	c.pendingMu.Lock()
@@ -75,9 +80,20 @@ func (c *Conn) Request(method string, params any, out any) error {
 		Method:  method,
 		Params:  mustMarshal(params),
 	}); err != nil {
+		c.pendingMu.Lock()
+		delete(c.pending, id)
+		c.pendingMu.Unlock()
 		return err
 	}
-	resp := <-ch
+	var resp *Message
+	select {
+	case resp = <-ch:
+	case <-ctx.Done():
+		c.pendingMu.Lock()
+		delete(c.pending, id)
+		c.pendingMu.Unlock()
+		return ctx.Err()
+	}
 	if resp.Error != nil {
 		return resp.Error
 	}

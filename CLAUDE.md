@@ -80,10 +80,12 @@ change to a message type must be made on both sides.
   `//go:build cgo`. The non-CGO build path compiles fine and reports an
   empty index; `find_symbol` / `find_references` return "no matches".
   `semantic_search` only registers when `LOOM_EMBED_PROVIDER` is set.
-- **Conversation sessions are multi-row.** TS keeps a `SessionsIndex` in
-  `workspaceState["loom.sessions.index"]` plus one body per session under
-  `loom.sessions.body:<id>`. The legacy `loom.conversation` single-state key
-  is migrated on first load. The Go store ([agent/internal/conversation/](agent/internal/conversation/))
+- **Conversation sessions are multi-row.** TS keeps a small `SessionsIndex` in
+  `workspaceState["loom.sessions.index"]`; bulky per-session bodies are JSON
+  files under `ExtensionContext.storageUri` and legacy
+  `loom.sessions.body:<id>` workspaceState bodies are migrated and cleared.
+  The legacy `loom.conversation` single-state key is migrated on first load.
+  The Go store ([agent/internal/conversation/](agent/internal/conversation/))
   was already keyed by `conversationId`, so multi-session is a TS+webview
   feature; do not add list-management logic in Go. Switching sessions
   cancels any in-flight task before swapping to avoid stream cross-talk.
@@ -183,9 +185,12 @@ Extension Development Host with the extension loaded. Set
 the **Loom: Set Anthropic API Key** command or export `ANTHROPIC_API_KEY` before
 testing.
 
-There is no automated test suite yet. When adding one, prefer:
+Every fix or implementation unit must include relevant unit tests. Run the
+smallest focused test command while iterating, then the broader suite before
+handoff:
 - Go: standard `go test ./...`
-- TS: vitest (lighter than jest for this size)
+- TS: `npm run test:ts` (vitest)
+- Full extension check: `npm run build`
 - Do not add Playwright/e2e until v0.2.
 
 ### Pre-commit hook

@@ -3,6 +3,7 @@ package loop
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -414,7 +415,7 @@ func (d *Driver) execToolsParallel(
 		byName[t.Name] = t
 	}
 
-	approvals, err := d.gatherApprovals(taskID, calls, byName)
+	approvals, err := d.gatherApprovals(ctx, taskID, calls, byName)
 	if err != nil {
 		return nil, err
 	}
@@ -434,10 +435,15 @@ func (d *Driver) execToolsParallel(
 			mu.Lock()
 			results[tc.ID] = out
 			mu.Unlock()
+			if out.err != nil && errors.Is(out.err, context.Canceled) {
+				return out.err
+			}
 			return nil
 		})
 	}
-	_ = g.Wait()
+	if err := g.Wait(); err != nil {
+		return results, err
+	}
 	return results, nil
 }
 
@@ -465,7 +471,7 @@ func (d *Driver) execOneTool(
 	default:
 		d.Tasks.RecordToolCall(taskID, tc.Name, tc.Input)
 		startedAt := time.Now()
-		content, followup, err := d.execToolNoApprovalGate(taskID, tc.ID, t, tc.Input)
+		content, followup, err := d.execToolNoApprovalGate(ctx, taskID, tc.ID, t, tc.Input)
 		out = toolOutcome{content: content, err: err, followup: followup}
 		d.Telemetry.Emit("tool_call", map[string]any{
 			"name":       tc.Name,
@@ -693,6 +699,7 @@ func compactStrings(values []string) []string {
 // gatherApprovals batches all Go-side tools requiring approval into a single
 // tool.approveBatch RPC. Returns a map callID -> approved.
 func (d *Driver) gatherApprovals(
+	ctx context.Context,
 	taskID string,
 	calls []llm.ToolCall,
 	byName map[string]tools.Tool,
@@ -716,7 +723,7 @@ func (d *Driver) gatherApprovals(
 	var resp struct {
 		Decisions map[string]string `json:"decisions"`
 	}
-	err := d.Conn.Request("tool.approveBatch", map[string]any{
+	err := d.Conn.RequestContext(ctx, "tool.approveBatch", map[string]any{
 		"taskId":  taskID,
 		"batchId": fmt.Sprintf("%s-%d", taskID, time.Now().UnixNano()),
 		"items":   items,
@@ -737,6 +744,7 @@ func (d *Driver) gatherApprovals(
 // loop appends as a synthetic user message on the next turn (currently used
 // by apply_diff to surface fresh diagnostics).
 func (d *Driver) execToolNoApprovalGate(
+	ctx context.Context,
 	taskID, callID string,
 	t tools.Tool,
 	input json.RawMessage,
@@ -775,7 +783,7 @@ func (d *Driver) execToolNoApprovalGate(
 		Error     string         `json:"error"`
 		Followups []toolFollowup `json:"followups,omitempty"`
 	}
-	err := d.Conn.Request("tool.call", map[string]any{
+	err := d.Conn.RequestContext(ctx, "tool.call", map[string]any{
 		"callId":           callID,
 		"taskId":           taskID,
 		"name":             t.Name,
@@ -890,7 +898,7 @@ func (d *Driver) ExecTool(taskID, callID, name string, input json.RawMessage) (s
 				return "", fmt.Errorf("user rejected")
 			}
 		}
-		content, _, err := d.execToolNoApprovalGate(taskID, callID, t, input)
+		content, _, err := d.execToolNoApprovalGate(context.Background(), taskID, callID, t, input)
 		return content, err
 	}
 	return "", fmt.Errorf("unknown tool: %s", name)

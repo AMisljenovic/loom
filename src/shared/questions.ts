@@ -17,10 +17,19 @@ export function normalizeAskQuestionsInput(input: unknown): AskQuestionsInput {
 
 export function normalizeQuestionAnswers(
   request: AskQuestionsInput,
-  answers: QuestionAnswer[],
+  answers: unknown,
 ): QuestionAnswer[] {
+  if (!Array.isArray(answers)) {
+    throw new Error("answers must be an array");
+  }
   const byQuestion = new Map(request.questions.map((q) => [q.id, q]));
-  const byAnswer = new Map(answers.map((a) => [a.questionId, a]));
+  const byAnswer = new Map(answers.map((a) => {
+    if (!a || typeof a !== "object") {
+      throw new Error("each answer must be an object");
+    }
+    const answer = a as QuestionAnswer;
+    return [answer.questionId, answer];
+  }));
   return request.questions.map((question) => {
     const raw = byAnswer.get(question.id);
     if (!raw) {

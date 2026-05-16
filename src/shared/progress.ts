@@ -1,7 +1,7 @@
 import type { Msg, ProgressPhase } from "./protocol";
 
 export function progressKey(phase: ProgressPhase, text: string): string {
-  return `${phase}:${text.trim().replace(/\s+/g, " ")}`;
+  return `${phase}:${normalizeProgressText(text)}`;
 }
 
 export function shouldAppendProgress(messages: Msg[], phase: ProgressPhase, text: string): boolean {
@@ -9,4 +9,12 @@ export function shouldAppendProgress(messages: Msg[], phase: ProgressPhase, text
   if (!last || last.role !== "progress") return true;
   const key = progressKey(phase, text);
   return progressKey(last.phase, last.text) !== key;
+}
+
+function normalizeProgressText(text: string): string {
+  return text
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[.!?]+$/, "")
+    .toLowerCase();
 }
