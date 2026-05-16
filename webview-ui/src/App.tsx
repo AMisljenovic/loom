@@ -193,6 +193,8 @@ export function App() {
   const interruptQueuedRef = useRef(false);
   const deltaBufferRef = useRef("");
   const deltaFrameRef = useRef<number | null>(null);
+  const subagentDeltaBuffersRef = useRef<Map<string, string>>(new Map());
+  const subagentDeltaFrameRef = useRef<number | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
   // Mirrors lastTaskModeId so the message-handler closure (mounted once)
   // can read the most recent value without re-subscribing.
@@ -232,6 +234,38 @@ export function App() {
         deltaFrameRef.current = window.requestAnimationFrame(flushDelta);
       }
     };
+    const flushSubagentDeltas = () => {
+      const buffers = subagentDeltaBuffersRef.current;
+      if (buffers.size === 0) {
+        subagentDeltaFrameRef.current = null;
+        return;
+      }
+      subagentDeltaBuffersRef.current = new Map();
+      subagentDeltaFrameRef.current = null;
+      setMessages((prev) => {
+        let next = prev;
+        buffers.forEach((text, subTaskId) => {
+          next = updateSubAgent(next, subTaskId, (sub) => {
+            const trace = [...sub.trace];
+            const last = trace[trace.length - 1];
+            if (last?.role === "assistant") {
+              trace[trace.length - 1] = { ...last, text: last.text + text };
+            } else {
+              trace.push({ role: "assistant", text });
+            }
+            return { ...sub, trace };
+          });
+        });
+        return next;
+      });
+    };
+    const queueSubagentDelta = (subTaskId: string, text: string) => {
+      const buffers = subagentDeltaBuffersRef.current;
+      buffers.set(subTaskId, (buffers.get(subTaskId) ?? "") + text);
+      if (subagentDeltaFrameRef.current === null) {
+        subagentDeltaFrameRef.current = window.requestAnimationFrame(flushSubagentDeltas);
+      }
+    };
     const handler = (e: MessageEvent) => {
       const m = e.data;
       if (m.type === "themeConfig") {
@@ -256,6 +290,11 @@ export function App() {
         if (deltaFrameRef.current !== null) {
           window.cancelAnimationFrame(deltaFrameRef.current);
           deltaFrameRef.current = null;
+        }
+        subagentDeltaBuffersRef.current = new Map();
+        if (subagentDeltaFrameRef.current !== null) {
+          window.cancelAnimationFrame(subagentDeltaFrameRef.current);
+          subagentDeltaFrameRef.current = null;
         }
         return;
       }
@@ -305,7 +344,12 @@ export function App() {
         queueDelta(m.text);
         return;
       }
+      if (m.type === "subagentDelta") {
+        queueSubagentDelta(m.subTaskId, m.text);
+        return;
+      }
       flushDelta();
+      flushSubagentDeltas();
       setMessages((prev) => {
         const next = [...prev];
         if (m.type === "toolCall") {
@@ -328,17 +372,6 @@ export function App() {
             status: "running",
             trace: [{ role: "user", text: m.task }],
             expanded: false,
-          });
-        } else if (m.type === "subagentDelta") {
-          return updateSubAgent(next, m.subTaskId, (sub) => {
-            const trace = [...sub.trace];
-            const last = trace[trace.length - 1];
-            if (last?.role === "assistant") {
-              trace[trace.length - 1] = { ...last, text: last.text + m.text };
-            } else {
-              trace.push({ role: "assistant", text: m.text });
-            }
-            return { ...sub, trace };
           });
         } else if (m.type === "subagentToolCall") {
           return updateSubAgent(next, m.subTaskId, (sub) => ({
@@ -399,6 +432,9 @@ export function App() {
       window.removeEventListener("message", handler);
       if (deltaFrameRef.current !== null) {
         window.cancelAnimationFrame(deltaFrameRef.current);
+      }
+      if (subagentDeltaFrameRef.current !== null) {
+        window.cancelAnimationFrame(subagentDeltaFrameRef.current);
       }
       if (noticeTimerRef.current !== null) {
         window.clearTimeout(noticeTimerRef.current);

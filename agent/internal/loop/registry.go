@@ -3,7 +3,14 @@ package loop
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
+)
+
+var (
+	ErrDepthExceeded      = errors.New("sub-agent depth limit exceeded")
+	ErrTreeLimitExceeded  = errors.New("sub-agent task-tree limit exceeded")
+	ErrTreeTokensExceeded = errors.New("sub-agent task-tree token ceiling exceeded")
 )
 
 type TaskStatus string
@@ -40,7 +47,7 @@ func NewTaskRegistry() *TaskRegistry {
 	return &TaskRegistry{tasks: make(map[string]*TaskNode)}
 }
 
-func (r *TaskRegistry) Register(id, parentID, typ, task string, cancel context.CancelFunc) *TaskNode {
+func (r *TaskRegistry) Register(id, parentID, typ, task string, cancel context.CancelFunc) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.tasks == nil {
@@ -48,12 +55,27 @@ func (r *TaskRegistry) Register(id, parentID, typ, task string, cancel context.C
 	}
 	depth := 0
 	rootID := id
+	var parent *TaskNode
 	if parentID != "" {
-		if parent := r.tasks[parentID]; parent != nil {
-			depth = parent.Depth + 1
-			rootID = parent.RootID
-			parent.Children = append(parent.Children, id)
+		parent = r.tasks[parentID]
+	}
+	if parent != nil {
+		if parent.Depth+1 > subAgentMaxDepth {
+			return ErrDepthExceeded
 		}
+		root := r.tasks[parent.RootID]
+		if root != nil {
+			if r.countDescendantsLocked(root) >= subAgentMaxPerTaskTree {
+				return ErrTreeLimitExceeded
+			}
+			input, _, _ := r.treeUsageLocked(root, root.ID)
+			if input >= taskTreeMaxInputTokens {
+				return ErrTreeTokensExceeded
+			}
+		}
+		depth = parent.Depth + 1
+		rootID = parent.RootID
+		parent.Children = append(parent.Children, id)
 	}
 	node := &TaskNode{
 		ID:             id,
@@ -67,7 +89,7 @@ func (r *TaskRegistry) Register(id, parentID, typ, task string, cancel context.C
 		FilesInspected: map[string]bool{},
 	}
 	r.tasks[id] = node
-	return cloneTaskNode(node)
+	return nil
 }
 
 func (r *TaskRegistry) Complete(id string, status TaskStatus) {

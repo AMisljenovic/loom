@@ -76,11 +76,15 @@ newline-delimited JSON-RPC over stdio.
     may pre-apply the same parser for responsiveness.
 15. Assistant Markdown rendering stays webview-only and sanitized. Store raw
     message text in session state; render Markdown without raw HTML.
-16. v1.1 sub-agents are sequential and minimal: only the built-in `research`
-    preset exists, exposed through `spawn_subagent`. Research is read-only,
-    uses isolated conversation state, and streams into webview sub-agent cards.
-    Do not add custom presets, parallel execution, or sub-agent model routing
-    without updating `SUBAGENTS.md`.
+16. v0.1.4 sub-agents run in parallel within a turn. Only the built-in
+    `research` preset exists, exposed through `spawn_subagent`. Multiple
+    spawns emitted in one turn run concurrently through the same errgroup
+    as other tools; each sub-agent is read-only, has isolated conversation
+    state, and streams into its own webview sub-agent card. Depth, per-tree
+    count, and tree token ceiling are enforced atomically inside
+    `TaskRegistry.Register`. Per-turn cap is `subAgentMaxPerTurn=5`. Do not
+    add custom presets, fire-and-forget orchestration, or sub-agent model
+    routing without updating `SUBAGENTS.md`.
 
 ## Pre-commit hook
 

@@ -407,14 +407,6 @@ func (d *Driver) execToolsParallel(
 	}
 
 	results := make(map[string]toolOutcome, len(calls))
-	if spawnCalls > 0 {
-		for _, tc := range calls {
-			out := d.execOneTool(ctx, taskID, conversationID, tc, byName, approvals, entry, skillsCatalogue)
-			results[tc.ID] = out
-		}
-		return results, nil
-	}
-
 	var mu sync.Mutex
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -511,24 +503,16 @@ func (d *Driver) execSpawnSubAgent(ctx context.Context, parentTaskID, parentConv
 		return toolOutcome{err: err}
 	}
 
-	parent := d.Tasks.Node(parentTaskID)
-	if parent == nil {
+	if parent := d.Tasks.Node(parentTaskID); parent == nil {
 		return toolOutcome{err: fmt.Errorf("parent task not registered")}
-	}
-	if parent.Depth >= subAgentMaxDepth {
-		return toolOutcome{err: fmt.Errorf("depth limit exceeded")}
-	}
-	if d.Tasks.CountDescendants(parent.RootID) >= subAgentMaxPerTaskTree {
-		return toolOutcome{err: fmt.Errorf("sub-agent task-tree limit exceeded")}
-	}
-	subInput, _, _ := d.Tasks.TreeUsage(parent.RootID)
-	if subInput >= taskTreeMaxInputTokens {
-		return toolOutcome{err: fmt.Errorf("task-tree token ceiling exceeded")}
 	}
 
 	subTaskID := fmt.Sprintf("%s-sub-%d", parentTaskID, time.Now().UnixNano())
 	subCtx, cancel := context.WithCancel(ctx)
-	d.Tasks.Register(subTaskID, parentTaskID, preset.Name, in.Task, cancel)
+	if err := d.Tasks.Register(subTaskID, parentTaskID, preset.Name, in.Task, cancel); err != nil {
+		cancel()
+		return toolOutcome{err: err}
+	}
 	defer cancel()
 
 	_ = d.Conn.Notify("subagent.spawn", map[string]any{
