@@ -118,18 +118,21 @@ No test suite yet. When adding one:
 `npm install` installs a Husky pre-commit hook (`scripts/check-docs-sync.mjs`)
 that blocks a commit when staged changes touch `src/`, `agent/`,
 `webview-ui/src/`, `package.json`, `scripts/`, or `.github/workflows/` but
-none of these three doc files are also staged:
+none of these repo-facing doc files are also staged:
 
+- `README.md`
 - `CLAUDE.md`
 - `AGENTS.md`
 - `.github/copilot-instructions.md`
 
-Keep them in sync. Bypass with `SKIP_DOCS_CHECK=1 git commit ...` or
-`git commit --no-verify` when a doc update is genuinely unnecessary.
+Keep the relevant docs in sync: `README.md` for user-facing behavior and the
+instruction files for agent-facing architecture. Bypass with
+`SKIP_DOCS_CHECK=1 git commit ...` or `git commit --no-verify` when a doc
+update is genuinely unnecessary.
 
 ## Pull request expectations
 
 - One concern per PR
-- Update `CLAUDE.md` / `AGENTS.md` / `.github/copilot-instructions.md` if architecture changes (enforced by pre-commit hook)
+- Update `README.md` for user-facing behavior and `CLAUDE.md` / `AGENTS.md` / `.github/copilot-instructions.md` for architecture changes (enforced by pre-commit hook)
 - Run `npm run build` clean
 - Conventional commits (`feat:`, `fix:`, `chore:`, etc.)

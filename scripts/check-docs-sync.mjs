@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Pre-commit guard: if staged changes touch source/build areas, require that
-// at least one of the AI-agent instruction docs is also staged. Bypass with
+// at least one repo-facing documentation file is also staged. Bypass with
 // SKIP_DOCS_CHECK=1 or `git commit --no-verify`.
 import { execSync } from 'node:child_process';
 
@@ -17,7 +17,7 @@ try {
 const staged = raw.toString('utf8').split('\0').filter(Boolean);
 if (staged.length === 0) process.exit(0);
 
-const DOC_FILES = ['CLAUDE.md', 'AGENTS.md', '.github/copilot-instructions.md'];
+const DOC_FILES = ['README.md', 'CLAUDE.md', 'AGENTS.md', '.github/copilot-instructions.md'];
 
 const TRIGGERS = [
   /^src\//,
@@ -52,10 +52,10 @@ const relevant = staged.filter(isDocRelevant);
 const docsStaged = staged.some((p) => DOC_FILES.includes(norm(p)));
 
 if (relevant.length > 0 && !docsStaged) {
-  console.error('\n[loom] Pre-commit: staged source changes without agent-doc updates.\n');
+  console.error('\n[loom] Pre-commit: staged source changes without doc updates.\n');
   console.error('Doc-relevant files staged:');
   for (const f of relevant) console.error('  - ' + f);
-  console.error('\nUpdate at least one of (keep all three in sync):');
+  console.error('\nUpdate at least one of these docs when source behavior changes:');
   for (const f of DOC_FILES) console.error('  - ' + f);
   console.error('\nBypass: SKIP_DOCS_CHECK=1 git commit ...   (or git commit --no-verify)\n');
   process.exit(1);

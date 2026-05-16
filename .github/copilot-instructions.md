@@ -87,6 +87,7 @@ newline-delimited JSON-RPC over stdio.
 A Husky pre-commit hook (`scripts/check-docs-sync.mjs`, installed by
 `npm install`) blocks commits that touch `src/`, `agent/`, `webview-ui/src/`,
 `package.json`, `scripts/`, or `.github/workflows/` without also staging one
-of `CLAUDE.md`, `AGENTS.md`, or `.github/copilot-instructions.md`. Keep all
-three in sync. Bypass with `SKIP_DOCS_CHECK=1` or `--no-verify` when no doc
-change is warranted.
+of `README.md`, `CLAUDE.md`, `AGENTS.md`, or `.github/copilot-instructions.md`.
+Keep `README.md` aligned with user-facing behavior and the instruction files
+aligned with architecture. Bypass with `SKIP_DOCS_CHECK=1` or `--no-verify`
+when no doc change is warranted.
