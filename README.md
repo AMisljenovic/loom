@@ -61,6 +61,9 @@ Packaging cross-compiles the Go agent for all supported targets, builds the
 webview and extension bundle, then writes one VSIX per platform to `dist/`.
 Each VSIX is staged with only the matching Go binary.
 
+Before packaging a release, bump the root package version and lockfile version
+so generated VSIX metadata matches the Marketplace release.
+
 ## Configuration
 
 Important settings:
