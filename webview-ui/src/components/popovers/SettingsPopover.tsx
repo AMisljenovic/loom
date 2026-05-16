@@ -1,12 +1,10 @@
 import * as Ico from "../../brand/icons";
-import { post } from "../../vscode";
 
 interface SettingsPopoverProps {
-    autoApprove: boolean;
     onClose: () => void;
 }
 
-export function SettingsPopover({ autoApprove, onClose }: SettingsPopoverProps) {
+export function SettingsPopover({ onClose }: SettingsPopoverProps) {
     return (
         <div className="popover settings-pop">
             <div className="pop-head">
@@ -16,18 +14,9 @@ export function SettingsPopover({ autoApprove, onClose }: SettingsPopoverProps) 
                 </button>
             </div>
             <div className="pop-body">
-                <div className="settings-row">
-                    <span className="settings-label">Auto-approve all tools</span>
-                    <button
-                        className={`toggle-btn${autoApprove ? " on" : ""}`}
-                        onClick={() => post({ type: "setAutoApprove", enabled: !autoApprove })}
-                        aria-pressed={autoApprove}
-                    >
-                        {autoApprove ? "On" : "Off"}
-                    </button>
-                </div>
                 <div className="settings-note">
-                    When on, all approval-gated tools run without prompting. Use with caution.
+                    Auto-approve has moved to its own pill in the toolbar. Click <strong>auto-approve on</strong>/<strong>auto-approve off</strong>
+                    {" "}to manage per-category permissions.
                 </div>
             </div>
         </div>

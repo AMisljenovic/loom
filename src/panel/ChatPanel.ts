@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { AgentClient, AgentSpawnExtras, LlmConfig } from "../agentClient";
+import { DEFAULT_AUTO_APPROVE_CONFIG, migrateAutoApprove, normalizeAutoApprove } from "../approval/categories";
 import { consumeHostApprovalPolicy } from "../approval/hostPolicy";
 import { loadDotEnv } from "../env";
 import { resolveMcpConfig } from "../mcpConfig";
@@ -11,6 +12,8 @@ import { secretKeyFor } from "../secrets";
 import { detectModeSwitchIntent } from "../shared/modeIntent";
 import type {
   AlwaysAllowRule,
+  AutoApproveCategory,
+  AutoApproveConfig,
   ConversationState,
   ConversationUpdated,
   FirstRunState,
@@ -69,7 +72,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private toolStartTimes = new Map<string, number>();
   private state: ConversationState;
   private sessions: SessionsIndex;
-  private autoApprove = false;
+  private autoApprove: AutoApproveConfig = { ...DEFAULT_AUTO_APPROVE_CONFIG, categories: { ...DEFAULT_AUTO_APPROVE_CONFIG.categories } };
   private alwaysAllow: AlwaysAllowRule[] = [];
   private currentModeId: string = "code";
   private sessionBulkCounters = new Map<string, number>();
@@ -88,7 +91,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.ctx.subscriptions.push(this.output);
     this.sessions = this.loadSessions();
     this.state = this.loadSessionBody(this.sessions.activeId);
-    this.autoApprove = this.ctx.workspaceState.get<boolean>(AUTO_APPROVE_KEY, false);
+    this.autoApprove = migrateAutoApprove(this.ctx.workspaceState.get<unknown>(AUTO_APPROVE_KEY));
     this.alwaysAllow = this.loadAlwaysAllow();
     this.currentModeId = this.ctx.workspaceState.get<string>(MODE_KEY) ?? "code";
     this.ctx.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
@@ -176,6 +179,9 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         if (m.rememberRule) {
           this.addAlwaysAllowRule(m.rememberRule);
         }
+        if (m.autoApproveCategory) {
+          this.toggleAutoApproveCategory(m.autoApproveCategory, true);
+        }
         if (call && typeof m.sessionCount === "number" && m.sessionCount > 0) {
           this.sessionBulkCounters.set(call.name, Math.floor(m.sessionCount));
         }
@@ -184,7 +190,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       this.pendingApprovals.delete(m.callId);
       this.pendingApprovalCalls.delete(m.callId);
     } else if (m.type === "setAutoApprove") {
-      this.autoApprove = m.enabled;
+      this.autoApprove = normalizeAutoApprove(m.config);
       this.schedulePersist();
       this.postAutoApprove();
     } else if (m.type === "removeAlwaysAllowRule") {
@@ -855,7 +861,17 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   }
 
   private postAutoApprove() {
-    this.post({ type: "autoApprove", enabled: this.autoApprove }, false);
+    this.post({ type: "autoApprove", config: this.autoApprove }, false);
+  }
+
+  private toggleAutoApproveCategory(category: AutoApproveCategory, enabled: boolean) {
+    if (this.autoApprove.categories[category] === enabled) return;
+    this.autoApprove = {
+      enabled: this.autoApprove.enabled || enabled,
+      categories: { ...this.autoApprove.categories, [category]: enabled },
+    };
+    this.schedulePersist();
+    this.postAutoApprove();
   }
 
   private postAlwaysAllowList() {

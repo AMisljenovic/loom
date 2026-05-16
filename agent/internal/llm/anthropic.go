@@ -41,9 +41,11 @@ func newAnthropic(cfg AnthropicConfig) (Provider, error) {
 	}, nil
 }
 
+func (p *anthropicProvider) Family() string { return "anthropic" }
+
 func (p *anthropicProvider) Stream(
 	ctx context.Context,
-	systemPrompt string,
+	system SystemPrompt,
 	messages []Message,
 	tools []ToolDef,
 	h StreamHandler,
@@ -63,11 +65,20 @@ func (p *anthropicProvider) Stream(
 		MaxTokens: p.maxTokens,
 		Messages:  antMsgs,
 	}
-	if systemPrompt != "" {
-		params.System = []anthropic.TextBlockParam{{
-			Text:         systemPrompt,
+	// Split the system into two blocks: the stable prefix (with cache_control
+	// breakpoint) and the volatile tail (workspace path, loaded skills, rules).
+	// The cache hit grows turn-by-turn because everything before the marker
+	// stays byte-identical for a given (mode, registry).
+	if system.Stable != "" {
+		params.System = append(params.System, anthropic.TextBlockParam{
+			Text:         system.Stable,
 			CacheControl: anthropic.NewCacheControlEphemeralParam(),
-		}}
+		})
+	}
+	if system.Volatile != "" {
+		params.System = append(params.System, anthropic.TextBlockParam{
+			Text: system.Volatile,
+		})
 	}
 	if len(antTools) > 0 {
 		// Cache through the end of the tool definitions. Anthropic caches the

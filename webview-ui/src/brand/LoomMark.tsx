@@ -1,17 +1,15 @@
-import React from "react";
-
 interface LoomMarkProps {
     size?: number;
     strokeWidth?: number;
     weft?: boolean;
+    /** Kept for prop compatibility; the mark is now solid currentColor in
+        every context to match the activity-bar icon exactly. */
     mono?: boolean;
     className?: string;
 }
 
-export function LoomMark({ size = 24, strokeWidth, weft = false, mono = false, className }: LoomMarkProps) {
+export function LoomMark({ size = 24, strokeWidth, weft = false, className }: LoomMarkProps) {
     const sw = strokeWidth ?? Math.max(1.5, size / 14);
-    const id = React.useId().replace(/[:]/g, "");
-    const grad = `loom-grad-${id}`;
 
     return (
         <svg
@@ -22,16 +20,8 @@ export function LoomMark({ size = 24, strokeWidth, weft = false, mono = false, c
             aria-hidden="true"
             className={className}
         >
-            {!mono && (
-                <defs>
-                    <linearGradient id={grad} x1="0" y1="0" x2="1" y2="1">
-                        <stop offset="0%" stopColor="currentColor" stopOpacity="1" />
-                        <stop offset="100%" stopColor="currentColor" stopOpacity="0.65" />
-                    </linearGradient>
-                </defs>
-            )}
             <g
-                stroke={mono ? "currentColor" : `url(#${grad})`}
+                stroke="currentColor"
                 strokeWidth={sw}
                 strokeLinecap="round"
                 fill="none"

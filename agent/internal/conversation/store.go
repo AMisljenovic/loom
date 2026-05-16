@@ -22,6 +22,34 @@ type Entry struct {
 	LastInputTokens      int64
 	LastOutputTokens     int64
 	LastSummarizedLen    int
+
+	// LoadedSkills holds the ids of skills the model has requested via the
+	// load_skill tool during this conversation. The skills' bodies are
+	// rendered into the volatile tail of the system prompt; the cached
+	// prefix is unaffected so cache hits continue to grow.
+	LoadedSkills []string
+	// RulesHash is the SHA-256 of the rules bundle captured at task.start.
+	// Used to detect drift across turns and is frozen for the task lifetime.
+	RulesHash string
+}
+
+// LoadSkills appends previously-unseen ids to LoadedSkills, preserving order
+// of first appearance. Returns the ids that were newly added (in order).
+func (e *Entry) LoadSkills(ids []string) []string {
+	seen := make(map[string]bool, len(e.LoadedSkills))
+	for _, id := range e.LoadedSkills {
+		seen[id] = true
+	}
+	var added []string
+	for _, id := range ids {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		e.LoadedSkills = append(e.LoadedSkills, id)
+		added = append(added, id)
+	}
+	return added
 }
 
 type Snapshot struct {

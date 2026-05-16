@@ -2,7 +2,8 @@ import { Buffer } from "node:buffer";
 import * as childProcess from "node:child_process";
 import * as nodePath from "node:path";
 import * as vscode from "vscode";
-import type { ToolCall, ToolResult } from "../shared/protocol";
+import type { ToolCall, ToolFollowup, ToolFollowupDiagRow, ToolResult } from "../shared/protocol";
+import { killProcess, readProcessOutput, runCommandBackground } from "./processes";
 
 export type ApprovalFn = (call: ToolCall) => Promise<boolean>;
 
@@ -34,9 +35,20 @@ export interface PreparedApplyDiff {
   existed: boolean;
   before: string;
   after: string;
+  // Pre-edit diagnostics keyed by URI string — used to diff against the
+  // post-edit snapshot so the feedback loop only surfaces *new* problems.
+  preDiagnostics: Map<string, DiagFingerprint[]>;
+}
+
+interface DiagFingerprint {
+  line: number;
+  col: number;
+  severity: ToolFollowupDiagRow["severity"];
+  message: string;
 }
 
 const preparedApplyDiffs = new Map<string, PreparedApplyDiff>();
+const POST_EDIT_SETTLE_MS = 750;
 
 export async function executeTool(
   call: ToolCall,
@@ -56,6 +68,12 @@ export async function executeTool(
         return await applyDiff(call, ctx);
       case "run_command":
         return await runCommand(call, ctx);
+      case "run_command_background":
+        return runCommandBackground(call, resolveWorkspaceRoot(ctx));
+      case "read_process_output":
+        return readProcessOutput(call);
+      case "kill_process":
+        return killProcess(call);
       default:
         return { callId: call.callId, ok: false, error: `unknown tool: ${call.name}` };
     }
@@ -85,6 +103,7 @@ export async function prepareApplyDiff(
       existed: false,
       before: "",
       after: input.edits[0].newText,
+      preDiagnostics: new Map(),
     };
   }
 
@@ -110,8 +129,42 @@ export async function prepareApplyDiff(
     existed: true,
     before: read,
     after,
+    preDiagnostics: snapshotDiagnostics([uri]),
   };
 }
+
+function snapshotDiagnostics(uris: vscode.Uri[]): Map<string, DiagFingerprint[]> {
+  const out = new Map<string, DiagFingerprint[]>();
+  for (const uri of uris) {
+    const fps = vscode.languages.getDiagnostics(uri).map(fingerprint);
+    out.set(uri.toString(), fps);
+  }
+  return out;
+}
+
+function fingerprint(d: vscode.Diagnostic): DiagFingerprint {
+  return {
+    line: d.range.start.line + 1,
+    col: d.range.start.character + 1,
+    severity: severityToFollowup(d.severity),
+    message: d.message,
+  };
+}
+
+function severityToFollowup(sev: vscode.DiagnosticSeverity): ToolFollowupDiagRow["severity"] {
+  switch (sev) {
+    case vscode.DiagnosticSeverity.Error: return "error";
+    case vscode.DiagnosticSeverity.Warning: return "warning";
+    case vscode.DiagnosticSeverity.Information: return "info";
+    default: return "hint";
+  }
+}
+
+function diffDiagnostics(before: DiagFingerprint[], after: DiagFingerprint[]): DiagFingerprint[] {
+  const seen = new Set(before.map((d) => `${d.line}:${d.col}:${d.severity}:${d.message}`));
+  return after.filter((d) => !seen.has(`${d.line}:${d.col}:${d.severity}:${d.message}`));
+}
+
 
 export function cachePreparedApplyDiff(plan: PreparedApplyDiff) {
   preparedApplyDiffs.set(plan.callId, plan);
@@ -183,24 +236,40 @@ async function applyDiff(call: ToolCall, ctx: ToolContext): Promise<ToolResult> 
   try {
     await vscode.workspace.fs.createDirectory(vscode.Uri.file(nodePath.dirname(plan.uri.fsPath)));
     const edit = new vscode.WorkspaceEdit();
+    let content: string;
     if (plan.existed) {
       const doc = await vscode.workspace.openTextDocument(plan.uri);
       const fullRange = new vscode.Range(doc.positionAt(0), doc.positionAt(doc.getText().length));
       edit.replace(plan.uri, fullRange, plan.after);
       await vscode.workspace.applyEdit(edit);
       await doc.save();
-      return { callId: call.callId, ok: true, content: `applied diff to ${plan.relPath}` };
+      content = `applied diff to ${plan.relPath}`;
+    } else {
+      edit.createFile(plan.uri, { overwrite: false, ignoreIfExists: false });
+      edit.insert(plan.uri, new vscode.Position(0, 0), plan.after);
+      await vscode.workspace.applyEdit(edit);
+      const doc = await vscode.workspace.openTextDocument(plan.uri);
+      await doc.save();
+      content = `created ${plan.relPath}`;
     }
-
-    edit.createFile(plan.uri, { overwrite: false, ignoreIfExists: false });
-    edit.insert(plan.uri, new vscode.Position(0, 0), plan.after);
-    await vscode.workspace.applyEdit(edit);
-    const doc = await vscode.workspace.openTextDocument(plan.uri);
-    await doc.save();
-    return { callId: call.callId, ok: true, content: `created ${plan.relPath}` };
+    const followups = await collectDiagnosticsFollowups(plan);
+    return { callId: call.callId, ok: true, content, followups: followups.length ? followups : undefined };
   } finally {
     discardPreparedApplyDiff(call.callId);
   }
+}
+
+async function collectDiagnosticsFollowups(plan: PreparedApplyDiff): Promise<ToolFollowup[]> {
+  await new Promise((resolve) => setTimeout(resolve, POST_EDIT_SETTLE_MS));
+  const post = snapshotDiagnostics([plan.uri]);
+  const out: ToolFollowup[] = [];
+  for (const [uriKey, after] of post) {
+    const before = plan.preDiagnostics.get(uriKey) ?? [];
+    const newDiags = diffDiagnostics(before, after).filter((d) => d.severity === "error" || d.severity === "warning");
+    if (newDiags.length === 0) continue;
+    out.push({ kind: "diagnostics", path: plan.relPath, diags: newDiags });
+  }
+  return out;
 }
 
 function parseApplyDiffInput(input: unknown): ApplyDiffInput {

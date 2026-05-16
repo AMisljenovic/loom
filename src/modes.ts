@@ -1,23 +1,50 @@
 import type { ModeDefinition } from "./shared/protocol";
 
+// Built-in modes. Tool gating mirrors the per-mode prompt files under
+// agent/internal/prompts/*.md. New tools must be added here AND to the
+// per-mode prompt that lists them, otherwise the model will hallucinate
+// capabilities it does not have.
 export const BUILTIN_MODES: ModeDefinition[] = [
     {
         id: "code",
         label: "Code",
+        // No allowlist or denylist → full registry.
     },
     {
         id: "architect",
         label: "Architect",
-        toolDenylist: ["apply_diff"],
+        // Read-only planning mode: deny everything that writes or executes.
+        // load_skill, get_diagnostics, and read_process_output remain available
+        // so the agent can inspect state and pull in guidance.
+        toolDenylist: [
+            "apply_diff",
+            "run_command",
+            "run_command_background",
+            "kill_process",
+        ],
     },
     {
         id: "ask",
         label: "Ask",
-        toolAllowlist: [],
+        // Conversational mode used to be empty (no tools at all). Promoted to
+        // "read-only with skills" so grounded answers are possible without
+        // letting the agent touch the workspace.
+        toolAllowlist: [
+            "read_file",
+            "list_dir",
+            "search",
+            "find_symbol",
+            "find_references",
+            "semantic_search",
+            "get_diagnostics",
+            "load_skill",
+        ],
     },
     {
         id: "debug",
         label: "Debug",
+        // Full registry — debugging frequently needs writes (instrumentation
+        // logging) and long-running processes (test watchers, dev servers).
     },
 ];
 

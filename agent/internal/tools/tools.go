@@ -136,7 +136,7 @@ func Registry() []Tool {
 		},
 		{
 			Name:             "run_command",
-			Description:      "Run a shell command in the workspace terminal.",
+			Description:      "Run a shell command in the workspace terminal. Blocking; for long-running processes (dev servers, watchers) use run_command_background instead.",
 			RequiresApproval: true,
 			InputSchema: map[string]any{
 				"type": "object",
@@ -145,6 +145,62 @@ func Registry() []Tool {
 				},
 				"required": []string{"command"},
 			},
+		},
+		{
+			Name:             "run_command_background",
+			Description:      "Start a shell command as a background process and return immediately with a processId. Use for dev servers, watchers, or anything that should outlive the turn. Read incremental output with read_process_output and terminate with kill_process.",
+			RequiresApproval: true,
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"command": map[string]any{"type": "string"},
+					"cwd":     map[string]any{"type": "string"},
+				},
+				"required": []string{"command"},
+			},
+		},
+		{
+			Name:        "read_process_output",
+			Description: "Read accumulated stdout/stderr from a background process started with run_command_background. Returns the chunk since the optional cursor plus a new cursor for the next read.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"processId":   map[string]any{"type": "string"},
+					"sinceCursor": map[string]any{"type": "number"},
+					"maxBytes":    map[string]any{"type": "number"},
+				},
+				"required": []string{"processId"},
+			},
+		},
+		{
+			Name:             "kill_process",
+			Description:      "Terminate a background process started with run_command_background.",
+			RequiresApproval: true,
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"processId": map[string]any{"type": "string"},
+				},
+				"required": []string{"processId"},
+			},
+		},
+		{
+			Name:        "load_skill",
+			Description: "Load one or more skills by id. Each skill is a short Markdown guide for a specific topic; the skill catalogue is listed in the system prompt. Loaded skill bodies are injected into the system prompt for the rest of the conversation and inform later answers.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"ids": map[string]any{
+						"type":  "array",
+						"items": map[string]any{"type": "string"},
+					},
+				},
+				"required": []string{"ids"},
+			},
+			// LocalExec is intentionally nil — the loop intercepts this tool
+			// in execToolNoApprovalGate so it can mutate the conversation
+			// Entry (LoadedSkills) without expanding the generic LocalExec
+			// signature with state-mutating dependencies.
 		},
 	}
 }

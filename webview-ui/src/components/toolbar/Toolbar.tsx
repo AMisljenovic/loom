@@ -1,12 +1,14 @@
 import React, { useRef, useState } from "react";
 import type {
     AlwaysAllowRule,
+    AutoApproveConfig,
     ConversationUsage,
     IndexStatusNotify,
     LlmConfigView,
     McpServerStatus,
     ModeDefinition,
 } from "../../../../src/shared/protocol";
+import { autoApprovePillLabel } from "../AutoApprovePopover";
 import * as Ico from "../../brand/icons";
 import { formatTokens } from "../../util/format";
 import { post } from "../../vscode";
@@ -19,9 +21,10 @@ interface ToolbarProps {
     modes: ModeDefinition[];
     currentModeId: string;
     alwaysAllowRules: AlwaysAllowRule[];
+    autoApprove: AutoApproveConfig;
     onShowAllowlist: () => void;
-    onShowSettings: () => void;
     onShowModel: () => void;
+    onShowAutoApprove: () => void;
 }
 
 export function Toolbar({
@@ -32,10 +35,12 @@ export function Toolbar({
     modes,
     currentModeId,
     alwaysAllowRules,
+    autoApprove,
     onShowAllowlist,
-    onShowSettings,
     onShowModel,
+    onShowAutoApprove,
 }: ToolbarProps) {
+    const pill = autoApprovePillLabel(autoApprove);
     const [modeOpen, setModeOpen] = useState(false);
     const modeRef = useRef<HTMLDivElement>(null);
 
@@ -112,9 +117,14 @@ export function Toolbar({
                 </button>
             )}
 
-            {/* Settings */}
-            <button className="icon-button" onClick={onShowSettings} title="Settings">
-                <Ico.Settings size={13} />
+            {/* Auto-approve pill */}
+            <button
+                className={`toggle-btn${pill.on ? " on" : ""}`}
+                onClick={onShowAutoApprove}
+                title="Auto-approve settings"
+            >
+                <Ico.Check size={11} />
+                <span>{pill.label}</span>
             </button>
         </div>
     );

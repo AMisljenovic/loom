@@ -86,6 +86,27 @@ export interface ToolCall {
   requiresApproval: boolean;
 }
 
+// Categories used by the granular auto-approve UI. Tools belong to exactly
+// one category (see src/approval/categories.ts). MCP tools are bucketed
+// under "mcp" regardless of what they do; users wanting finer control can
+// still add alwaysAllow patterns underneath.
+export type AutoApproveCategory =
+  | "read"
+  | "write"
+  | "execute"
+  | "mcp"
+  | "mode"
+  | "subtasks"
+  | "question";
+
+export interface AutoApproveConfig {
+  // Master switch. When false, every approval-gated tool prompts.
+  enabled: boolean;
+  // Per-category opt-in. A category being true means "skip the prompt for
+  // tools in this bucket"; false means prompt.
+  categories: Record<AutoApproveCategory, boolean>;
+}
+
 export type AlwaysAllowRule = {
   id: string;
   tool: string;
@@ -95,12 +116,30 @@ export type AlwaysAllowRule = {
   createdAt: number;
 };
 
+export interface ToolFollowupDiagRow {
+  line: number;
+  col: number;
+  severity: "error" | "warning" | "info" | "hint";
+  message: string;
+}
+
+export type ToolFollowup =
+  | {
+    kind: "diagnostics";
+    path: string;
+    diags: ToolFollowupDiagRow[];
+  };
+
 export interface ToolResult {
   callId: CallId;
   ok: boolean;
   content?: string;
   error?: string;
   durationMs?: number;
+  // Side-channel results the loop should surface as a synthetic user message
+  // on the next turn (e.g. new diagnostics introduced by apply_diff). Empty
+  // or omitted means "nothing to report".
+  followups?: ToolFollowup[];
 }
 
 export interface ToolApprovalResult {
@@ -258,8 +297,8 @@ export type WebviewToHost =
   | { type: "setLlmConfig"; config: Omit<LlmConfigView, "hasApiKey"> }
   | { type: "setSecret"; provider: Exclude<LlmProvider, "local">; apiKey: string }
   | { type: "completeFirstRun" }
-  | { type: "approve"; callId: CallId; approved: boolean; rememberRule?: AlwaysAllowRule; sessionCount?: number }
-  | { type: "setAutoApprove"; enabled: boolean }
+  | { type: "approve"; callId: CallId; approved: boolean; rememberRule?: AlwaysAllowRule; sessionCount?: number; autoApproveCategory?: AutoApproveCategory }
+  | { type: "setAutoApprove"; config: AutoApproveConfig }
   | { type: "removeAlwaysAllowRule"; id: string }
   | { type: "requestAlwaysAllowList" }
   | { type: "setMode"; modeId: string };
@@ -274,7 +313,7 @@ export type HostToWebview =
   | { type: "restore"; messages: Msg[]; conversationId: string; usage: ConversationUsage; llmConfig: LlmConfigView }
   | { type: "llmConfig"; llmConfig: LlmConfigView }
   | { type: "firstRunState"; state: FirstRunState }
-  | { type: "autoApprove"; enabled: boolean }
+  | { type: "autoApprove"; config: AutoApproveConfig }
   | { type: "alwaysAllowList"; rules: AlwaysAllowRule[] }
   | { type: "usage"; usage: ConversationUsage }
   | { type: "mcpStatus"; status: McpServerStatus }

@@ -60,15 +60,17 @@ func newOpenAI(cfg OpenAIConfig) (Provider, error) {
 	}, nil
 }
 
+func (p *openaiProvider) Family() string { return "openai" }
+
 func (p *openaiProvider) Stream(
 	ctx context.Context,
-	systemPrompt string,
+	system SystemPrompt,
 	messages []Message,
 	tools []ToolDef,
 	h StreamHandler,
 ) (StreamResult, error) {
 	oaiMsgs := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages)+1)
-	if systemPrompt != "" {
+	if systemPrompt := system.String(); systemPrompt != "" {
 		oaiMsgs = append(oaiMsgs, openai.SystemMessage(systemPrompt))
 	}
 	for _, m := range messages {

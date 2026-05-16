@@ -65,6 +65,28 @@ type StreamResult struct {
 	Usage      TokenUsage `json:"usage"`
 }
 
+// SystemPrompt carries a split system prompt for prompt caching. Stable is
+// byte-identical across turns for a given (mode, registry, provider) and is
+// where the provider places its cache_control breakpoint. Volatile follows
+// the breakpoint and may change every turn (workspace path, loaded skills,
+// rules). Providers without per-block caching concatenate the two.
+type SystemPrompt struct {
+	Stable   string
+	Volatile string
+}
+
+// String returns the concatenation suitable for providers that do not split
+// system content into blocks.
+func (s SystemPrompt) String() string {
+	if s.Stable == "" {
+		return s.Volatile
+	}
+	if s.Volatile == "" {
+		return s.Stable
+	}
+	return s.Stable + "\n\n" + s.Volatile
+}
+
 // Provider abstracts a single LLM backend. Stream blocks until the turn ends
 // and returns the stop reason:
 //
@@ -76,9 +98,12 @@ type StreamResult struct {
 type Provider interface {
 	Model() string
 	MaxContextTokens() int64
+	// Family identifies the model family ("anthropic" or "openai") so the
+	// rules loader can pick the right rule files (CLAUDE.md vs AGENTS.md).
+	Family() string
 	Stream(
 		ctx context.Context,
-		systemPrompt string,
+		system SystemPrompt,
 		messages []Message,
 		tools []ToolDef,
 		h StreamHandler,

@@ -710,9 +710,19 @@
     border: 1px solid var(--border);
     border-radius: var(--r-3);
     background: var(--surface);
-    overflow: hidden;
     font-size: 12.5px;
     transition: border-color var(--quick);
+    display: block;
+    min-height: 36px;
+    overflow: hidden;
+    /* The thread is a flex column with overflow-y: auto. Without this,
+       expanding a card lets flex shrink it instead of letting the parent
+       scroll, so the expanded body visually overflows into the next card. */
+    flex-shrink: 0;
+}
+
+.thread .msg {
+    flex-shrink: 0;
 }
 
 .tool-card:hover {
@@ -720,13 +730,54 @@
 }
 
 .tool-card .tc-head {
-    display: grid;
-    grid-template-columns: 16px 1fr auto;
+    display: flex !important;
     align-items: center;
     gap: 8px;
-    padding: 8px 10px;
+    padding: 9px 10px;
+    min-height: 36px;
     cursor: pointer;
     user-select: none;
+    width: 100%;
+    background: transparent;
+    border: 0;
+    color: var(--text);
+    text-align: left;
+    font: inherit;
+    font-size: 12.5px;
+    line-height: 1.3;
+    appearance: none;
+    -webkit-appearance: none;
+    border-radius: var(--r-3);
+    box-sizing: border-box;
+}
+
+.tool-card .tc-head .tc-icon {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    color: var(--text-faint);
+}
+
+.tool-card .tc-head .tc-name {
+    flex-shrink: 0;
+    max-width: 40%;
+}
+
+.tool-card .tc-head .tc-hint {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tool-card .tc-head .tc-dur {
+    color: var(--text-faint);
+    font-size: 10.5px;
+    flex-shrink: 0;
 }
 
 .tool-card .tc-head:hover {
@@ -1490,9 +1541,15 @@
 /* Mode picker */
 .mode-picker {
     position: absolute;
-    left: 8px;
-    right: 8px;
+    left: 0;
     bottom: calc(100% + 6px);
+    min-width: 180px;
+    padding: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-3);
+    box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.35));
+    z-index: 30;
 }
 
 .mode-list {
@@ -1630,6 +1687,115 @@
 
 .btn-primary:hover {
     filter: brightness(1.08);
+}
+
+/* Plan hand-off CTA (Architect → Code) */
+.plan-handoff {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 6px 12px 0;
+    padding: 8px 10px;
+    border: 1px solid var(--accent-ring);
+    border-radius: var(--r-2);
+    background: var(--accent-soft);
+}
+
+.plan-handoff-label {
+    flex: 1;
+    color: var(--text);
+    font-size: 12.5px;
+    font-weight: 500;
+}
+
+/* Auto-approve popover */
+.auto-approve-pop {
+    left: auto;
+    right: 8px;
+    bottom: calc(100% + 6px);
+    width: 280px;
+    padding: 12px 12px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.auto-approve-pop .pop-sub {
+    font-size: 11.5px;
+    color: var(--text-faint);
+    line-height: 1.45;
+}
+
+.auto-approve-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.auto-approve-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent-fg, var(--text));
+    border: 1px solid var(--accent-ring);
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: filter var(--quick), opacity var(--quick);
+    text-align: left;
+}
+
+.auto-approve-row:hover:not(.disabled) {
+    filter: brightness(1.06);
+}
+
+.auto-approve-row:not(.on) {
+    background: var(--surface-2);
+    border-color: var(--border);
+    color: var(--text);
+}
+
+.auto-approve-row.disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.auto-approve-glyph {
+    display: inline-flex;
+    align-items: center;
+}
+
+.auto-approve-label {
+    flex: 1;
+}
+
+.pop-foot {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-top: 4px;
+    border-top: 1px solid var(--border-faint);
+    margin-top: 4px;
+}
+
+.ghost-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: var(--r-2);
+    background: transparent;
+    color: var(--text-faint);
+    font-size: 11.5px;
+    cursor: pointer;
+    border: 0;
+}
+
+.ghost-btn:hover {
+    color: var(--text);
 }
 
 /* Model popover */

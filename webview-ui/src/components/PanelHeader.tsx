@@ -4,9 +4,10 @@ import { post } from "../vscode";
 
 interface PanelHeaderProps {
     busy: boolean;
+    onSetup: () => void;
 }
 
-export function PanelHeader({ busy }: PanelHeaderProps) {
+export function PanelHeader({ busy, onSetup }: PanelHeaderProps) {
     return (
         <div className="panel-header">
             <div className="brand">
@@ -16,6 +17,14 @@ export function PanelHeader({ busy }: PanelHeaderProps) {
                 <span className="brand-wordmark">Loom</span>
             </div>
             <div className="header-actions">
+                <button
+                    className="icon-button"
+                    title="Setup and model settings"
+                    onClick={onSetup}
+                    aria-label="Setup and model settings"
+                >
+                    <Ico.Settings size={13} />
+                </button>
                 <button
                     className="icon-button"
                     title="New conversation"

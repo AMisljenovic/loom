@@ -43,8 +43,39 @@ change to a message type must be made on both sides.
   original call order so the LLM sees a deterministic transcript.
 - **Prompt prefix must stay byte-stable.** Anthropic and OpenAI prompt
   caching both rely on the system-prompt + tools prefix being identical
-  across turns. When adding tools, ensure list order is deterministic (MCP
-  tools are sorted by name in `Driver.registry()`).
+  across turns. The system prompt is split into a stable prefix (mode +
+  tools + skills catalogue, built by `buildStableSystem`) and a volatile
+  tail (workspace path + loaded-skill bodies + rules bundle, built by
+  `buildVolatileSystem`). Anthropic places its `cache_control` breakpoint
+  between the two blocks; OpenAI concatenates. When adding tools, ensure
+  list order is deterministic (MCP tools are sorted by name in
+  `Driver.registry()`). Never put per-turn-variable data in the stable
+  prefix — it will break the cache.
+- **Rules are auto-loaded, provider-aware, task-frozen.**
+  `agent/internal/rules/` reads `.loomrules` always, plus `CLAUDE.md` +
+  `.claude/rules/*.md` for Anthropic or `AGENTS.md` + `.codex/rules/*.md`
+  for OpenAI. The bundle hash is captured on the conversation `Entry` at
+  task start; mid-task file edits do not invalidate the running cache.
+  Provider family is reported by `llm.Provider.Family()`.
+- **Skills are advertised in the prefix, loaded on demand.** The catalogue
+  (id + synopsis) sits in the stable prefix; bodies are injected into the
+  volatile tail only after the model calls `load_skill`. Builtin skills
+  live in `agent/internal/skills/builtin/*.md` (embed.FS); workspace
+  skills live in `.loom/skills/<id>/SKILL.md`. `load_skill` is intercepted
+  in the loop (not a regular `LocalExec`) because it mutates
+  `conversation.Entry.LoadedSkills`.
+- **Diagnostics feedback loop.** After a successful `apply_diff`, the TS
+  side diffs pre/post-edit `vscode.languages.getDiagnostics` for affected
+  URIs (750ms settle) and attaches new errors/warnings as a `followups`
+  array on the `ToolResult`. The Go loop renders followups as a synthetic
+  `<diagnostics-followup>` user message on the next turn. Quiet by default
+  — clean edits emit nothing.
+- **Background processes are TS-owned.** `run_command` stays one-shot
+  (≤120s). For longer work, `run_command_background` /
+  `read_process_output` / `kill_process` are dispatched in
+  `src/tools/processes.ts` (a `ProcessManager` with a 256KB ring buffer
+  per process, retained 5 min after exit). Process state never crosses
+  into Go.
 - **Indexer is optional.** Tree-sitter symbol extraction is gated by
   `//go:build cgo`. The non-CGO build path compiles fine and reports an
   empty index; `find_symbol` / `find_references` return "no matches".
@@ -204,9 +235,13 @@ multiple implementations.
 ## Things to be careful about
 
 - **Approval UX gate.** Approval short-circuits live host-side in
-  `src/panel/ChatPanel.ts`: `loom.autoApprove`, `loom.alwaysAllow`, and
-  in-memory session counters are checked before creating a pending approval.
-  The Go loop remains serial and unchanged.
+  `src/panel/ChatPanel.ts`: `loom.autoApprove` (now a category-based
+  `AutoApproveConfig`, not a boolean — see `src/approval/categories.ts`),
+  `loom.alwaysAllow`, and in-memory session counters are checked before
+  creating a pending approval. Categories are `read | write | execute |
+  mcp | mode | subtasks | question`; the legacy boolean shape migrates
+  automatically. The toolbar pill (`auto-approve on` / `off`) opens the
+  popover defined in `webview-ui/src/components/AutoApprovePopover.tsx`.
 - **Cross-platform paths.** Use `filepath.Join` in Go and `path.join` from
   `node:path` in TS. Never string-concatenate paths.
 - **Binary permissions.** On Unix, the bundled Go binary needs the executable

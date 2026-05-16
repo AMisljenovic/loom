@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import { DEFAULT_AUTO_APPROVE_CONFIG } from "../../src/approval/categories";
 import { detectModeSwitchIntent } from "../../src/shared/modeIntent";
 import type {
   AlwaysAllowRule,
+  AutoApproveConfig,
   ConversationUsage,
   FirstRunState,
   IndexStatusNotify,
@@ -12,7 +14,7 @@ import type {
   SessionsIndex,
   ToolStatus,
 } from "../../src/shared/protocol";
-import { AutoApproveBanner } from "./components/AutoApproveBanner";
+import { AutoApprovePopover } from "./components/AutoApprovePopover";
 import { EmptyState } from "./components/EmptyState";
 import { FirstRun } from "./components/FirstRun";
 import { PanelHeader } from "./components/PanelHeader";
@@ -20,7 +22,6 @@ import { InputArea } from "./components/composer/InputArea";
 import { ConversationList } from "./components/conversations/ConversationList";
 import { AllowlistPopover } from "./components/popovers/AllowlistPopover";
 import { ModelPopover } from "./components/popovers/ModelPopover";
-import { SettingsPopover } from "./components/popovers/SettingsPopover";
 import { Thread } from "./components/thread/Thread";
 import { Toolbar } from "./components/toolbar/Toolbar";
 import { post } from "./vscode";
@@ -61,7 +62,11 @@ export function App() {
   const [usage, setUsage] = useState<ConversationUsage>({ inputTokens: 0, outputTokens: 0 });
   const [llmConfig, setLlmConfig] = useState<LlmConfigView>(defaultLlmConfig);
   const [firstRun, setFirstRun] = useState<FirstRunState | null>(null);
-  const [autoApprove, setAutoApprove] = useState(false);
+  const [autoApprove, setAutoApprove] = useState<AutoApproveConfig>(() => ({
+    ...DEFAULT_AUTO_APPROVE_CONFIG,
+    categories: { ...DEFAULT_AUTO_APPROVE_CONFIG.categories },
+  }));
+  const [showAutoApprove, setShowAutoApprove] = useState(false);
   const [alwaysAllowRules, setAlwaysAllowRules] = useState<AlwaysAllowRule[]>([]);
   const [pendingDiffs, setPendingDiffs] = useState<Map<string, string>>(() => new Map());
   const [pendingOutputs, setPendingOutputs] = useState<Map<string, string>>(() => new Map());
@@ -72,10 +77,13 @@ export function App() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [showAllowlist, setShowAllowlist] = useState(false);
   const [showModel, setShowModel] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
   const [modes, setModes] = useState<ModeDefinition[]>([]);
   const [currentModeId, setCurrentModeId] = useState<string>("code");
   const [notice, setNotice] = useState<string | null>(null);
+  // Mode the most recent task ran under; used to surface an "Implement plan"
+  // hand-off button when an Architect-mode plan finishes cleanly.
+  const [lastTaskModeId, setLastTaskModeId] = useState<string | null>(null);
+  const [planHandoffArmed, setPlanHandoffArmed] = useState(false);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const assistantRef = useRef<number | null>(null);
@@ -83,6 +91,10 @@ export function App() {
   const deltaBufferRef = useRef("");
   const deltaFrameRef = useRef<number | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
+  // Mirrors lastTaskModeId so the message-handler closure (mounted once)
+  // can read the most recent value without re-subscribing.
+  const lastTaskModeIdRef = useRef<string | null>(null);
+  useEffect(() => { lastTaskModeIdRef.current = lastTaskModeId; }, [lastTaskModeId]);
 
   const announce = (text: string) => {
     setNotice(text);
@@ -147,7 +159,7 @@ export function App() {
       if (m.type === "llmConfig") { setLlmConfig(m.llmConfig ?? defaultLlmConfig); return; }
       if (m.type === "firstRunState") { setFirstRun(m.state ?? null); return; }
       if (m.type === "usage") { setUsage(m.usage); return; }
-      if (m.type === "autoApprove") { setAutoApprove(Boolean(m.enabled)); return; }
+      if (m.type === "autoApprove") { if (m.config) setAutoApprove(m.config); return; }
       if (m.type === "alwaysAllowList") { setAlwaysAllowRules(Array.isArray(m.rules) ? m.rules : []); return; }
       if (m.type === "modes") {
         setModes(Array.isArray(m.modes) ? m.modes : []);
@@ -207,6 +219,9 @@ export function App() {
           interruptQueuedRef.current = false;
           setBusy(keepBusy);
           assistantRef.current = null;
+          if (!keepBusy && m.reason === "completed") {
+            setPlanHandoffArmed((prev) => prev || lastTaskModeIdRef.current === "architect");
+          }
         } else if (m.type === "summarized") {
           next.push({ role: "assistant", text: `Context summarized (${m.droppedCount} older messages compacted).` });
         } else if (m.type === "error") {
@@ -256,6 +271,9 @@ export function App() {
       prompt = modeIntent.prompt;
     }
     setMessages((m) => [...m, { role: "user", text: prompt }]);
+    // Any new user turn dismisses the previous plan-handoff CTA.
+    setPlanHandoffArmed(false);
+    setLastTaskModeId(submitModeId ?? currentModeId);
     if (busy) {
       interruptQueuedRef.current = true;
       post({ type: "cancel" });
@@ -267,13 +285,30 @@ export function App() {
     setInput("");
   };
 
+  const implementPlan = () => {
+    setPlanHandoffArmed(false);
+    setCurrentModeId("code");
+    post({ type: "setMode", modeId: "code" });
+    const prompt = "Implement the plan above.";
+    setMessages((m) => [...m, { role: "user", text: prompt }]);
+    setLastTaskModeId("code");
+    post({ type: "submit", prompt, modeId: "code" });
+    setBusy(true);
+  };
+
   const currentMode = modes.find((m) => m.id === currentModeId);
   const isEmpty = messages.length === 0;
   const showFirstRun = isEmpty && firstRun && (!firstRun.completed || firstRun.needsSetup);
 
   return (
     <div className="panel" ref={rootRef}>
-      <PanelHeader busy={busy} />
+      <PanelHeader
+        busy={busy}
+        onSetup={() => {
+          setShowAllowlist(false);
+          setShowModel((v) => !v);
+        }}
+      />
       <ConversationList
         index={sessions}
         showArchived={showArchived}
@@ -282,7 +317,6 @@ export function App() {
         onBeginRename={(id) => setRenamingId(id)}
         onEndRename={() => setRenamingId(null)}
       />
-      {autoApprove && <AutoApproveBanner onDisable={() => post({ type: "setAutoApprove", enabled: false })} />}
       {notice && <div className="notice-toast" role="status">{notice}</div>}
       {showFirstRun ? (
         <FirstRun state={firstRun} onSample={(p) => setInput(p)} />
@@ -290,6 +324,14 @@ export function App() {
         <EmptyState mode={currentMode} onSuggest={(p) => { setInput(p); }} />
       ) : (
         <Thread messages={messages} pendingDiffs={pendingDiffs} pendingOutputs={pendingOutputs} busy={busy} />
+      )}
+      {planHandoffArmed && !busy && (
+        <div className="plan-handoff">
+          <span className="plan-handoff-label">Plan ready.</span>
+          <button className="btn btn-primary" onClick={implementPlan}>
+            Implement plan
+          </button>
+        </div>
       )}
       <InputArea busy={busy} input={input} onInput={setInput} onSubmit={submit} />
       <div style={{ position: "relative" }}>
@@ -301,13 +343,14 @@ export function App() {
           modes={modes}
           currentModeId={currentModeId}
           alwaysAllowRules={alwaysAllowRules}
+          autoApprove={autoApprove}
           onShowAllowlist={() => { post({ type: "requestAlwaysAllowList" }); setShowAllowlist(true); }}
-          onShowSettings={() => setShowSettings((v) => !v)}
           onShowModel={() => setShowModel((v) => !v)}
+          onShowAutoApprove={() => setShowAutoApprove((v) => !v)}
         />
         {showAllowlist && <AllowlistPopover rules={alwaysAllowRules} onClose={() => setShowAllowlist(false)} />}
         {showModel && <ModelPopover config={llmConfig} onClose={() => setShowModel(false)} />}
-        {showSettings && <SettingsPopover autoApprove={autoApprove} onClose={() => setShowSettings(false)} />}
+        {showAutoApprove && <AutoApprovePopover config={autoApprove} onClose={() => setShowAutoApprove(false)} />}
       </div>
     </div>
   );

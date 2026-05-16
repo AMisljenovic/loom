@@ -18,6 +18,8 @@ import (
 	"github.com/your-org/loom/internal/mcp"
 	agentprompts "github.com/your-org/loom/internal/prompts"
 	"github.com/your-org/loom/internal/rpc"
+	"github.com/your-org/loom/internal/rules"
+	"github.com/your-org/loom/internal/skills"
 	"github.com/your-org/loom/internal/telemetry"
 	"github.com/your-org/loom/internal/tools"
 )
@@ -68,14 +70,29 @@ func (d *Driver) Run(ctx context.Context, p StartParams) error {
 	}
 	registry := applyMode(d.registry(), p.Mode)
 	toolDefs := buildToolDefs(registry)
-	systemPrompt := buildSystemPrompt(p.Mode, registry, p.WorkspaceRoot)
+
+	// Skills catalogue is workspace-scoped and frozen at task start so the
+	// stable prompt prefix can advertise the same set across all turns.
+	skillsCatalogue := skills.Load(p.WorkspaceRoot)
+
+	// Provider family decides which rule files to autoload. Captured once
+	// per task; the bundle hash is pinned to the conversation so mid-task
+	// file edits do not invalidate the running cache.
+	family := ""
+	if d.LLM != nil {
+		family = d.LLM.Family()
+	}
+	rulesBundle := rules.Load(p.WorkspaceRoot, family)
 
 	entry := d.Conversations.Get(p.ConversationID)
 	entry.Lock()
 	defer entry.Unlock()
+	entry.RulesHash = rulesBundle.Hash
 
 	entry.Append(llm.Message{Role: llm.RoleUser, Content: p.Prompt})
 	d.notifyConversationUpdated(p.ConversationID, entry)
+
+	stableSystem := buildStableSystem(p.Mode, registry, skillsCatalogue)
 
 	done := func(reason string) {
 		d.Conn.Notify("task.done", map[string]any{
@@ -89,7 +106,12 @@ func (d *Driver) Run(ctx context.Context, p StartParams) error {
 			done("cancelled")
 			return nil
 		}
-		if err := d.maybeSummarize(ctx, p.TaskID, p.ConversationID, systemPrompt, entry); err != nil {
+		// Volatile system tail rebuilt each turn so loaded-skill bodies
+		// flow in immediately after the model calls load_skill. The cached
+		// stable prefix is unaffected.
+		volatileSystem := buildVolatileSystem(p.WorkspaceRoot, skillsCatalogue, entry.LoadedSkills, rulesBundle)
+		sysPrompt := llm.SystemPrompt{Stable: stableSystem, Volatile: volatileSystem}
+		if err := d.maybeSummarize(ctx, p.TaskID, p.ConversationID, sysPrompt.String(), entry); err != nil {
 			if ctx.Err() != nil {
 				done("cancelled")
 				return nil
@@ -102,7 +124,7 @@ func (d *Driver) Run(ctx context.Context, p StartParams) error {
 			taskID: p.TaskID,
 		}
 
-		result, err := d.LLM.Stream(ctx, systemPrompt, entry.Snapshot().Messages, toolDefs, h)
+		result, err := d.LLM.Stream(ctx, sysPrompt, entry.Snapshot().Messages, toolDefs, h)
 		assistantText, toolCalls := h.finish()
 		if err != nil {
 			if ctx.Err() != nil {
@@ -141,7 +163,7 @@ func (d *Driver) Run(ctx context.Context, p StartParams) error {
 			return nil
 		}
 
-		toolResults, err := d.execToolsParallel(ctx, p.TaskID, toolCalls, registry)
+		toolResults, err := d.execToolsParallel(ctx, p.TaskID, toolCalls, registry, entry, skillsCatalogue)
 		if err != nil {
 			if ctx.Err() != nil {
 				done("cancelled")
@@ -155,6 +177,7 @@ func (d *Driver) Run(ctx context.Context, p StartParams) error {
 		}
 		// Append in original call order so the LLM sees a deterministic
 		// transcript regardless of completion order.
+		var followups []string
 		for _, tc := range toolCalls {
 			r := toolResults[tc.ID]
 			entry.Append(llm.Message{
@@ -162,6 +185,26 @@ func (d *Driver) Run(ctx context.Context, p StartParams) error {
 				Content:    r.content,
 				ToolCallID: tc.ID,
 			})
+			if r.followup != "" {
+				followups = append(followups, r.followup)
+			}
+			d.notifyConversationUpdated(p.ConversationID, entry)
+		}
+		// Diagnostics-feedback follow-up: if any tool reported new errors
+		// introduced by its action (currently apply_diff), surface them as a
+		// synthetic user message so the next turn sees them. Empty means
+		// "clean run"; we emit nothing in that case.
+		if len(followups) > 0 {
+			var b strings.Builder
+			b.WriteString("<diagnostics-followup>\n")
+			for i, f := range followups {
+				if i > 0 {
+					b.WriteString("\n")
+				}
+				b.WriteString(f)
+			}
+			b.WriteString("\n</diagnostics-followup>")
+			entry.Append(llm.Message{Role: llm.RoleUser, Content: b.String()})
 			d.notifyConversationUpdated(p.ConversationID, entry)
 		}
 	}
@@ -277,8 +320,9 @@ func (h *streamHandler) finish() (string, []llm.ToolCall) {
 
 // toolOutcome is the result of executing a single tool call.
 type toolOutcome struct {
-	content string
-	err     error
+	content  string
+	err      error
+	followup string // optional next-turn user message (e.g. diagnostics diff)
 }
 
 // execToolsParallel runs a turn's tool calls concurrently. For Go-side tools
@@ -290,6 +334,8 @@ func (d *Driver) execToolsParallel(
 	taskID string,
 	calls []llm.ToolCall,
 	registry []tools.Tool,
+	entry *conversation.Entry,
+	skillsCatalogue skills.Catalogue,
 ) (map[string]toolOutcome, error) {
 	if len(calls) == 0 {
 		return nil, nil
@@ -321,12 +367,14 @@ func (d *Driver) execToolsParallel(
 			switch {
 			case !ok:
 				out = toolOutcome{err: fmt.Errorf("unknown tool: %s", tc.Name)}
+			case tc.Name == "load_skill":
+				out = execLoadSkill(entry, skillsCatalogue, tc.Input)
 			case t.LocalExec != nil && t.RequiresApproval && !approvals[tc.ID]:
 				out = toolOutcome{err: fmt.Errorf("user rejected")}
 			default:
 				startedAt := time.Now()
-				content, err := d.execToolNoApprovalGate(taskID, tc.ID, t, tc.Input)
-				out = toolOutcome{content: content, err: err}
+				content, followup, err := d.execToolNoApprovalGate(taskID, tc.ID, t, tc.Input)
+				out = toolOutcome{content: content, err: err, followup: followup}
 				d.Telemetry.Emit("tool_call", map[string]any{
 					"name":       tc.Name,
 					"durationMs": time.Since(startedAt).Milliseconds(),
@@ -388,12 +436,15 @@ func (d *Driver) gatherApprovals(
 }
 
 // execToolNoApprovalGate executes a tool without consulting approval (the
-// approval gate has already been satisfied or is not required).
+// approval gate has already been satisfied or is not required). Returns the
+// content for the tool message plus an optional follow-up string that the
+// loop appends as a synthetic user message on the next turn (currently used
+// by apply_diff to surface fresh diagnostics).
 func (d *Driver) execToolNoApprovalGate(
 	taskID, callID string,
 	t tools.Tool,
 	input json.RawMessage,
-) (string, error) {
+) (string, string, error) {
 	if t.LocalExec != nil {
 		_ = d.Conn.Notify("tool.localCall", map[string]any{
 			"callId":           callID,
@@ -411,7 +462,7 @@ func (d *Driver) execToolNoApprovalGate(
 				"error":      err.Error(),
 				"durationMs": time.Since(startedAt).Milliseconds(),
 			})
-			return "", err
+			return "", "", err
 		}
 		_ = d.Conn.Notify("tool.localResult", map[string]any{
 			"callId":     callID,
@@ -419,13 +470,14 @@ func (d *Driver) execToolNoApprovalGate(
 			"content":    result,
 			"durationMs": time.Since(startedAt).Milliseconds(),
 		})
-		return result, nil
+		return result, "", nil
 	}
 	var result struct {
-		CallID  string `json:"callId"`
-		OK      bool   `json:"ok"`
-		Content string `json:"content"`
-		Error   string `json:"error"`
+		CallID    string         `json:"callId"`
+		OK        bool           `json:"ok"`
+		Content   string         `json:"content"`
+		Error     string         `json:"error"`
+		Followups []toolFollowup `json:"followups,omitempty"`
 	}
 	err := d.Conn.Request("tool.call", map[string]any{
 		"callId":           callID,
@@ -435,12 +487,85 @@ func (d *Driver) execToolNoApprovalGate(
 		"requiresApproval": t.RequiresApproval,
 	}, &result)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if !result.OK {
-		return "", fmt.Errorf("%s", result.Error)
+		return "", "", fmt.Errorf("%s", result.Error)
 	}
-	return result.Content, nil
+	return result.Content, renderFollowups(result.Followups), nil
+}
+
+// toolFollowup mirrors src/shared/protocol.ts ToolFollowup. Only the
+// "diagnostics" kind is consumed today, but the wire format is extensible.
+type toolFollowup struct {
+	Kind  string                `json:"kind"`
+	Path  string                `json:"path,omitempty"`
+	Diags []toolFollowupDiagRow `json:"diags,omitempty"`
+}
+
+type toolFollowupDiagRow struct {
+	Line     int    `json:"line"`
+	Col      int    `json:"col"`
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
+}
+
+func renderFollowups(fs []toolFollowup) string {
+	if len(fs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, f := range fs {
+		if f.Kind != "diagnostics" || len(f.Diags) == 0 {
+			continue
+		}
+		for _, d := range f.Diags {
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			fmt.Fprintf(&b, "%s:%d:%d [%s] %s", f.Path, d.Line, d.Col, d.Severity, d.Message)
+		}
+	}
+	return b.String()
+}
+
+// execLoadSkill records the requested skill ids on the conversation entry so
+// the next turn's volatile system tail includes the bodies. Unknown ids are
+// reported in the tool response so the model can correct itself.
+func execLoadSkill(entry *conversation.Entry, cat skills.Catalogue, input json.RawMessage) toolOutcome {
+	var in struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.Unmarshal(input, &in); err != nil {
+		return toolOutcome{err: fmt.Errorf("load_skill: %w", err)}
+	}
+	if len(in.IDs) == 0 {
+		return toolOutcome{content: "no skill ids supplied"}
+	}
+	var known, unknown []string
+	for _, id := range in.IDs {
+		if _, ok := cat.Skills[id]; ok {
+			known = append(known, id)
+		} else {
+			unknown = append(unknown, id)
+		}
+	}
+	added := entry.LoadSkills(known)
+	var parts []string
+	if len(added) > 0 {
+		parts = append(parts, "loaded: "+strings.Join(added, ", "))
+	}
+	already := len(known) - len(added)
+	if already > 0 {
+		parts = append(parts, fmt.Sprintf("already loaded: %d", already))
+	}
+	if len(unknown) > 0 {
+		parts = append(parts, "unknown ids: "+strings.Join(unknown, ", "))
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "no skills loaded")
+	}
+	return toolOutcome{content: strings.Join(parts, "; ")}
 }
 
 // ExecTool dispatches a single tool, going through the full approval gate.
@@ -469,7 +594,8 @@ func (d *Driver) ExecTool(taskID, callID, name string, input json.RawMessage) (s
 				return "", fmt.Errorf("user rejected")
 			}
 		}
-		return d.execToolNoApprovalGate(taskID, callID, t, input)
+		content, _, err := d.execToolNoApprovalGate(taskID, callID, t, input)
+		return content, err
 	}
 	return "", fmt.Errorf("unknown tool: %s", name)
 }
@@ -539,27 +665,20 @@ func applyMode(registry []tools.Tool, mode *ModeDefinition) []tools.Tool {
 	return registry
 }
 
-func buildSystemPrompt(mode *ModeDefinition, registry []tools.Tool, workspaceRoot string) string {
-	var base string
-	if mode != nil && mode.SystemPrompt != "" {
-		base = mode.SystemPrompt
-	} else {
-		id := "code"
-		if mode != nil && mode.ID != "" {
-			id = mode.ID
-		}
-		if content, err := agentprompts.Load(id); err == nil {
-			base = content
-		} else {
-			// Fallback to minimal inline prompt if the file is missing.
-			base = "You are an AI coding assistant running inside a VS Code extension. " +
-				"You have access to tools to inspect, edit with diffs, diagnose, search, and run commands in the user's workspace."
-		}
-	}
+// buildStableSystem returns the cache-friendly prefix of the system prompt:
+// mode base prompt, tool catalogue, skills catalogue. Byte-identical across
+// turns for a given (mode, registry, skills) tuple.
+//
+//	[A] mode base prompt
+//	[B] tool catalogue
+//	[C] skills catalogue
+//
+// The provider places its cache_control breakpoint at the end of this block.
+func buildStableSystem(mode *ModeDefinition, registry []tools.Tool, cat skills.Catalogue) string {
+	base := loadModeBase(mode)
 	var b strings.Builder
 	b.WriteString(strings.TrimRight(base, "\n"))
 	b.WriteString("\n\n")
-	fmt.Fprintf(&b, "Workspace root: %s\n\n", workspaceRoot)
 	if len(registry) > 0 {
 		b.WriteString("Available tools:\n")
 		for _, t := range registry {
@@ -568,5 +687,56 @@ func buildSystemPrompt(mode *ModeDefinition, registry []tools.Tool, workspaceRoo
 	} else {
 		b.WriteString("No tools are available in this mode.\n")
 	}
+	if lines := cat.CatalogueLines(); len(lines) > 0 {
+		b.WriteString("\nAvailable skills (load with the load_skill tool):\n")
+		for _, line := range lines {
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// buildVolatileSystem returns the part of the system prompt that may change
+// turn-to-turn: workspace path, loaded-skill bodies, project rules.
+//
+//	[D] workspace block
+//	[E] loaded-skill bodies
+//	[F] rules bundle
+//
+// Anything here sits *after* the provider's cache breakpoint, so changes do
+// not invalidate the cached prefix.
+func buildVolatileSystem(workspaceRoot string, cat skills.Catalogue, loadedSkills []string, bundle rules.Bundle) string {
+	var b strings.Builder
+	if workspaceRoot != "" {
+		fmt.Fprintf(&b, "Workspace root: %s\n", workspaceRoot)
+	}
+	if loaded := cat.RenderLoaded(loadedSkills); loaded != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(loaded)
+	}
+	if bundle.Text != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(bundle.Text)
+	}
 	return b.String()
+}
+
+func loadModeBase(mode *ModeDefinition) string {
+	if mode != nil && mode.SystemPrompt != "" {
+		return mode.SystemPrompt
+	}
+	id := "code"
+	if mode != nil && mode.ID != "" {
+		id = mode.ID
+	}
+	if content, err := agentprompts.Load(id); err == nil {
+		return content
+	}
+	return "You are an AI coding assistant running inside a VS Code extension. " +
+		"You have access to tools to inspect, edit with diffs, diagnose, search, and run commands in the user's workspace."
 }
