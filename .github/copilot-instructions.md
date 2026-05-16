@@ -76,6 +76,11 @@ newline-delimited JSON-RPC over stdio.
     may pre-apply the same parser for responsiveness.
 15. Assistant Markdown rendering stays webview-only and sanitized. Store raw
     message text in session state; render Markdown without raw HTML.
+16. v1.1 sub-agents are sequential and minimal: only the built-in `research`
+    preset exists, exposed through `spawn_subagent`. Research is read-only,
+    uses isolated conversation state, and streams into webview sub-agent cards.
+    Do not add custom presets, parallel execution, or sub-agent model routing
+    without updating `SUBAGENTS.md`.
 
 ## Pre-commit hook
 

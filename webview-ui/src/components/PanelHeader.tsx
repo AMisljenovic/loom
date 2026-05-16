@@ -1,13 +1,14 @@
 import { LoomMark } from "../brand/LoomMark";
 import * as Ico from "../brand/icons";
-import { post } from "../vscode";
 
 interface PanelHeaderProps {
     busy: boolean;
+    sessionsOpen: boolean;
     onSetup: () => void;
+    onToggleSessions: () => void;
 }
 
-export function PanelHeader({ busy, onSetup }: PanelHeaderProps) {
+export function PanelHeader({ busy, sessionsOpen, onSetup, onToggleSessions }: PanelHeaderProps) {
     return (
         <div className="panel-header">
             <div className="brand">
@@ -26,11 +27,12 @@ export function PanelHeader({ busy, onSetup }: PanelHeaderProps) {
                     <Ico.Settings size={13} />
                 </button>
                 <button
-                    className="icon-button"
-                    title="New conversation"
+                    className={`icon-button${sessionsOpen ? " active" : ""}`}
+                    title={sessionsOpen ? "Hide sessions" : "New or switch conversation"}
                     disabled={busy}
-                    onClick={() => post({ type: "newConversation" })}
-                    aria-label="New conversation"
+                    onClick={onToggleSessions}
+                    aria-label={sessionsOpen ? "Hide sessions" : "New or switch conversation"}
+                    aria-expanded={sessionsOpen}
                 >
                     <Ico.Plus size={13} />
                 </button>

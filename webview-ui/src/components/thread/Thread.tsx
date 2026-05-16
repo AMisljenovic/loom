@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { Msg } from "../../../../src/shared/protocol";
 import { MarkdownMessage } from "./MarkdownMessage";
+import { SubAgentCard } from "./SubAgentCard";
 import { ToolCard } from "./ToolCard";
 
 interface ThreadProps {
@@ -49,6 +50,16 @@ export function Thread({ messages, pendingDiffs, pendingOutputs, busy }: ThreadP
                         />
                     );
                 }
+                if (msg.role === "subagent") {
+                    return (
+                        <SubAgentCard
+                            key={msg.subTaskId ?? i}
+                            msg={msg}
+                            pendingDiffs={pendingDiffs}
+                            pendingOutputs={pendingOutputs}
+                        />
+                    );
+                }
                 return null;
             })}
             {activity && <ActivitySummary activity={activity} />}
@@ -65,7 +76,8 @@ interface Activity {
 
 function summarizeActivity(messages: Msg[], busy: boolean): Activity | null {
     const tools = messages.filter((m): m is Extract<Msg, { role: "tool" }> => m.role === "tool");
-    if (tools.length === 0) {
+    const subagents = messages.filter((m): m is Extract<Msg, { role: "subagent" }> => m.role === "subagent");
+    if (tools.length === 0 && subagents.length === 0) {
         return busy
             ? { summary: "Activity: thinking through the request", details: ["No tool activity yet."], open: true }
             : null;
@@ -85,10 +97,16 @@ function summarizeActivity(messages: Msg[], busy: boolean): Activity | null {
     ].filter(Boolean);
 
     const active = (counts.get("pending") ?? 0) + (counts.get("approved") ?? 0) + (counts.get("running") ?? 0);
+    const activeSubagents = subagents.filter((s) => s.status === "running").length;
     const summary = active > 0
         ? `Activity: ${active} tool ${active === 1 ? "step" : "steps"} active`
-        : `Activity: ${tools.length} tool ${tools.length === 1 ? "step" : "steps"} completed`;
-    return { summary, details, open: busy || active > 0 };
+        : activeSubagents > 0
+            ? `Activity: ${activeSubagents} research ${activeSubagents === 1 ? "sub-agent" : "sub-agents"} active`
+            : `Activity: ${tools.length + subagents.length} ${tools.length + subagents.length === 1 ? "step" : "steps"} completed`;
+    if (subagents.length > 0) {
+        details.push(`${subagents.length} research sub-agent${subagents.length === 1 ? "" : "s"}`);
+    }
+    return { summary, details, open: busy || active > 0 || activeSubagents > 0 };
 }
 
 function ActivitySummary({ activity }: { activity: Activity }) {

@@ -21,6 +21,8 @@ import type {
   ConversationUpdated,
   LlmMessage,
   ReasoningEffort,
+  SubAgentDone,
+  SubAgentSpawn,
 } from "./shared/protocol";
 
 export interface AgentEvents {
@@ -36,6 +38,8 @@ export interface AgentEvents {
   onConversationUpdated: (u: ConversationUpdated) => void;
   onSummarized: (s: { taskId: string; conversationId: string; droppedCount: number }) => void;
   onIndexStatus: (s: IndexStatusNotify) => void;
+  onSubAgentSpawn: (s: SubAgentSpawn) => void;
+  onSubAgentDone: (s: SubAgentDone) => void;
   onError: (err: string) => void;
   onLog?: (line: string) => void;
 }
@@ -146,6 +150,12 @@ export class AgentClient {
     });
     this.rpc.onRequest("task.summarized", (params: { taskId: string; conversationId: string; droppedCount: number }) => {
       this.events.onSummarized(params);
+    });
+    this.rpc.onRequest("subagent.spawn", (params: SubAgentSpawn) => {
+      this.events.onSubAgentSpawn(params);
+    });
+    this.rpc.onRequest("subagent.done", (params: SubAgentDone) => {
+      this.events.onSubAgentDone(params);
     });
     this.rpc.onRequest("mcp.serverStatus", (params: McpServerStatus) => {
       this.events.onMcpStatus(params);

@@ -84,6 +84,10 @@ export interface ToolCall {
   name: string;
   input: unknown;
   requiresApproval: boolean;
+  subAgent?: {
+    type: string;
+    task: string;
+  };
 }
 
 // Categories used by the granular auto-approve UI. Tools belong to exactly
@@ -191,7 +195,28 @@ export interface TaskUsage extends TokenUsage {
   cumulativeOutput: number;
   cumulativeCacheRead?: number;
   cumulativeCacheWrite?: number;
+  subAgentInputTokens?: number;
+  subAgentOutputTokens?: number;
+  subAgentCount?: number;
   model: string;
+}
+
+export interface SubAgentSpawn {
+  parentTaskId: string;
+  subTaskId: string;
+  type: string;
+  task: string;
+}
+
+export interface SubAgentDone {
+  subTaskId: string;
+  status: "completed" | "cancelled" | "error";
+  summary: string;
+  toolCalls: number;
+  tokensUsed: number;
+  inputTokens: number;
+  outputTokens: number;
+  truncated?: boolean;
 }
 
 export interface LlmToolCall {
@@ -211,6 +236,9 @@ export interface ConversationUsage {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens?: number;
+  subAgentInputTokens?: number;
+  subAgentOutputTokens?: number;
+  subAgentCount?: number;
   model?: string;
 }
 
@@ -264,6 +292,22 @@ export type Msg =
     output?: string;
     durationMs?: number;
     expanded?: boolean;
+  }
+  | {
+    role: "subagent";
+    subTaskId: string;
+    parentTaskId: string;
+    type: string;
+    task: string;
+    status: "running" | "completed" | "cancelled" | "error";
+    summary?: string;
+    toolCalls?: number;
+    tokensUsed?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    truncated?: boolean;
+    expanded?: boolean;
+    trace: Msg[];
   };
 
 export interface SessionMeta {
@@ -301,6 +345,7 @@ export type WebviewToHost =
   | { type: "setAutoApprove"; config: AutoApproveConfig }
   | { type: "removeAlwaysAllowRule"; id: string }
   | { type: "requestAlwaysAllowList" }
+  | { type: "subagentCancel"; subTaskId: string }
   | { type: "setMode"; modeId: string };
 
 export type HostToWebview =
@@ -309,6 +354,22 @@ export type HostToWebview =
   | { type: "diffPreview"; callId: CallId; relPath: string; unified: string }
   | { type: "toolProgress"; callId: CallId; chunk: string }
   | { type: "toolResult"; callId: CallId; ok: boolean; summary: string; durationMs: number }
+  | { type: "subagentSpawn"; parentTaskId: string; subTaskId: string; subagentType: string; task: string }
+  | { type: "subagentDelta"; subTaskId: string; text: string }
+  | { type: "subagentToolCall"; subTaskId: string; call: ToolCall }
+  | { type: "subagentToolProgress"; subTaskId: string; callId: CallId; chunk: string }
+  | { type: "subagentToolResult"; subTaskId: string; callId: CallId; ok: boolean; summary: string; durationMs: number }
+  | {
+    type: "subagentDone";
+    subTaskId: string;
+    status: "completed" | "cancelled" | "error";
+    summary: string;
+    toolCalls: number;
+    tokensUsed: number;
+    inputTokens: number;
+    outputTokens: number;
+    truncated?: boolean;
+  }
   | { type: "done"; reason: TaskDone["reason"] }
   | { type: "restore"; messages: Msg[]; conversationId: string; usage: ConversationUsage; llmConfig: LlmConfigView }
   | { type: "llmConfig"; llmConfig: LlmConfigView }

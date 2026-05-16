@@ -30,7 +30,8 @@
       "Bash(ls -la \"C:\\\\\\\\Projects\\\\\\\\loom\\\\\\\\loom-design\\\\\\\\\")",
       "Bash(wc -l \"C:\\\\\\\\Projects\\\\\\\\loom\\\\\\\\loom-design\\\\\\\\styles.css\")",
       "Bash(grep -n \"class\\\\|function\\\\|const.*=\" \"C:\\\\\\\\Projects\\\\\\\\loom\\\\\\\\loom-design\\\\\\\\panel.jsx\")",
-      "Bash(grep -o \"tc-head[^}]\\\\{0,300\\\\}}\" c:/Projects/loom/dist/webview/assets/index.css)"
+      "Bash(grep -o \"tc-head[^}]\\\\{0,300\\\\}}\" c:/Projects/loom/dist/webview/assets/index.css)",
+      "Bash(git commit -m ' *)"
     ],
     "deny": [
       "Bash(rm -rf:*)",

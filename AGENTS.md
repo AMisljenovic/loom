@@ -96,6 +96,11 @@ No test suite yet. When adding one:
     may pre-apply the same parser for responsiveness.
 14. Assistant Markdown rendering stays webview-only and sanitized. Store raw
     message text in session state; render Markdown without raw HTML.
+15. v1.1 sub-agents are sequential and minimal: only the built-in `research`
+    preset exists, exposed through `spawn_subagent`. Research is read-only,
+    uses isolated conversation state, and streams into webview sub-agent cards.
+    Do not add custom presets, parallel execution, or sub-agent model routing
+    without updating `SUBAGENTS.md`.
 13. First-run setup is host-owned state and webview-rendered UI. The
     `loom.firstRun.completed` workspaceState key gates the setup panel; API
     keys still go through VS Code SecretStorage via `setSecret`.

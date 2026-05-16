@@ -114,8 +114,7 @@ func main() {
 		return indexer
 	}
 	_ = vectors // closed implicitly when process exits
-	var taskMu sync.Mutex
-	taskCancels := make(map[string]context.CancelFunc)
+	taskRegistry := loop.NewTaskRegistry()
 
 	conn.Handle("task.start", func(params json.RawMessage) (any, error) {
 		var p loop.StartParams
@@ -123,9 +122,7 @@ func main() {
 			return nil, err
 		}
 		ctx, cancel := context.WithCancel(context.Background())
-		taskMu.Lock()
-		taskCancels[p.TaskID] = cancel
-		taskMu.Unlock()
+		taskRegistry.Register(p.TaskID, "", "main", p.Prompt, cancel)
 		d := &loop.Driver{
 			Conn:          conn,
 			WorkspaceRoot: p.WorkspaceRoot,
@@ -135,6 +132,7 @@ func main() {
 			Telemetry:     telemetryClient,
 			Index:         ensureIndexer(p.WorkspaceRoot),
 			Embedder:      embedder,
+			Tasks:         taskRegistry,
 		}
 		go func() {
 			defer func() {
@@ -153,9 +151,7 @@ func main() {
 					})
 					log.Printf("task panic: %v\n%s", recovered, debug.Stack())
 				}
-				taskMu.Lock()
-				delete(taskCancels, p.TaskID)
-				taskMu.Unlock()
+				taskRegistry.RemoveTree(p.TaskID)
 			}()
 			if err := d.Run(ctx, p); err != nil {
 				telemetryClient.Emit("error", map[string]any{
@@ -166,6 +162,7 @@ func main() {
 					"taskId": p.TaskID,
 					"reason": "error",
 				})
+				taskRegistry.Complete(p.TaskID, loop.TaskError)
 				log.Printf("task error: %v", err)
 			}
 		}()
@@ -177,11 +174,7 @@ func main() {
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, err
 		}
-		taskMu.Lock()
-		cancel := taskCancels[p.TaskID]
-		taskMu.Unlock()
-		if cancel != nil {
-			cancel()
+		if taskRegistry.Cancel(p.TaskID) {
 			return map[string]any{"cancelled": true}, nil
 		}
 		return map[string]any{"cancelled": false}, nil

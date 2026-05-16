@@ -94,9 +94,12 @@ export function Toolbar({
 
             {/* Token meter */}
             {usage && (usage.inputTokens > 0 || usage.outputTokens > 0) && (
-                <div className="token-meter" title={`Input: ${usage.inputTokens} / Output: ${usage.outputTokens}`}>
+                <div className="token-meter" title={usageTitle(usage)}>
                     <Ico.Code size={11} />
-                    <span className="token-val">{formatTokens(usage.inputTokens + usage.outputTokens)}</span>
+                    <span className="token-val">
+                        {formatTokens((usage.inputTokens + usage.outputTokens) + (usage.subAgentInputTokens ?? 0) + (usage.subAgentOutputTokens ?? 0))}
+                    </span>
+                    {usage.subAgentCount ? <span className="token-sub">+{usage.subAgentCount} research</span> : null}
                 </div>
             )}
 
@@ -128,6 +131,14 @@ export function Toolbar({
             </button>
         </div>
     );
+}
+
+function usageTitle(usage: ConversationUsage): string {
+    const main = `Main input: ${usage.inputTokens} / output: ${usage.outputTokens}`;
+    const subIn = usage.subAgentInputTokens ?? 0;
+    const subOut = usage.subAgentOutputTokens ?? 0;
+    if (!subIn && !subOut) return main;
+    return `${main} / Sub-agents input: ${subIn} / output: ${subOut}`;
 }
 
 function shortModel(model: string): string {

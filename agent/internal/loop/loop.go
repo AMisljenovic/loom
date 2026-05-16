@@ -38,6 +38,7 @@ type Driver struct {
 	Telemetry     *telemetry.Client // may be nil
 	Index         *index.Indexer    // may be nil
 	Embedder      embed.Provider    // may be nil
+	Tasks         *TaskRegistry     // shared task tree registry
 }
 
 // ModeDefinition mirrors the TypeScript ModeDefinition in src/shared/protocol.ts.
@@ -60,6 +61,20 @@ type StartParams struct {
 }
 
 func (d *Driver) Run(ctx context.Context, p StartParams) error {
+	return d.run(ctx, p, runOptions{})
+}
+
+type runOptions struct {
+	Registry       []tools.Tool
+	MaxTurns       int
+	MaxInputTokens int64
+	IsSubAgent     bool
+}
+
+func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error {
+	if d.Tasks == nil {
+		d.Tasks = NewTaskRegistry()
+	}
 	if p.ConversationID == "" {
 		p.ConversationID = "default"
 	}
@@ -68,7 +83,10 @@ func (d *Driver) Run(ctx context.Context, p StartParams) error {
 			return fmt.Errorf("start MCP servers: %w", err)
 		}
 	}
-	registry := applyMode(d.registry(), p.Mode)
+	registry := opts.Registry
+	if registry == nil {
+		registry = applyMode(d.registry(), p.Mode)
+	}
 	toolDefs := buildToolDefs(registry)
 
 	// Skills catalogue is workspace-scoped and frozen at task start so the
@@ -92,7 +110,7 @@ func (d *Driver) Run(ctx context.Context, p StartParams) error {
 	entry.Append(llm.Message{Role: llm.RoleUser, Content: p.Prompt})
 	d.notifyConversationUpdated(p.ConversationID, entry)
 
-	stableSystem := buildStableSystem(p.Mode, registry, skillsCatalogue)
+	stableSystem := buildStableSystem(p.Mode, registry, skillsCatalogue, Presets())
 
 	done := func(reason string) {
 		d.Conn.Notify("task.done", map[string]any{
@@ -101,7 +119,11 @@ func (d *Driver) Run(ctx context.Context, p StartParams) error {
 		})
 	}
 
-	for turn := 0; turn < 32; turn++ {
+	maxTurns := opts.MaxTurns
+	if maxTurns <= 0 {
+		maxTurns = 32
+	}
+	for turn := 0; turn < maxTurns; turn++ {
 		if ctx.Err() != nil {
 			done("cancelled")
 			return nil
@@ -142,7 +164,13 @@ func (d *Driver) Run(ctx context.Context, p StartParams) error {
 		}
 
 		entry.AddUsage(result.Usage)
+		d.Tasks.RecordUsage(p.TaskID, result.Usage.InputTokens, result.Usage.OutputTokens)
 		d.notifyUsage(p.TaskID, entry, result.Usage)
+		if opts.MaxInputTokens > 0 && entry.CumulativeInput > opts.MaxInputTokens {
+			d.notifyConversationUpdated(p.ConversationID, entry)
+			done("error")
+			return fmt.Errorf("input token budget exceeded")
+		}
 
 		entry.Append(llm.Message{
 			Role:      llm.RoleAssistant,
@@ -163,7 +191,7 @@ func (d *Driver) Run(ctx context.Context, p StartParams) error {
 			return nil
 		}
 
-		toolResults, err := d.execToolsParallel(ctx, p.TaskID, toolCalls, registry, entry, skillsCatalogue)
+		toolResults, err := d.execToolsParallel(ctx, p.TaskID, p.ConversationID, toolCalls, registry, entry, skillsCatalogue)
 		if err != nil {
 			if ctx.Err() != nil {
 				done("cancelled")
@@ -209,6 +237,9 @@ func (d *Driver) Run(ctx context.Context, p StartParams) error {
 		}
 	}
 
+	if opts.IsSubAgent {
+		done("error")
+	}
 	return fmt.Errorf("turn limit exceeded")
 }
 
@@ -256,17 +287,25 @@ func (d *Driver) maybeSummarize(ctx context.Context, taskID, conversationID, sys
 }
 
 func (d *Driver) notifyUsage(taskID string, entry *conversation.Entry, usage llm.TokenUsage) {
+	rootID := taskID
+	if node := d.Tasks.Node(taskID); node != nil && node.RootID != "" {
+		rootID = node.RootID
+	}
+	subInput, subOutput, subCount := d.Tasks.TreeUsage(rootID)
 	_ = d.Conn.Notify("task.usage", map[string]any{
-		"taskId":                taskID,
-		"inputTokens":           usage.InputTokens,
-		"outputTokens":          usage.OutputTokens,
-		"cacheCreationTokens":   usage.CacheCreationTokens,
-		"cacheReadTokens":       usage.CacheReadTokens,
-		"cumulativeInput":       entry.CumulativeInput,
-		"cumulativeOutput":      entry.CumulativeOutput,
-		"cumulativeCacheRead":   entry.CumulativeCacheRead,
-		"cumulativeCacheWrite":  entry.CumulativeCacheWrite,
-		"model":                 d.LLM.Model(),
+		"taskId":               taskID,
+		"inputTokens":          usage.InputTokens,
+		"outputTokens":         usage.OutputTokens,
+		"cacheCreationTokens":  usage.CacheCreationTokens,
+		"cacheReadTokens":      usage.CacheReadTokens,
+		"cumulativeInput":      entry.CumulativeInput,
+		"cumulativeOutput":     entry.CumulativeOutput,
+		"cumulativeCacheRead":  entry.CumulativeCacheRead,
+		"cumulativeCacheWrite": entry.CumulativeCacheWrite,
+		"subAgentInputTokens":  subInput,
+		"subAgentOutputTokens": subOutput,
+		"subAgentCount":        subCount,
+		"model":                d.LLM.Model(),
 	})
 }
 
@@ -332,6 +371,7 @@ type toolOutcome struct {
 func (d *Driver) execToolsParallel(
 	ctx context.Context,
 	taskID string,
+	conversationID string,
 	calls []llm.ToolCall,
 	registry []tools.Tool,
 	entry *conversation.Entry,
@@ -339,6 +379,21 @@ func (d *Driver) execToolsParallel(
 ) (map[string]toolOutcome, error) {
 	if len(calls) == 0 {
 		return nil, nil
+	}
+	spawnCalls := 0
+	for _, tc := range calls {
+		if tc.Name == "spawn_subagent" {
+			spawnCalls++
+		}
+	}
+	if spawnCalls > subAgentMaxPerTurn {
+		results := make(map[string]toolOutcome, len(calls))
+		for _, tc := range calls {
+			if tc.Name == "spawn_subagent" {
+				results[tc.ID] = toolOutcome{content: "error: sub-agent per-turn limit exceeded", err: fmt.Errorf("sub-agent per-turn limit exceeded")}
+			}
+		}
+		return results, nil
 	}
 
 	byName := make(map[string]tools.Tool, len(registry))
@@ -352,6 +407,14 @@ func (d *Driver) execToolsParallel(
 	}
 
 	results := make(map[string]toolOutcome, len(calls))
+	if spawnCalls > 0 {
+		for _, tc := range calls {
+			out := d.execOneTool(ctx, taskID, conversationID, tc, byName, approvals, entry, skillsCatalogue)
+			results[tc.ID] = out
+		}
+		return results, nil
+	}
+
 	var mu sync.Mutex
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -362,28 +425,7 @@ func (d *Driver) execToolsParallel(
 			if gctx.Err() != nil {
 				return gctx.Err()
 			}
-			t, ok := byName[tc.Name]
-			var out toolOutcome
-			switch {
-			case !ok:
-				out = toolOutcome{err: fmt.Errorf("unknown tool: %s", tc.Name)}
-			case tc.Name == "load_skill":
-				out = execLoadSkill(entry, skillsCatalogue, tc.Input)
-			case t.LocalExec != nil && t.RequiresApproval && !approvals[tc.ID]:
-				out = toolOutcome{err: fmt.Errorf("user rejected")}
-			default:
-				startedAt := time.Now()
-				content, followup, err := d.execToolNoApprovalGate(taskID, tc.ID, t, tc.Input)
-				out = toolOutcome{content: content, err: err, followup: followup}
-				d.Telemetry.Emit("tool_call", map[string]any{
-					"name":       tc.Name,
-					"durationMs": time.Since(startedAt).Milliseconds(),
-					"ok":         err == nil,
-				})
-			}
-			if out.err != nil && out.content == "" {
-				out.content = "error: " + out.err.Error()
-			}
+			out := d.execOneTool(gctx, taskID, conversationID, tc, byName, approvals, entry, skillsCatalogue)
 			mu.Lock()
 			results[tc.ID] = out
 			mu.Unlock()
@@ -392,6 +434,262 @@ func (d *Driver) execToolsParallel(
 	}
 	_ = g.Wait()
 	return results, nil
+}
+
+func (d *Driver) execOneTool(
+	ctx context.Context,
+	taskID string,
+	conversationID string,
+	tc llm.ToolCall,
+	byName map[string]tools.Tool,
+	approvals map[string]bool,
+	entry *conversation.Entry,
+	skillsCatalogue skills.Catalogue,
+) toolOutcome {
+	t, ok := byName[tc.Name]
+	var out toolOutcome
+	switch {
+	case !ok:
+		out = toolOutcome{err: fmt.Errorf("unknown tool: %s", tc.Name)}
+	case tc.Name == "load_skill":
+		out = execLoadSkill(entry, skillsCatalogue, tc.Input)
+	case tc.Name == "spawn_subagent":
+		out = d.execSpawnSubAgent(ctx, taskID, conversationID, tc.Input)
+	case t.LocalExec != nil && t.RequiresApproval && !approvals[tc.ID]:
+		out = toolOutcome{err: fmt.Errorf("user rejected")}
+	default:
+		d.Tasks.RecordToolCall(taskID, tc.Name, tc.Input)
+		startedAt := time.Now()
+		content, followup, err := d.execToolNoApprovalGate(taskID, tc.ID, t, tc.Input)
+		out = toolOutcome{content: content, err: err, followup: followup}
+		d.Telemetry.Emit("tool_call", map[string]any{
+			"name":       tc.Name,
+			"durationMs": time.Since(startedAt).Milliseconds(),
+			"ok":         err == nil,
+		})
+	}
+	if out.err != nil && out.content == "" {
+		out.content = "error: " + out.err.Error()
+	}
+	return out
+}
+
+type spawnSubAgentInput struct {
+	Type    string   `json:"type"`
+	Task    string   `json:"task"`
+	Context string   `json:"context"`
+	Files   []string `json:"files,omitempty"`
+}
+
+type spawnSubAgentResult struct {
+	Summary      string   `json:"summary"`
+	FilesTouched []string `json:"files_touched"`
+	ToolCalls    int      `json:"tool_calls"`
+	TokensUsed   int64    `json:"tokens_used"`
+	Truncated    bool     `json:"truncated"`
+}
+
+func (d *Driver) execSpawnSubAgent(ctx context.Context, parentTaskID, parentConversationID string, input json.RawMessage) toolOutcome {
+	var in spawnSubAgentInput
+	if err := json.Unmarshal(input, &in); err != nil {
+		return toolOutcome{err: fmt.Errorf("spawn_subagent: %w", err)}
+	}
+	in.Type = strings.TrimSpace(in.Type)
+	in.Task = strings.TrimSpace(in.Task)
+	in.Context = strings.TrimSpace(in.Context)
+	if in.Type == "" {
+		in.Type = "research"
+	}
+	if in.Task == "" {
+		return toolOutcome{err: fmt.Errorf("spawn_subagent: task is required")}
+	}
+	if in.Context == "" {
+		return toolOutcome{err: fmt.Errorf("spawn_subagent: context is required")}
+	}
+	preset, err := PresetFor(in.Type)
+	if err != nil {
+		return toolOutcome{err: err}
+	}
+
+	parent := d.Tasks.Node(parentTaskID)
+	if parent == nil {
+		return toolOutcome{err: fmt.Errorf("parent task not registered")}
+	}
+	if parent.Depth >= subAgentMaxDepth {
+		return toolOutcome{err: fmt.Errorf("depth limit exceeded")}
+	}
+	if d.Tasks.CountDescendants(parent.RootID) >= subAgentMaxPerTaskTree {
+		return toolOutcome{err: fmt.Errorf("sub-agent task-tree limit exceeded")}
+	}
+	subInput, _, _ := d.Tasks.TreeUsage(parent.RootID)
+	if subInput >= taskTreeMaxInputTokens {
+		return toolOutcome{err: fmt.Errorf("task-tree token ceiling exceeded")}
+	}
+
+	subTaskID := fmt.Sprintf("%s-sub-%d", parentTaskID, time.Now().UnixNano())
+	subCtx, cancel := context.WithCancel(ctx)
+	d.Tasks.Register(subTaskID, parentTaskID, preset.Name, in.Task, cancel)
+	defer cancel()
+
+	_ = d.Conn.Notify("subagent.spawn", map[string]any{
+		"parentTaskId": parentTaskID,
+		"subTaskId":    subTaskID,
+		"type":         preset.Name,
+		"task":         in.Task,
+	})
+
+	subRegistry := filterToolsByAllowlist(d.registry(), preset.AllowedTools)
+	mode := &ModeDefinition{
+		ID:            preset.Name,
+		Label:         "Research",
+		SystemPrompt:  preset.SystemPrompt,
+		ToolAllowlist: preset.AllowedTools,
+	}
+	userPrompt := buildSubAgentPrompt(in)
+	subConversationID := parentConversationID + ":" + subTaskID
+
+	err = d.run(subCtx, StartParams{
+		TaskID:         subTaskID,
+		ConversationID: subConversationID,
+		Prompt:         userPrompt,
+		WorkspaceRoot:  d.WorkspaceRoot,
+		CWD:            d.WorkspaceRoot,
+		Mode:           mode,
+	}, runOptions{
+		Registry:       subRegistry,
+		MaxTurns:       preset.MaxTurns,
+		MaxInputTokens: preset.MaxInputTokens,
+		IsSubAgent:     true,
+	})
+
+	node := d.Tasks.Node(subTaskID)
+	summary := d.lastAssistantMessage(subConversationID)
+	status := "completed"
+	truncated := false
+	if subCtx.Err() != nil {
+		status = "cancelled"
+		if summary == "" {
+			summary = "Sub-agent cancelled by user."
+		}
+		err = fmt.Errorf("sub-agent cancelled by user")
+	} else if err != nil {
+		status = "error"
+		truncated = strings.Contains(err.Error(), "turn limit") || strings.Contains(err.Error(), "token budget")
+		if summary == "" {
+			summary = err.Error()
+		}
+	}
+	if node != nil {
+		switch status {
+		case "completed":
+			d.Tasks.Complete(subTaskID, TaskCompleted)
+		case "cancelled":
+			d.Tasks.Complete(subTaskID, TaskCancelled)
+		default:
+			d.Tasks.Complete(subTaskID, TaskError)
+		}
+	}
+	if summary == "" {
+		summary = "Sub-agent completed without a written summary."
+	}
+	files := []string{}
+	if node != nil {
+		for file := range node.FilesInspected {
+			files = append(files, file)
+		}
+	}
+	files = append(files, in.Files...)
+	sort.Strings(files)
+	files = compactStrings(files)
+
+	inputTokens, outputTokens, toolCalls := int64(0), int64(0), 0
+	if node != nil {
+		inputTokens = node.InputTokens
+		outputTokens = node.OutputTokens
+		toolCalls = node.ToolCalls
+	}
+	result := spawnSubAgentResult{
+		Summary:      summary,
+		FilesTouched: files,
+		ToolCalls:    toolCalls,
+		TokensUsed:   inputTokens + outputTokens,
+		Truncated:    truncated,
+	}
+	_ = d.Conn.Notify("subagent.done", map[string]any{
+		"subTaskId":    subTaskID,
+		"status":       status,
+		"summary":      summary,
+		"toolCalls":    toolCalls,
+		"tokensUsed":   inputTokens + outputTokens,
+		"inputTokens":  inputTokens,
+		"outputTokens": outputTokens,
+		"truncated":    truncated,
+	})
+	if err != nil {
+		return toolOutcome{content: "error: " + err.Error(), err: err}
+	}
+	b, _ := json.Marshal(result)
+	return toolOutcome{content: string(b)}
+}
+
+func buildSubAgentPrompt(in spawnSubAgentInput) string {
+	var b strings.Builder
+	b.WriteString("<subagent_task>\n")
+	b.WriteString(in.Task)
+	b.WriteString("\n</subagent_task>\n\n<context>\n")
+	b.WriteString(in.Context)
+	b.WriteString("\n</context>")
+	if len(in.Files) > 0 {
+		b.WriteString("\n\n<starting_files>\n")
+		for _, file := range in.Files {
+			if strings.TrimSpace(file) != "" {
+				b.WriteString("- ")
+				b.WriteString(strings.TrimSpace(file))
+				b.WriteString("\n")
+			}
+		}
+		b.WriteString("</starting_files>")
+	}
+	return b.String()
+}
+
+func (d *Driver) lastAssistantMessage(conversationID string) string {
+	entry := d.Conversations.Get(conversationID)
+	snap := entry.Snapshot()
+	for i := len(snap.Messages) - 1; i >= 0; i-- {
+		if snap.Messages[i].Role == llm.RoleAssistant && strings.TrimSpace(snap.Messages[i].Content) != "" {
+			return strings.TrimSpace(snap.Messages[i].Content)
+		}
+	}
+	return ""
+}
+
+func filterToolsByAllowlist(registry []tools.Tool, allowlist []string) []tools.Tool {
+	allowed := make(map[string]bool, len(allowlist))
+	for _, name := range allowlist {
+		allowed[name] = true
+	}
+	filtered := make([]tools.Tool, 0, len(allowlist))
+	for _, t := range registry {
+		if allowed[t.Name] {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
+}
+
+func compactStrings(values []string) []string {
+	out := values[:0]
+	last := ""
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || value == last {
+			continue
+		}
+		out = append(out, value)
+		last = value
+	}
+	return out
 }
 
 // gatherApprovals batches all Go-side tools requiring approval into a single
@@ -674,7 +972,7 @@ func applyMode(registry []tools.Tool, mode *ModeDefinition) []tools.Tool {
 //	[C] skills catalogue
 //
 // The provider places its cache_control breakpoint at the end of this block.
-func buildStableSystem(mode *ModeDefinition, registry []tools.Tool, cat skills.Catalogue) string {
+func buildStableSystem(mode *ModeDefinition, registry []tools.Tool, cat skills.Catalogue, presets []Preset) string {
 	base := loadModeBase(mode)
 	var b strings.Builder
 	b.WriteString(strings.TrimRight(base, "\n"))
@@ -694,7 +992,22 @@ func buildStableSystem(mode *ModeDefinition, registry []tools.Tool, cat skills.C
 			b.WriteString("\n")
 		}
 	}
+	if hasTool(registry, "spawn_subagent") && len(presets) > 0 {
+		b.WriteString("\nAvailable sub-agents (spawn with the spawn_subagent tool):\n")
+		for _, p := range presets {
+			fmt.Fprintf(&b, "- %s: isolated read-only research; pass task, context, and optional files\n", p.Name)
+		}
+	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func hasTool(registry []tools.Tool, name string) bool {
+	for _, t := range registry {
+		if t.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // buildVolatileSystem returns the part of the system prompt that may change

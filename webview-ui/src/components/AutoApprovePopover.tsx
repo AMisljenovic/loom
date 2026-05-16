@@ -8,7 +8,7 @@ const ROWS: { id: AutoApproveCategory; label: string; description: string; disab
     { id: "write", label: "Write", description: "Apply diffs and create files" },
     { id: "mcp", label: "MCP", description: "Tools exposed by MCP servers" },
     { id: "mode", label: "Mode", description: "Switch modes from natural language" },
-    { id: "subtasks", label: "Subtasks", description: "Spawn delegate agents (coming soon)", disabled: true },
+    { id: "subtasks", label: "Subtasks", description: "Research sub-agents are read-only in v1.1", disabled: true },
     { id: "execute", label: "Execute", description: "Run shell commands (blocking + background)" },
     { id: "question", label: "Question", description: "Auto-accept the model's default for clarifying questions" },
 ];

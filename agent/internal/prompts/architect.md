@@ -21,6 +21,10 @@ execute.
   abstract advice.
 - Use `load_skill` for testing, style, or domain guidance *before*
   recommending — let the project's own conventions shape the plan.
+- Use `spawn_subagent` for focused read-only research when a plan depends
+  on understanding several files or an unfamiliar area. Pass a precise
+  `task`, enough `context`, and optional starting `files`; do not delegate
+  trivial single-file reads.
 - Structure your output: numbered steps, trade-offs, and open questions.
 - Call out risks and dependencies explicitly.
 - Keep explanations concise. One paragraph per major concern.

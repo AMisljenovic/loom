@@ -98,6 +98,11 @@ change to a message type must be made on both sides.
   parser for responsiveness, but `ChatPanel.ts` owns persisted mode state.
 - **Markdown rendering is webview-only.** Session state stores raw assistant
   text. The webview renders safe Markdown without raw HTML.
+- **Sub-agents are minimal in v1.1.** The only built-in sub-agent preset is
+  `research`, exposed through `spawn_subagent`. It runs sequentially, has
+  isolated conversation state, uses a read-only tool allowlist, and streams
+  into webview sub-agent cards. Do not add custom presets, parallel execution,
+  or sub-agent model routing without updating `SUBAGENTS.md`.
 - **First-run setup is host-owned.** `ChatPanel.ts` stores
   `workspaceState["loom.firstRun.completed"]`, posts `firstRunState`, and
   keeps API keys on the existing SecretStorage path. The webview renders the

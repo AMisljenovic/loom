@@ -202,5 +202,24 @@ func Registry() []Tool {
 			// Entry (LoadedSkills) without expanding the generic LocalExec
 			// signature with state-mutating dependencies.
 		},
+		{
+			Name:        "spawn_subagent",
+			Description: "Delegate focused read-only research to a fresh sub-agent with isolated context. Use only for non-trivial investigation; pass explicit task, context, and optional starting files.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"type":    map[string]any{"type": "string", "enum": []string{"research"}},
+					"task":    map[string]any{"type": "string"},
+					"context": map[string]any{"type": "string"},
+					"files": map[string]any{
+						"type":  "array",
+						"items": map[string]any{"type": "string"},
+					},
+				},
+				"required": []string{"type", "task", "context"},
+			},
+			// Handled specially by the loop so the sub-agent can reuse the
+			// same LLM/tool machinery while preserving isolated context.
+		},
 	}
 }

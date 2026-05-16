@@ -27,6 +27,8 @@ import type {
   ReasoningEffort,
   SessionMeta,
   SessionsIndex,
+  SubAgentDone,
+  SubAgentSpawn,
   TaskDone,
   TaskUsage,
   ToolApproveBatchParams,
@@ -85,6 +87,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private hydratedConversationId?: string;
   private webviewMessageQueue: Promise<void> = Promise.resolve();
   private readonly output: vscode.OutputChannel;
+  private activeSubAgents = new Map<string, { parentTaskId: string; type: string; task: string }>();
+  private toolCallTasks = new Map<string, string>();
 
   constructor(private readonly ctx: vscode.ExtensionContext) {
     this.output = vscode.window.createOutputChannel("Loom");
@@ -199,6 +203,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       this.postAlwaysAllowList();
     } else if (m.type === "requestAlwaysAllowList") {
       this.postAlwaysAllowList();
+    } else if (m.type === "subagentCancel") {
+      await this.agent?.cancel(m.subTaskId);
     } else if (m.type === "setMode") {
       this.currentModeId = m.modeId;
       this.schedulePersist();
@@ -298,27 +304,24 @@ export class ChatPanel implements vscode.WebviewViewProvider {
 
   private createAgent(workspaceRoot: string): AgentClient {
     return new AgentClient(this.ctx.extensionPath, {
-      onDelta: ({ text }) => this.post({ type: "delta", text }),
+      onDelta: ({ taskId, text }) => {
+        if (this.activeSubAgents.has(taskId)) {
+          this.post({ type: "subagentDelta", subTaskId: taskId, text });
+        } else {
+          this.post({ type: "delta", text });
+        }
+      },
       onToolStart: (call: ToolCall) => {
-        this.toolStartTimes.set(call.callId, Date.now());
-        this.post({ type: "toolCall", call });
+        this.routeToolCall(call);
       },
       onToolResult: (result: ToolResult) => {
-        const measured = this.finishToolTiming(result.callId);
-        const durationMs = result.durationMs ?? measured;
-        this.post({
-          type: "toolResult",
-          callId: result.callId,
-          ok: result.ok,
-          summary: result.content ?? result.error ?? "",
-          durationMs,
-        });
+        this.routeToolResult(result);
       },
       onToolCall: async (call: ToolCall) => {
         this.toolStartTimes.set(call.callId, Date.now());
         if (call.requiresApproval) {
           if (this.isApprovedByHostPolicy(call)) {
-            this.post({ type: "toolCall", call: { ...call, requiresApproval: false } });
+            this.routeToolCall({ ...call, requiresApproval: false });
           } else {
             if (call.name === "apply_diff") {
               try {
@@ -334,49 +337,31 @@ export class ChatPanel implements vscode.WebviewViewProvider {
                 });
               } catch (e: unknown) {
                 const result = this.failedToolResult(call.callId, e);
-                this.post({ type: "toolCall", call });
-                this.post({
-                  type: "toolResult",
-                  callId: call.callId,
-                  ok: false,
-                  summary: result.error ?? "",
-                  durationMs: this.finishToolTiming(call.callId),
-                });
+                this.routeToolCall(call);
+                this.routeToolResult(result);
                 return result;
               }
             }
-            this.post({ type: "toolCall", call });
+            this.routeToolCall(call);
             const approved = await new Promise<boolean>((resolve) => {
               this.pendingApprovals.set(call.callId, resolve);
               this.pendingApprovalCalls.set(call.callId, call);
             });
             if (!approved) {
               await this.cleanupApplyDiff(call.callId);
-              this.post({
-                type: "toolResult",
-                callId: call.callId,
-                ok: false,
-                summary: "rejected",
-                durationMs: this.finishToolTiming(call.callId),
-              });
+              this.routeToolResult({ callId: call.callId, ok: false, error: "rejected" });
               return { callId: call.callId, ok: false, error: "user rejected" };
             }
           }
         } else {
-          this.post({ type: "toolCall", call });
+          this.routeToolCall(call);
         }
         try {
           const result = await executeTool(call, async () => true, {
             workspaceRoot,
-            onProgress: (chunk) => this.post({ type: "toolProgress", callId: call.callId, chunk }),
+            onProgress: (chunk) => this.routeToolProgress(call.callId, chunk),
           });
-          this.post({
-            type: "toolResult",
-            callId: call.callId,
-            ok: result.ok,
-            summary: result.content ?? result.error ?? "",
-            durationMs: this.finishToolTiming(call.callId),
-          });
+          this.routeToolResult(result);
           return result;
         } finally {
           if (call.name === "apply_diff") {
@@ -392,6 +377,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       onConversationUpdated: (update) => this.handleConversationUpdated(update),
       onSummarized: ({ droppedCount }) => this.post({ type: "summarized", droppedCount }),
       onIndexStatus: (status) => this.post({ type: "indexStatus", status }, false),
+      onSubAgentSpawn: (spawn) => this.handleSubAgentSpawn(spawn),
+      onSubAgentDone: (done) => this.handleSubAgentDone(done),
       onError: (error) => this.post({ type: "error", error }),
       onLog: (line) => this.log(line),
     }, this.buildSpawnExtras());
@@ -418,7 +405,90 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     return intent.prompt;
   }
 
+  private handleSubAgentSpawn(spawn: SubAgentSpawn) {
+    this.activeSubAgents.set(spawn.subTaskId, {
+      parentTaskId: spawn.parentTaskId,
+      type: spawn.type,
+      task: spawn.task,
+    });
+    this.post({
+      type: "subagentSpawn",
+      parentTaskId: spawn.parentTaskId,
+      subTaskId: spawn.subTaskId,
+      subagentType: spawn.type,
+      task: spawn.task,
+    });
+  }
+
+  private handleSubAgentDone(done: SubAgentDone) {
+    this.post({
+      type: "subagentDone",
+      subTaskId: done.subTaskId,
+      status: done.status,
+      summary: done.summary,
+      toolCalls: done.toolCalls,
+      tokensUsed: done.tokensUsed,
+      inputTokens: done.inputTokens,
+      outputTokens: done.outputTokens,
+      truncated: done.truncated,
+    });
+    this.activeSubAgents.delete(done.subTaskId);
+  }
+
+  private routeToolCall(call: ToolCall) {
+    this.toolStartTimes.set(call.callId, Date.now());
+    this.toolCallTasks.set(call.callId, call.taskId);
+    const subAgent = this.activeSubAgents.get(call.taskId);
+    if (subAgent) {
+      this.post({
+        type: "subagentToolCall",
+        subTaskId: call.taskId,
+        call: { ...call, subAgent: { type: subAgent.type, task: subAgent.task } },
+      });
+      return;
+    }
+    this.post({ type: "toolCall", call });
+  }
+
+  private routeToolProgress(callId: string, chunk: string) {
+    const taskId = this.toolCallTasks.get(callId);
+    if (taskId && this.activeSubAgents.has(taskId)) {
+      this.post({ type: "subagentToolProgress", subTaskId: taskId, callId, chunk });
+      return;
+    }
+    this.post({ type: "toolProgress", callId, chunk });
+  }
+
+  private routeToolResult(result: ToolResult) {
+    const measured = this.finishToolTiming(result.callId);
+    const durationMs = result.durationMs ?? measured;
+    const summary = result.content ?? result.error ?? "";
+    const taskId = this.toolCallTasks.get(result.callId);
+    this.toolCallTasks.delete(result.callId);
+    if (taskId && this.activeSubAgents.has(taskId)) {
+      this.post({
+        type: "subagentToolResult",
+        subTaskId: taskId,
+        callId: result.callId,
+        ok: result.ok,
+        summary,
+        durationMs,
+      });
+      return;
+    }
+    this.post({
+      type: "toolResult",
+      callId: result.callId,
+      ok: result.ok,
+      summary,
+      durationMs,
+    });
+  }
+
   private async handleDone({ taskId, reason }: TaskDone) {
+    if (this.activeSubAgents.has(taskId)) {
+      return;
+    }
     this.post({ type: "done", reason });
     if (this.activeTaskId === taskId) {
       this.activeTaskId = undefined;
@@ -435,12 +505,28 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   }
 
   private handleUsage(usage: TaskUsage) {
+    if (this.activeSubAgents.has(usage.taskId)) {
+      this.post({
+        type: "usage",
+        usage: {
+          ...this.state.usage,
+          subAgentInputTokens: usage.subAgentInputTokens,
+          subAgentOutputTokens: usage.subAgentOutputTokens,
+          subAgentCount: usage.subAgentCount,
+          model: usage.model,
+        },
+      });
+      return;
+    }
     this.post({
       type: "usage",
       usage: {
         inputTokens: usage.cumulativeInput,
         outputTokens: usage.cumulativeOutput,
         cacheReadTokens: usage.cumulativeCacheRead,
+        subAgentInputTokens: usage.subAgentInputTokens,
+        subAgentOutputTokens: usage.subAgentOutputTokens,
+        subAgentCount: usage.subAgentCount,
         model: usage.model,
       },
     });
@@ -478,6 +564,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.pendingApprovalCalls.clear();
     this.sessionBulkCounters.clear();
     this.toolStartTimes.clear();
+    this.toolCallTasks.clear();
+    this.activeSubAgents.clear();
     this.persistNow();
     await this.restoreWebview();
     this.postSessions();
@@ -507,6 +595,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.pendingApprovalCalls.clear();
     this.sessionBulkCounters.clear();
     this.toolStartTimes.clear();
+    this.toolCallTasks.clear();
+    this.activeSubAgents.clear();
     this.persistNow();
     await this.restoreWebview();
     this.postSessions();
@@ -631,6 +721,85 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         input: msg.call.input,
         expanded: false,
       });
+      this.schedulePersist();
+    } else if (msg.type === "subagentSpawn") {
+      this.state.messages.push({
+        role: "subagent",
+        parentTaskId: msg.parentTaskId,
+        subTaskId: msg.subTaskId,
+        type: msg.subagentType,
+        task: msg.task,
+        status: "running",
+        trace: [{ role: "user", text: msg.task }],
+        expanded: false,
+      });
+      this.schedulePersist();
+    } else if (msg.type === "subagentDelta") {
+      updateSubAgent(this.state.messages, msg.subTaskId, (sub) => {
+        const trace = [...sub.trace];
+        const last = trace[trace.length - 1];
+        if (last?.role === "assistant") {
+          trace[trace.length - 1] = { ...last, text: last.text + msg.text };
+        } else {
+          trace.push({ role: "assistant", text: msg.text });
+        }
+        return { ...sub, trace };
+      });
+      this.schedulePersist();
+    } else if (msg.type === "subagentToolCall") {
+      updateSubAgent(this.state.messages, msg.subTaskId, (sub) => ({
+        ...sub,
+        trace: [
+          ...sub.trace,
+          {
+            role: "tool",
+            name: msg.call.name,
+            status: msg.call.requiresApproval ? "pending" : "approved",
+            callId: msg.call.callId,
+            input: msg.call.input,
+            expanded: false,
+          },
+        ],
+      }));
+      this.schedulePersist();
+    } else if (msg.type === "subagentToolProgress") {
+      updateSubAgent(this.state.messages, msg.subTaskId, (sub) => ({
+        ...sub,
+        trace: updateTool(sub.trace, msg.callId, (tool) => ({
+          ...tool,
+          status: tool.status === "approved" ? "running" : tool.status,
+          output: `${tool.output ?? ""}${msg.chunk}`,
+          expanded: tool.expanded ?? true,
+        })),
+      }));
+      this.schedulePersist();
+    } else if (msg.type === "subagentToolResult") {
+      updateSubAgent(this.state.messages, msg.subTaskId, (sub) => ({
+        ...sub,
+        trace: updateTool(sub.trace, msg.callId, (tool) => {
+          const hasOutput = Boolean(tool.output);
+          const finalOutput = mergeToolOutput(tool.output, msg.summary);
+          const status = !msg.ok && msg.summary === "rejected" ? "rejected" : msg.ok ? "done" : "error";
+          return {
+            ...tool,
+            status,
+            output: hasOutput ? finalOutput : msg.summary,
+            durationMs: msg.durationMs,
+          };
+        }),
+      }));
+      this.schedulePersist();
+    } else if (msg.type === "subagentDone") {
+      updateSubAgent(this.state.messages, msg.subTaskId, (sub) => ({
+        ...sub,
+        status: msg.status,
+        summary: msg.summary,
+        toolCalls: msg.toolCalls,
+        tokensUsed: msg.tokensUsed,
+        inputTokens: msg.inputTokens,
+        outputTokens: msg.outputTokens,
+        truncated: msg.truncated,
+      }));
       this.schedulePersist();
     } else if (msg.type === "toolProgress") {
       updateTool(this.state.messages, msg.callId, (tool) => ({
@@ -998,6 +1167,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.pendingApprovalCalls.clear();
     this.sessionBulkCounters.clear();
     this.toolStartTimes.clear();
+    this.toolCallTasks.clear();
+    this.activeSubAgents.clear();
     this.persistNow();
     await this.agent?.dispose();
     this.agent = undefined;
@@ -1038,23 +1209,17 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private async approveLocalTool(call: ToolCall): Promise<{ approved: boolean }> {
     this.toolStartTimes.set(call.callId, Date.now());
     if (this.isApprovedByHostPolicy(call)) {
-      this.post({ type: "toolCall", call: { ...call, requiresApproval: false } });
+      this.routeToolCall({ ...call, requiresApproval: false });
       return { approved: true };
     }
 
-    this.post({ type: "toolCall", call });
+    this.routeToolCall(call);
     const approved = await new Promise<boolean>((resolve) => {
       this.pendingApprovals.set(call.callId, resolve);
       this.pendingApprovalCalls.set(call.callId, call);
     });
     if (!approved) {
-      this.post({
-        type: "toolResult",
-        callId: call.callId,
-        ok: false,
-        summary: "rejected",
-        durationMs: this.finishToolTiming(call.callId),
-      });
+      this.routeToolResult({ callId: call.callId, ok: false, error: "rejected" });
       return { approved: false };
     }
     return { approved: true };
@@ -1246,6 +1411,20 @@ function updateTool(
     const tool = messages[i];
     if (tool.role === "tool" && tool.callId === callId) {
       messages[i] = update(tool) as Msg;
+      break;
+    }
+  }
+}
+
+function updateSubAgent(
+  messages: Msg[],
+  subTaskId: string,
+  update: (subAgent: Extract<Msg, { role: "subagent" }>) => Msg,
+) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role === "subagent" && msg.subTaskId === subTaskId) {
+      messages[i] = update(msg) as Msg;
       break;
     }
   }

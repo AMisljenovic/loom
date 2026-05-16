@@ -18,7 +18,7 @@ import { AutoApprovePopover } from "./components/AutoApprovePopover";
 import { EmptyState } from "./components/EmptyState";
 import { FirstRun } from "./components/FirstRun";
 import { PanelHeader } from "./components/PanelHeader";
-import { InputArea } from "./components/composer/InputArea";
+import { InputArea, type LiveTaskStatus } from "./components/composer/InputArea";
 import { ConversationList } from "./components/conversations/ConversationList";
 import { AllowlistPopover } from "./components/popovers/AllowlistPopover";
 import { ModelPopover } from "./components/popovers/ModelPopover";
@@ -49,10 +49,112 @@ function updateTool(
   );
 }
 
+function updateSubAgent(
+  msgs: Msg[],
+  subTaskId: string,
+  fn: (m: Extract<Msg, { role: "subagent" }>) => Extract<Msg, { role: "subagent" }>
+): Msg[] {
+  return msgs.map((m) =>
+    m.role === "subagent" && m.subTaskId === subTaskId ? fn(m) : m
+  );
+}
+
 function mergeToolOutput(existing: string | undefined, summary: string): string {
   if (!existing) return summary;
   if (existing.includes(summary)) return existing;
   return existing;
+}
+
+function deriveLiveTaskStatus(messages: Msg[], busy: boolean): LiveTaskStatus | null {
+  if (!busy) return null;
+
+  const subagent = [...messages]
+    .reverse()
+    .find((m): m is Extract<Msg, { role: "subagent" }> => m.role === "subagent" && m.status === "running");
+  if (subagent) {
+    return {
+      phase: "researching",
+      label: "Researching",
+      detail: trimDetail(subagent.task),
+    };
+  }
+
+  const activeTool = [...messages]
+    .reverse()
+    .find((m): m is Extract<Msg, { role: "tool" }> => (
+      m.role === "tool" &&
+      (m.status === "pending" || m.status === "approved" || m.status === "running")
+    ));
+
+  if (activeTool) {
+    if (activeTool.status === "pending") {
+      return {
+        phase: "waiting",
+        label: "Waiting for approval",
+        detail: toolDetail(activeTool),
+      };
+    }
+    if (activeTool.name === "apply_diff") {
+      return {
+        phase: "changing",
+        label: "Changing files",
+        detail: toolDetail(activeTool),
+      };
+    }
+    if (activeTool.name === "run_command" || activeTool.name === "run_command_background" || activeTool.name === "kill_process" || activeTool.name === "read_process_output") {
+      return {
+        phase: "executing",
+        label: activeTool.name === "read_process_output" ? "Reading process output" : "Executing command",
+        detail: toolDetail(activeTool),
+      };
+    }
+    if (activeTool.name === "spawn_subagent") {
+      return {
+        phase: "researching",
+        label: "Starting research",
+        detail: toolDetail(activeTool),
+      };
+    }
+    return {
+      phase: "reading",
+      label: "Reading workspace",
+      detail: toolDetail(activeTool),
+    };
+  }
+
+  const last = messages[messages.length - 1];
+  if (last?.role === "assistant" && last.text.trim()) {
+    return {
+      phase: "responding",
+      label: "Writing response",
+      detail: "Preparing the answer",
+    };
+  }
+
+  return {
+    phase: "thinking",
+    label: "Thinking",
+    detail: "Planning the next step",
+  };
+}
+
+function toolDetail(tool: Extract<Msg, { role: "tool" }>): string | undefined {
+  if (!tool.input || typeof tool.input !== "object") return tool.name;
+  const input = tool.input as Record<string, unknown>;
+  const value = firstString(input, ["path", "command", "query", "processId", "task", "severity"]);
+  return value ? trimDetail(value) : tool.name;
+}
+
+function firstString(input: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = input[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function trimDetail(value: string): string {
+  return value.length > 90 ? `${value.slice(0, 87)}...` : value;
 }
 
 export function App() {
@@ -73,6 +175,7 @@ export function App() {
   const [mcpStatuses, setMcpStatuses] = useState<McpServerStatus[]>([]);
   const [indexStatus, setIndexStatus] = useState<IndexStatusNotify | null>(null);
   const [sessions, setSessions] = useState<SessionsIndex | null>(null);
+  const [showSessions, setShowSessions] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [showAllowlist, setShowAllowlist] = useState(false);
@@ -191,6 +294,13 @@ export function App() {
         setPendingDiffs((prev) => { if (!prev.has(m.callId)) return prev; const next = new Map(prev); next.delete(m.callId); return next; });
         setPendingOutputs((prev) => { if (!prev.has(m.callId)) return prev; const next = new Map(prev); next.delete(m.callId); return next; });
       }
+      if (m.type === "subagentToolResult") {
+        setPendingDiffs((prev) => { if (!prev.has(m.callId)) return prev; const next = new Map(prev); next.delete(m.callId); return next; });
+        setPendingOutputs((prev) => { if (!prev.has(m.callId)) return prev; const next = new Map(prev); next.delete(m.callId); return next; });
+      }
+      if (m.type === "subagentToolProgress") {
+        setPendingOutputs((po) => { const np = new Map(po); np.set(m.callId, (po.get(m.callId) ?? "") + m.chunk); return np; });
+      }
       if (m.type === "delta") {
         queueDelta(m.text);
         return;
@@ -208,6 +318,58 @@ export function App() {
             const status: ToolStatus = !m.ok && m.summary === "rejected" ? "rejected" : m.ok ? "done" : "error";
             return { ...tool, status, output: tool.output ? finalOutput : m.summary, durationMs: m.durationMs };
           });
+        } else if (m.type === "subagentSpawn") {
+          next.push({
+            role: "subagent",
+            parentTaskId: m.parentTaskId,
+            subTaskId: m.subTaskId,
+            type: m.subagentType,
+            task: m.task,
+            status: "running",
+            trace: [{ role: "user", text: m.task }],
+            expanded: false,
+          });
+        } else if (m.type === "subagentDelta") {
+          return updateSubAgent(next, m.subTaskId, (sub) => {
+            const trace = [...sub.trace];
+            const last = trace[trace.length - 1];
+            if (last?.role === "assistant") {
+              trace[trace.length - 1] = { ...last, text: last.text + m.text };
+            } else {
+              trace.push({ role: "assistant", text: m.text });
+            }
+            return { ...sub, trace };
+          });
+        } else if (m.type === "subagentToolCall") {
+          return updateSubAgent(next, m.subTaskId, (sub) => ({
+            ...sub,
+            trace: [...sub.trace, { role: "tool", name: m.call.name, status: m.call.requiresApproval ? "pending" : "approved", callId: m.call.callId, input: m.call.input, expanded: false }],
+          }));
+        } else if (m.type === "subagentToolProgress") {
+          return updateSubAgent(next, m.subTaskId, (sub) => ({
+            ...sub,
+            trace: updateTool(sub.trace, m.callId, (tool) => ({ ...tool, status: tool.status === "approved" ? "running" : tool.status, expanded: tool.expanded ?? true })),
+          }));
+        } else if (m.type === "subagentToolResult") {
+          return updateSubAgent(next, m.subTaskId, (sub) => ({
+            ...sub,
+            trace: updateTool(sub.trace, m.callId, (tool) => {
+              const finalOutput = mergeToolOutput(tool.output, m.summary);
+              const status: ToolStatus = !m.ok && m.summary === "rejected" ? "rejected" : m.ok ? "done" : "error";
+              return { ...tool, status, output: tool.output ? finalOutput : m.summary, durationMs: m.durationMs };
+            }),
+          }));
+        } else if (m.type === "subagentDone") {
+          return updateSubAgent(next, m.subTaskId, (sub) => ({
+            ...sub,
+            status: m.status,
+            summary: m.summary,
+            toolCalls: m.toolCalls,
+            tokensUsed: m.tokensUsed,
+            inputTokens: m.inputTokens,
+            outputTokens: m.outputTokens,
+            truncated: m.truncated,
+          }));
         } else if (m.type === "done") {
           if (m.reason === "cancelled" && assistantRef.current !== null) {
             const cur = next[assistantRef.current];
@@ -271,6 +433,7 @@ export function App() {
       prompt = modeIntent.prompt;
     }
     setMessages((m) => [...m, { role: "user", text: prompt }]);
+    setShowSessions(false);
     // Any new user turn dismisses the previous plan-handoff CTA.
     setPlanHandoffArmed(false);
     setLastTaskModeId(submitModeId ?? currentModeId);
@@ -291,6 +454,7 @@ export function App() {
     post({ type: "setMode", modeId: "code" });
     const prompt = "Implement the plan above.";
     setMessages((m) => [...m, { role: "user", text: prompt }]);
+    setShowSessions(false);
     setLastTaskModeId("code");
     post({ type: "submit", prompt, modeId: "code" });
     setBusy(true);
@@ -299,24 +463,44 @@ export function App() {
   const currentMode = modes.find((m) => m.id === currentModeId);
   const isEmpty = messages.length === 0;
   const showFirstRun = isEmpty && firstRun && (!firstRun.completed || firstRun.needsSetup);
+  const liveStatus = deriveLiveTaskStatus(messages, busy);
 
   return (
     <div className="panel" ref={rootRef}>
       <PanelHeader
         busy={busy}
+        sessionsOpen={showSessions}
+        onToggleSessions={() => {
+          setShowModel(false);
+          setShowAllowlist(false);
+          setShowSessions((v) => !v);
+        }}
         onSetup={() => {
           setShowAllowlist(false);
+          setShowSessions(false);
           setShowModel((v) => !v);
         }}
       />
-      <ConversationList
-        index={sessions}
-        showArchived={showArchived}
-        onToggleArchived={() => setShowArchived((v) => !v)}
-        renamingId={renamingId}
-        onBeginRename={(id) => setRenamingId(id)}
-        onEndRename={() => setRenamingId(null)}
-      />
+      {showSessions && (
+        <ConversationList
+          index={sessions}
+          showArchived={showArchived}
+          onToggleArchived={() => setShowArchived((v) => !v)}
+          renamingId={renamingId}
+          onBeginRename={(id) => setRenamingId(id)}
+          onEndRename={() => setRenamingId(null)}
+          onNewConversation={() => {
+            post({ type: "newConversation" });
+            setShowSessions(false);
+            setShowArchived(false);
+            setRenamingId(null);
+          }}
+          onSessionPicked={() => {
+            setShowSessions(false);
+            setRenamingId(null);
+          }}
+        />
+      )}
       {notice && <div className="notice-toast" role="status">{notice}</div>}
       {showFirstRun ? (
         <FirstRun state={firstRun} onSample={(p) => setInput(p)} />
@@ -333,7 +517,7 @@ export function App() {
           </button>
         </div>
       )}
-      <InputArea busy={busy} input={input} onInput={setInput} onSubmit={submit} />
+      <InputArea busy={busy} input={input} onInput={setInput} onSubmit={submit} status={liveStatus} />
       <div style={{ position: "relative" }}>
         <Toolbar
           llmConfig={llmConfig}

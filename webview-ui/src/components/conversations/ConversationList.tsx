@@ -12,6 +12,8 @@ interface ConversationListProps {
     renamingId: string | null;
     onBeginRename: (id: string) => void;
     onEndRename: () => void;
+    onNewConversation: () => void;
+    onSessionPicked: () => void;
 }
 
 export function ConversationList({
@@ -21,8 +23,22 @@ export function ConversationList({
     renamingId,
     onBeginRename,
     onEndRename,
+    onNewConversation,
+    onSessionPicked,
 }: ConversationListProps) {
-    if (!index || Object.keys(index.sessions).length === 0) return null;
+    if (!index || Object.keys(index.sessions).length === 0) {
+        return (
+            <div className="convo-list">
+                <div className="convo-list-head">
+                    <span>Sessions</span>
+                    <button className="convo-new" onClick={onNewConversation}>
+                        <Ico.Plus size={11} />
+                        New
+                    </button>
+                </div>
+            </div>
+        );
+    }
 
     const all = index.order
         .map((id) => index.sessions[id])
@@ -32,11 +48,6 @@ export function ConversationList({
     const recent = all.filter((m) => !m.pinned && m.state === "active").sort((a, b) => b.updatedAt - a.updatedAt);
     const archived = all.filter((m) => m.state === "archived").sort((a, b) => b.updatedAt - a.updatedAt);
 
-    // Hide when only one untouched session
-    if (pinned.length === 0 && archived.length === 0 && recent.length <= 1 && recent[0]?.messageCount === 0) {
-        return null;
-    }
-
     const row = (meta: SessionMeta) => (
         <ConversationRow
             key={meta.conversationId}
@@ -45,11 +56,19 @@ export function ConversationList({
             isRenaming={renamingId === meta.conversationId}
             onBeginRename={() => onBeginRename(meta.conversationId)}
             onEndRename={onEndRename}
+            onSessionPicked={onSessionPicked}
         />
     );
 
     return (
         <div className="convo-list">
+            <div className="convo-list-head">
+                <span>Sessions</span>
+                <button className="convo-new" onClick={onNewConversation}>
+                    <Ico.Plus size={11} />
+                    New
+                </button>
+            </div>
             {pinned.length > 0 && (
                 <>
                     <div className="section-head">Pinned</div>
@@ -84,9 +103,10 @@ interface ConversationRowProps {
     isRenaming: boolean;
     onBeginRename: () => void;
     onEndRename: () => void;
+    onSessionPicked: () => void;
 }
 
-function ConversationRow({ meta, isActive, isRenaming, onBeginRename, onEndRename }: ConversationRowProps) {
+function ConversationRow({ meta, isActive, isRenaming, onBeginRename, onEndRename, onSessionPicked }: ConversationRowProps) {
     const [draft, setDraft] = useState(meta.title);
     const [menuOpen, setMenuOpen] = useState(false);
     const [menuPos, setMenuPos] = useState({ top: 0, right: 0 });
@@ -146,7 +166,10 @@ function ConversationRow({ meta, isActive, isRenaming, onBeginRename, onEndRenam
                 <button
                     className="convo-title"
                     style={{ background: "transparent", border: 0, font: "inherit", textAlign: "left", cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "inherit", padding: 0, minWidth: 0 }}
-                    onClick={() => post({ type: "switchSession", conversationId: meta.conversationId })}
+                    onClick={() => {
+                        post({ type: "switchSession", conversationId: meta.conversationId });
+                        onSessionPicked();
+                    }}
                     onDoubleClick={onBeginRename}
                     title={meta.title || "(untitled)"}
                 >

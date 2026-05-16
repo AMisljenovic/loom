@@ -26,6 +26,7 @@ function ToolIcon({ name }: { name: string }) {
     if (name === "list_dir") return <Ico.File size={13} />;
     if (name === "grep" || name === "search") return <Ico.Search size={13} />;
     if (name === "find_symbol" || name === "find_references") return <Ico.Code size={13} />;
+    if (name === "spawn_subagent") return <Ico.Compass size={13} />;
     return <Ico.Spark size={13} />;
 }
 
@@ -99,6 +100,8 @@ function summarizeInput(name: string, input: unknown): string | undefined {
         }
         case "get_diagnostics":
             return pick("path") ?? pick("severity") ?? "workspace";
+        case "spawn_subagent":
+            return pick("task") ?? pick("type");
         default:
             return pick("path") ?? pick("query") ?? pick("command");
     }
