@@ -14,6 +14,7 @@ const TOOL_CATEGORY: Record<string, AutoApproveCategory> = {
   get_diagnostics: "read",
   read_process_output: "read",
   load_skill: "read",
+  ask_questions: "question",
   spawn_subagent: "subtasks",
   apply_diff: "write",
   run_command: "execute",

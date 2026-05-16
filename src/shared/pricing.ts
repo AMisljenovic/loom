@@ -25,8 +25,10 @@ export function pricingForModel(model: string | undefined): ModelPricing | undef
 export function estimateCost(usage: ConversationUsage): number | undefined {
   const pricing = pricingForModel(usage.model);
   if (!pricing) return undefined;
+  const inputTokens = usage.inputTokens + (usage.subAgentInputTokens ?? 0);
+  const outputTokens = usage.outputTokens + (usage.subAgentOutputTokens ?? 0);
   return (
-    (usage.inputTokens / 1_000_000) * pricing.inputPerMTok +
-    (usage.outputTokens / 1_000_000) * pricing.outputPerMTok
+    (inputTokens / 1_000_000) * pricing.inputPerMTok +
+    (outputTokens / 1_000_000) * pricing.outputPerMTok
   );
 }

@@ -1,6 +1,7 @@
 ---
 id: vscode-api
 synopsis: common pitfalls when calling VS Code APIs from the extension host
+triggers: [vscode, extension host, webview, diagnostics, workspace edit, uri]
 ---
 
 Key VS Code API conventions you should respect:

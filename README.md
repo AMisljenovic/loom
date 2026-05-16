@@ -77,6 +77,26 @@ Important settings:
 Telemetry never sends prompts, file contents, workspace paths, API keys, or raw
 machine IDs.
 
+## Project Instructions
+
+Loom automatically loads `.loomrules` from the workspace, plus provider-specific
+agent instruction files such as `CLAUDE.md` or `AGENTS.md`. See
+[`docs/loomrules.md`](docs/loomrules.md) for precedence, size limits, and
+examples.
+
+## Planning
+
+Architect mode can ask structured pre-plan questions directly in the chat. Each
+question offers concrete choices plus an `Other` text option, and Loom waits for
+answers before producing the final plan. Completed Architect plans are emitted
+as Markdown and opened in VS Code's Markdown preview for easier review.
+
+During longer sessions, Loom records a compact progress timeline in chat so you
+can follow observable work like reading files, searching, running commands, and
+writing the final response. You can also attach file or folder references from
+the composer; Loom includes capped previews or folder listings as starting
+context and reads more with tools when needed.
+
 ## Architecture
 
 ```text

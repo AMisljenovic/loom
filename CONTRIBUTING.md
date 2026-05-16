@@ -69,6 +69,19 @@ Keep commits focused. One concern per commit, one concern per PR.
   architecture changes
 - Run the relevant build or test commands locally and list them in the PR
 
+## Changing prompts
+
+Prompt changes include edits to mode prompts, output conventions, tool
+descriptions, built-in skills, sub-agent contracts, or project-rule loading.
+
+- Update `docs/prompt-changelog.md` with what changed and why.
+- Run `go -C agent run ./cmd/prompt-snapshot --out ../docs/prompt-snapshots --check`.
+- Run `npm run eval` when provider credentials are available.
+- Keep tool guidance in `agent/internal/tools/descriptions/*.md`; Go schemas
+  remain the validation source.
+- Keep shared output style in `agent/internal/prompts/_output_conventions.md`;
+  mode prompts should only add mode-specific output guidance.
+
 ## Releasing
 
 Before tagging:

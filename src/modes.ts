@@ -38,6 +38,7 @@ export const BUILTIN_MODES: ModeDefinition[] = [
             "semantic_search",
             "get_diagnostics",
             "load_skill",
+            "ask_questions",
             "spawn_subagent",
         ],
     },

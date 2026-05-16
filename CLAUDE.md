@@ -122,6 +122,11 @@ change to a message type must be made on both sides.
 - **Marketplace assets are checked in.** Use `assets/` and `media/` for VSIX
   icon/demo assets. Do not introduce generated replacements when exported
   brand files already exist.
+- **Prompt guidance is versioned and documented.** Tool descriptions live in
+  `agent/internal/tools/descriptions/*.md`, shared output rules live in
+  `agent/internal/prompts/_output_conventions.md`, and prompt behavior changes
+  must update `docs/prompt-changelog.md`. Run `npm run eval` when provider
+  credentials are available.
 
 ## Where things live
 

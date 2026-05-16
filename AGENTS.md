@@ -116,6 +116,11 @@ No test suite yet. When adding one:
     `task.done` with reason `error`.
 16. Marketplace assets live in `assets/` and `media/`. Do not regenerate them
     from code when exported brand files already exist.
+17. Tool descriptions live in `agent/internal/tools/descriptions/*.md`, not in
+    Go prose literals. Shared output conventions live in
+    `agent/internal/prompts/_output_conventions.md`. Prompt changes require
+    updating `docs/prompt-changelog.md` and running `npm run eval` when
+    provider credentials are available.
 
 ## Pre-commit hook
 

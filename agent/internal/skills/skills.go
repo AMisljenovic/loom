@@ -33,6 +33,7 @@ var builtinFS embed.FS
 type Skill struct {
 	ID       string
 	Synopsis string
+	Triggers []string // optional: topics that suggest loading the skill
 	Body     string
 	Source   string // "builtin" or workspace-relative path
 }
@@ -99,8 +100,9 @@ func Load(workspaceRoot string) Catalogue {
 	return cat
 }
 
-// CatalogueLines returns the "id: synopsis" lines for the prompt prefix in
-// stable (sorted) order.
+// CatalogueLines returns the "id: synopsis [triggers: a, b]" lines for the
+// prompt prefix in stable (sorted) order. Triggers are appended only when
+// present so existing skills without them render unchanged.
 func (c Catalogue) CatalogueLines() []string {
 	out := make([]string, 0, len(c.Order))
 	for _, id := range c.Order {
@@ -109,7 +111,11 @@ func (c Catalogue) CatalogueLines() []string {
 		if synopsis == "" {
 			synopsis = "(no synopsis)"
 		}
-		out = append(out, fmt.Sprintf("- %s: %s", id, synopsis))
+		line := fmt.Sprintf("- %s: %s", id, synopsis)
+		if len(s.Triggers) > 0 {
+			line += fmt.Sprintf(" [triggers: %s]", strings.Join(s.Triggers, ", "))
+		}
+		out = append(out, line)
 	}
 	return out
 }
@@ -159,6 +165,7 @@ func parseSkill(text, source string) (Skill, bool) {
 	body := strings.TrimLeft(rest[end+len(delim):], "\r\n")
 
 	var id, synopsis string
+	var triggers []string
 	for _, line := range strings.Split(frontMatter, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -175,10 +182,36 @@ func parseSkill(text, source string) (Skill, bool) {
 			id = val
 		case "synopsis":
 			synopsis = val
+		case "triggers":
+			triggers = parseTriggers(val)
 		}
 	}
 	if id == "" {
 		return Skill{}, false
 	}
-	return Skill{ID: id, Synopsis: synopsis, Body: body, Source: source}, true
+	return Skill{ID: id, Synopsis: synopsis, Triggers: triggers, Body: body, Source: source}, true
+}
+
+// parseTriggers accepts either a bracketed list (`[a, b, c]`) or a plain
+// comma-separated value (`a, b, c`). Whitespace is trimmed and empty entries
+// dropped.
+func parseTriggers(val string) []string {
+	v := strings.TrimSpace(val)
+	v = strings.TrimPrefix(v, "[")
+	v = strings.TrimSuffix(v, "]")
+	if v == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		t := strings.TrimSpace(p)
+		if t != "" {
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

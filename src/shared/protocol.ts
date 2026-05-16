@@ -71,6 +71,7 @@ export interface TaskStartParams {
   workspaceRoot: string;
   cwd: string;
   mode?: ModeDefinition;
+  references?: ReferenceAttachment[];
 }
 
 export interface MessageDelta {
@@ -89,6 +90,52 @@ export interface ToolCall {
     task: string;
   };
 }
+
+export type QuestionKind = "single" | "multiple";
+
+export interface QuestionOption {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+export interface QuestionSpec {
+  id: string;
+  question: string;
+  kind: QuestionKind;
+  options: QuestionOption[];
+}
+
+export interface AskQuestionsInput {
+  title?: string;
+  questions: QuestionSpec[];
+}
+
+export interface QuestionAnswer {
+  questionId: string;
+  selectedOptionIds: string[];
+  otherText?: string;
+}
+
+export type ReferenceKind = "file" | "folder";
+
+export interface ReferenceAttachment {
+  id: string;
+  kind: ReferenceKind;
+  path: string;
+  label?: string;
+}
+
+export type ProgressPhase =
+  | "started"
+  | "reading"
+  | "searching"
+  | "changing"
+  | "executing"
+  | "researching"
+  | "waiting"
+  | "writing"
+  | "completed";
 
 // Categories used by the granular auto-approve UI. Tools belong to exactly
 // one category (see src/approval/categories.ts). MCP tools are bucketed
@@ -199,6 +246,7 @@ export interface TaskUsage extends TokenUsage {
   subAgentOutputTokens?: number;
   subAgentCount?: number;
   model: string;
+  promptVersion?: string;
 }
 
 export interface SubAgentSpawn {
@@ -206,6 +254,7 @@ export interface SubAgentSpawn {
   subTaskId: string;
   type: string;
   task: string;
+  promptVersion?: string;
 }
 
 export interface SubAgentDone {
@@ -240,6 +289,7 @@ export interface ConversationUsage {
   subAgentOutputTokens?: number;
   subAgentCount?: number;
   model?: string;
+  promptVersion?: string;
 }
 
 export interface ConversationState {
@@ -281,8 +331,9 @@ export interface TaskSummarized {
 export type ToolStatus = "pending" | "approved" | "rejected" | "running" | "done" | "error";
 
 export type Msg =
-  | { role: "user"; text: string }
+  | { role: "user"; text: string; references?: ReferenceAttachment[] }
   | { role: "assistant"; text: string }
+  | { role: "progress"; text: string; phase: ProgressPhase; createdAt: number }
   | {
     role: "tool";
     name: string;
@@ -292,6 +343,14 @@ export type Msg =
     output?: string;
     durationMs?: number;
     expanded?: boolean;
+  }
+  | {
+    role: "question";
+    callId: string;
+    title?: string;
+    questions: QuestionSpec[];
+    status: "pending" | "answered" | "cancelled";
+    answers?: QuestionAnswer[];
   }
   | {
     role: "subagent";
@@ -329,8 +388,10 @@ export interface SessionsIndex {
 
 export type WebviewToHost =
   | { type: "ready" }
-  | { type: "submit"; prompt: string; modeId?: string }
+  | { type: "submit"; prompt: string; modeId?: string; references?: ReferenceAttachment[] }
   | { type: "cancel" }
+  | { type: "pickReferences"; existing?: ReferenceAttachment[] }
+  | { type: "referenceSearch"; requestId: string; query: string; existing?: ReferenceAttachment[] }
   | { type: "newConversation" }
   | { type: "switchSession"; conversationId: string }
   | { type: "archiveSession"; conversationId: string }
@@ -342,6 +403,7 @@ export type WebviewToHost =
   | { type: "setSecret"; provider: Exclude<LlmProvider, "local">; apiKey: string }
   | { type: "completeFirstRun" }
   | { type: "approve"; callId: CallId; approved: boolean; rememberRule?: AlwaysAllowRule; sessionCount?: number; autoApproveCategory?: AutoApproveCategory }
+  | { type: "answerQuestions"; callId: CallId; answers: QuestionAnswer[] }
   | { type: "setAutoApprove"; config: AutoApproveConfig }
   | { type: "removeAlwaysAllowRule"; id: string }
   | { type: "requestAlwaysAllowList" }
@@ -350,10 +412,13 @@ export type WebviewToHost =
 
 export type HostToWebview =
   | { type: "delta"; text: string }
+  | { type: "progress"; text: string; phase: ProgressPhase; createdAt: number }
   | { type: "toolCall"; call: ToolCall }
   | { type: "diffPreview"; callId: CallId; relPath: string; unified: string }
   | { type: "toolProgress"; callId: CallId; chunk: string }
   | { type: "toolResult"; callId: CallId; ok: boolean; summary: string; durationMs: number }
+  | { type: "questionRequest"; callId: CallId; request: AskQuestionsInput }
+  | { type: "questionAnswered"; callId: CallId; answers: QuestionAnswer[] }
   | { type: "subagentSpawn"; parentTaskId: string; subTaskId: string; subagentType: string; task: string }
   | { type: "subagentDelta"; subTaskId: string; text: string }
   | { type: "subagentToolCall"; subTaskId: string; call: ToolCall }
@@ -381,6 +446,10 @@ export type HostToWebview =
   | { type: "indexStatus"; status: IndexStatusNotify }
   | { type: "sessions"; index: SessionsIndex }
   | { type: "summarized"; droppedCount: number }
+  | { type: "planReady" }
+  | { type: "referencesPicked"; references: ReferenceAttachment[] }
+  | { type: "referenceSuggestions"; requestId: string; query: string; suggestions: ReferenceAttachment[] }
+  | { type: "referencePickError"; error: string }
   | { type: "error"; error: string }
   | { type: "modes"; modes: ModeDefinition[]; currentModeId: string }
   | { type: "modeAutoChanged"; modeId: string; label: string; prompt?: string }

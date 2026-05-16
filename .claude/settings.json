@@ -31,7 +31,9 @@
       "Bash(wc -l \"C:\\\\\\\\Projects\\\\\\\\loom\\\\\\\\loom-design\\\\\\\\styles.css\")",
       "Bash(grep -n \"class\\\\|function\\\\|const.*=\" \"C:\\\\\\\\Projects\\\\\\\\loom\\\\\\\\loom-design\\\\\\\\panel.jsx\")",
       "Bash(grep -o \"tc-head[^}]\\\\{0,300\\\\}}\" c:/Projects/loom/dist/webview/assets/index.css)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(go run *)",
+      "Bash(awk '/^# Safety/,/^# Output/' __TRACKED_VAR__.md)"
     ],
     "deny": [
       "Bash(rm -rf:*)",

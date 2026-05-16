@@ -58,6 +58,7 @@ type StartParams struct {
 	WorkspaceRoot  string          `json:"workspaceRoot"`
 	CWD            string          `json:"cwd"`
 	Mode           *ModeDefinition `json:"mode,omitempty"`
+	References     []Reference     `json:"references,omitempty"`
 }
 
 func (d *Driver) Run(ctx context.Context, p StartParams) error {
@@ -85,7 +86,7 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 	}
 	registry := opts.Registry
 	if registry == nil {
-		registry = applyMode(d.registry(), p.Mode)
+		registry = ApplyMode(d.registry(), p.Mode)
 	}
 	toolDefs := buildToolDefs(registry)
 
@@ -107,10 +108,21 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 	defer entry.Unlock()
 	entry.RulesHash = rulesBundle.Hash
 
-	entry.Append(llm.Message{Role: llm.RoleUser, Content: p.Prompt})
+	userPrompt := p.Prompt
+	referenceBlock, err := RenderReferences(p.WorkspaceRoot, p.References)
+	if err != nil {
+		return err
+	}
+	if referenceBlock != "" {
+		if strings.TrimSpace(userPrompt) == "" {
+			userPrompt = "Use the attached references."
+		}
+		userPrompt = strings.TrimSpace(userPrompt) + "\n\n" + referenceBlock
+	}
+	entry.Append(llm.Message{Role: llm.RoleUser, Content: userPrompt})
 	d.notifyConversationUpdated(p.ConversationID, entry)
 
-	stableSystem := buildStableSystem(p.Mode, registry, skillsCatalogue, Presets())
+	stableSystem := BuildStableSystem(p.Mode, registry, skillsCatalogue, Presets())
 
 	done := func(reason string) {
 		d.Conn.Notify("task.done", map[string]any{
@@ -131,7 +143,7 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 		// Volatile system tail rebuilt each turn so loaded-skill bodies
 		// flow in immediately after the model calls load_skill. The cached
 		// stable prefix is unaffected.
-		volatileSystem := buildVolatileSystem(p.WorkspaceRoot, skillsCatalogue, entry.LoadedSkills, rulesBundle)
+		volatileSystem := BuildVolatileSystem(p.WorkspaceRoot, skillsCatalogue, entry.LoadedSkills, rulesBundle)
 		sysPrompt := llm.SystemPrompt{Stable: stableSystem, Volatile: volatileSystem}
 		if err := d.maybeSummarize(ctx, p.TaskID, p.ConversationID, sysPrompt.String(), entry); err != nil {
 			if ctx.Err() != nil {
@@ -306,6 +318,7 @@ func (d *Driver) notifyUsage(taskID string, entry *conversation.Entry, usage llm
 		"subAgentOutputTokens": subOutput,
 		"subAgentCount":        subCount,
 		"model":                d.LLM.Model(),
+		"promptVersion":        agentprompts.PROMPT_VERSION,
 	})
 }
 
@@ -516,10 +529,11 @@ func (d *Driver) execSpawnSubAgent(ctx context.Context, parentTaskID, parentConv
 	defer cancel()
 
 	_ = d.Conn.Notify("subagent.spawn", map[string]any{
-		"parentTaskId": parentTaskID,
-		"subTaskId":    subTaskID,
-		"type":         preset.Name,
-		"task":         in.Task,
+		"parentTaskId":  parentTaskID,
+		"subTaskId":     subTaskID,
+		"type":          preset.Name,
+		"task":          in.Task,
+		"promptVersion": agentprompts.PROMPT_VERSION,
 	})
 
 	subRegistry := filterToolsByAllowlist(d.registry(), preset.AllowedTools)
@@ -910,11 +924,11 @@ func buildToolDefs(registry []tools.Tool) []llm.ToolDef {
 	return defs
 }
 
-// applyMode filters the registry according to the mode's allowlist or denylist.
+// ApplyMode filters the registry according to the mode's allowlist or denylist.
 // A non-nil ToolAllowlist (even if empty) restricts tools to only those listed.
 // A non-empty ToolDenylist removes the named tools.
 // nil mode returns the registry unchanged.
-func applyMode(registry []tools.Tool, mode *ModeDefinition) []tools.Tool {
+func ApplyMode(registry []tools.Tool, mode *ModeDefinition) []tools.Tool {
 	if mode == nil {
 		return registry
 	}
@@ -947,24 +961,36 @@ func applyMode(registry []tools.Tool, mode *ModeDefinition) []tools.Tool {
 	return registry
 }
 
-// buildStableSystem returns the cache-friendly prefix of the system prompt:
-// mode base prompt, tool catalogue, skills catalogue. Byte-identical across
-// turns for a given (mode, registry, skills) tuple.
+// BuildStableSystem returns the cache-friendly prefix of the system prompt:
+// mode base prompt, shared output conventions, tool catalogue + per-tool
+// details, skills catalogue. Byte-identical across turns for a given
+// (mode, registry, skills) tuple.
 //
-//	[A] mode base prompt
-//	[B] tool catalogue
-//	[C] skills catalogue
+//	[A]  mode base prompt
+//	[A'] shared output conventions
+//	[B]  tool catalogue (one-liners)
+//	[B'] per-tool description bodies
+//	[C]  skills catalogue
 //
 // The provider places its cache_control breakpoint at the end of this block.
-func buildStableSystem(mode *ModeDefinition, registry []tools.Tool, cat skills.Catalogue, presets []Preset) string {
+func BuildStableSystem(mode *ModeDefinition, registry []tools.Tool, cat skills.Catalogue, presets []Preset) string {
 	base := loadModeBase(mode)
 	var b strings.Builder
 	b.WriteString(strings.TrimRight(base, "\n"))
 	b.WriteString("\n\n")
+	if conv := strings.TrimSpace(agentprompts.OutputConventions()); conv != "" {
+		b.WriteString(conv)
+		b.WriteString("\n\n")
+	}
 	if len(registry) > 0 {
 		b.WriteString("Available tools:\n")
 		for _, t := range registry {
 			fmt.Fprintf(&b, "- %s: %s\n", t.Name, t.Description)
+		}
+		if bodies := tools.DescriptionBodies(registry); bodies != "" {
+			b.WriteString("\n## Tool details\n")
+			b.WriteString(bodies)
+			b.WriteString("\n")
 		}
 	} else {
 		b.WriteString("No tools are available in this mode.\n")
@@ -994,7 +1020,7 @@ func hasTool(registry []tools.Tool, name string) bool {
 	return false
 }
 
-// buildVolatileSystem returns the part of the system prompt that may change
+// BuildVolatileSystem returns the part of the system prompt that may change
 // turn-to-turn: workspace path, loaded-skill bodies, project rules.
 //
 //	[D] workspace block
@@ -1003,7 +1029,7 @@ func hasTool(registry []tools.Tool, name string) bool {
 //
 // Anything here sits *after* the provider's cache breakpoint, so changes do
 // not invalidate the cached prefix.
-func buildVolatileSystem(workspaceRoot string, cat skills.Catalogue, loadedSkills []string, bundle rules.Bundle) string {
+func BuildVolatileSystem(workspaceRoot string, cat skills.Catalogue, loadedSkills []string, bundle rules.Bundle) string {
 	var b strings.Builder
 	if workspaceRoot != "" {
 		fmt.Fprintf(&b, "Workspace root: %s\n", workspaceRoot)

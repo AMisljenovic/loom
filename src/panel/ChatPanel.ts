@@ -10,8 +10,11 @@ import { resolveMcpConfig } from "../mcpConfig";
 import { BUILTIN_MODES, mergeModes } from "../modes";
 import { secretKeyFor } from "../secrets";
 import { detectModeSwitchIntent } from "../shared/modeIntent";
+import { extractProposedPlan } from "../shared/plans";
+import { progressKey, shouldAppendProgress } from "../shared/progress";
 import type {
   AlwaysAllowRule,
+  AskQuestionsInput,
   AutoApproveCategory,
   AutoApproveConfig,
   ConversationState,
@@ -24,7 +27,10 @@ import type {
   McpServerStatus,
   ModeDefinition,
   Msg,
+  ProgressPhase,
+  QuestionAnswer,
   ReasoningEffort,
+  ReferenceAttachment,
   SessionMeta,
   SessionsIndex,
   SubAgentDone,
@@ -37,6 +43,17 @@ import type {
   ToolResult,
   WebviewToHost,
 } from "../shared/protocol";
+import {
+  formatQuestionToolResult,
+  normalizeAskQuestionsInput,
+  normalizeQuestionAnswers,
+} from "../shared/questions";
+import {
+  mergeReferenceAttachments,
+  normalizeReferenceAttachments,
+  referenceId,
+  referenceLabel,
+} from "../shared/references";
 import {
   cachePreparedApplyDiff,
   discardPreparedApplyDiff,
@@ -83,12 +100,21 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private busy = false;
   private queuedPrompt?: string;
   private queuedModeId?: string;
+  private queuedReferences?: ReferenceAttachment[];
   private assistantIndex: number | null = null;
   private hydratedConversationId?: string;
   private webviewMessageQueue: Promise<void> = Promise.resolve();
   private readonly output: vscode.OutputChannel;
   private activeSubAgents = new Map<string, { parentTaskId: string; type: string; task: string }>();
   private toolCallTasks = new Map<string, string>();
+  private pendingQuestions = new Map<string, {
+    request: AskQuestionsInput;
+    resolve: (result: ToolResult) => void;
+  }>();
+  private activeTaskModeId?: string;
+  private activeProgressKeys = new Set<string>();
+  private activeTaskSawDelta = false;
+  private refIndex?: { files: string[]; folders: string[]; stamp: number };
 
   constructor(private readonly ctx: vscode.ExtensionContext) {
     this.output = vscode.window.createOutputChannel("Loom");
@@ -112,6 +138,11 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     watcher.onDidChange(() => this.configureMcpSoon(), this, this.ctx.subscriptions);
     watcher.onDidDelete(() => this.configureMcpSoon(), this, this.ctx.subscriptions);
     this.ctx.subscriptions.push(watcher);
+    this.ctx.subscriptions.push(
+      vscode.workspace.onDidCreateFiles(() => { this.refIndex = undefined; }),
+      vscode.workspace.onDidDeleteFiles(() => { this.refIndex = undefined; }),
+      vscode.workspace.onDidRenameFiles(() => { this.refIndex = undefined; }),
+    );
   }
 
   resolveWebviewView(view: vscode.WebviewView) {
@@ -135,6 +166,157 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage(msg);
   }
 
+  private emitProgress(phase: ProgressPhase, text: string) {
+    const clean = text.trim();
+    if (!clean || !shouldAppendProgress(this.state.messages, phase, clean)) {
+      return;
+    }
+    const key = progressKey(phase, clean);
+    if (this.activeProgressKeys.has(key)) {
+      return;
+    }
+    this.activeProgressKeys.add(key);
+    this.post({ type: "progress", phase, text: clean, createdAt: Date.now() });
+  }
+
+  private emitProgressForTool(call: ToolCall) {
+    const detail = toolProgressDetail(call);
+    switch (call.name) {
+      case "read_file":
+      case "list_dir":
+      case "get_diagnostics":
+      case "load_skill":
+      case "find_symbol":
+      case "find_references":
+      case "semantic_search":
+        this.emitProgress("reading", detail);
+        break;
+      case "search":
+        this.emitProgress("searching", detail);
+        break;
+      case "apply_diff":
+        this.emitProgress(call.requiresApproval ? "waiting" : "changing", detail);
+        break;
+      case "run_command":
+      case "run_command_background":
+      case "read_process_output":
+      case "kill_process":
+        this.emitProgress(call.requiresApproval ? "waiting" : "executing", detail);
+        break;
+      case "spawn_subagent":
+        this.emitProgress("researching", detail);
+        break;
+      default:
+        this.emitProgress("reading", detail);
+    }
+  }
+
+  private async buildRefIndex(): Promise<void> {
+    const exclude = "**/{.git,node_modules,dist,bin,.loom}/**";
+    const uris = await vscode.workspace.findFiles("**/*", exclude, 5000);
+    const files: string[] = [];
+    const folderSet = new Set<string>();
+    for (const uri of uris) {
+      const rel = this.workspaceRelativePath(uri.fsPath);
+      if (rel && rel !== ".") {
+        files.push(rel);
+        const parts = rel.split("/");
+        for (let i = 1; i < parts.length; i++) {
+          folderSet.add(parts.slice(0, i).join("/"));
+        }
+      }
+    }
+    this.refIndex = { files, folders: [...folderSet], stamp: Date.now() };
+  }
+
+  private searchRef(query: string, existing: ReferenceAttachment[]): ReferenceAttachment[] {
+    if (!this.refIndex) return [];
+    const existingIds = new Set(existing.map((r) => r.id));
+    const q = query.toLowerCase();
+    const score = (p: string): number => {
+      const base = (p.split("/").pop() ?? "").toLowerCase();
+      const pl = p.toLowerCase();
+      if (base === q) return 3;
+      if (base.startsWith(q)) return 2;
+      if (base.includes(q)) return 1;
+      if (pl.includes(q)) return 0;
+      return -1;
+    };
+    const candidates: Array<{ kind: "file" | "folder"; path: string; sc: number }> = [];
+    for (const f of this.refIndex.files) {
+      const sc = score(f);
+      if (sc >= 0) candidates.push({ kind: "file", path: f, sc });
+    }
+    for (const d of this.refIndex.folders) {
+      const sc = score(d);
+      if (sc >= 0) candidates.push({ kind: "folder", path: d, sc });
+    }
+    candidates.sort((a, b) => b.sc - a.sc);
+    const results: ReferenceAttachment[] = [];
+    for (const c of candidates) {
+      if (results.length >= 10) break;
+      const id = referenceId(c.kind, c.path);
+      if (existingIds.has(id)) continue;
+      results.push({ id, kind: c.kind, path: c.path, label: referenceLabel(c.path) });
+    }
+    return results;
+  }
+
+  private async pickReferences(existing: ReferenceAttachment[] | undefined) {
+    const workspaceRoot = this.workspaceRoot();
+    if (!workspaceRoot) {
+      this.post({ type: "referencePickError", error: "Open a workspace before adding references." }, false);
+      return;
+    }
+    const picked = await vscode.window.showOpenDialog({
+      canSelectFiles: true,
+      canSelectFolders: true,
+      canSelectMany: true,
+      defaultUri: vscode.Uri.file(workspaceRoot),
+      openLabel: "Add references",
+      title: "Add Loom references",
+    });
+    if (!picked || picked.length === 0) {
+      return;
+    }
+    const added: ReferenceAttachment[] = [];
+    for (const uri of picked) {
+      const rel = this.workspaceRelativePath(uri.fsPath);
+      if (!rel) {
+        this.post({ type: "referencePickError", error: `${uri.fsPath} is outside the workspace.` }, false);
+        continue;
+      }
+      try {
+        const stat = await vscode.workspace.fs.stat(uri);
+        const kind: ReferenceAttachment["kind"] = stat.type & vscode.FileType.Directory ? "folder" : "file";
+        added.push({
+          id: referenceId(kind, rel),
+          kind,
+          path: rel,
+          label: referenceLabel(rel),
+        });
+      } catch (e: unknown) {
+        this.post({ type: "referencePickError", error: e instanceof Error ? e.message : String(e) }, false);
+      }
+    }
+    const references = mergeReferenceAttachments(normalizeReferenceAttachments(existing), added);
+    this.post({ type: "referencesPicked", references }, false);
+  }
+
+  private workspaceRelativePath(fsPath: string): string | undefined {
+    const workspaceRoot = this.workspaceRoot();
+    if (!workspaceRoot) {
+      return undefined;
+    }
+    const rootAbs = path.resolve(workspaceRoot);
+    const full = path.resolve(fsPath);
+    if (full !== rootAbs && !full.startsWith(rootAbs + path.sep)) {
+      return undefined;
+    }
+    const rel = path.relative(rootAbs, full).split(path.sep).join("/") || ".";
+    return rel.startsWith("..") ? undefined : rel;
+  }
+
   private async onWebviewMessage(m: WebviewToHost) {
     if (m.type === "ready") {
       await this.restoreWebview();
@@ -142,18 +324,28 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       if (this.busy) {
         this.queuedPrompt = m.prompt;
         this.queuedModeId = this.validModeId(m.modeId) ? m.modeId : undefined;
+        this.queuedReferences = normalizeReferenceAttachments(m.references);
         if (this.activeTaskId) {
           await this.agent?.cancel(this.activeTaskId);
         }
         return;
       }
-      await this.runTask(m.prompt, m.modeId);
+      await this.runTask(m.prompt, m.modeId, m.references);
     } else if (m.type === "cancel") {
+      this.cancelPendingQuestions();
       if (this.activeTaskId) {
         await this.agent?.cancel(this.activeTaskId);
       }
     } else if (m.type === "newConversation") {
       await this.newConversation();
+    } else if (m.type === "pickReferences") {
+      await this.pickReferences(m.existing);
+    } else if (m.type === "referenceSearch") {
+      if (!this.refIndex) {
+        await this.buildRefIndex();
+      }
+      const suggestions = this.searchRef(m.query, m.existing ?? []);
+      this.post({ type: "referenceSuggestions", requestId: m.requestId, query: m.query, suggestions }, false);
     } else if (m.type === "switchSession") {
       await this.switchSession(m.conversationId);
     } else if (m.type === "archiveSession") {
@@ -193,6 +385,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       this.pendingApprovals.get(m.callId)?.(m.approved);
       this.pendingApprovals.delete(m.callId);
       this.pendingApprovalCalls.delete(m.callId);
+    } else if (m.type === "answerQuestions") {
+      this.answerQuestions(m.callId, m.answers);
     } else if (m.type === "setAutoApprove") {
       this.autoApprove = normalizeAutoApprove(m.config);
       this.schedulePersist();
@@ -212,14 +406,15 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     }
   }
 
-  private async runTask(prompt: string, requestedModeId?: string) {
+  private async runTask(prompt: string, requestedModeId?: string, references?: ReferenceAttachment[]) {
+    const taskReferences = normalizeReferenceAttachments(references);
     if (this.validModeId(requestedModeId)) {
       this.currentModeId = requestedModeId;
       this.schedulePersist();
       this.postModes();
     }
     const preparedPrompt = await this.applyModeIntent(prompt);
-    if (!preparedPrompt) {
+    if (preparedPrompt === undefined) {
       return;
     }
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
@@ -229,10 +424,14 @@ export class ChatPanel implements vscode.WebviewViewProvider {
 
     const taskId = randomUUID();
     this.activeTaskId = taskId;
+    this.activeTaskModeId = this.currentModeId;
+    this.activeProgressKeys.clear();
+    this.activeTaskSawDelta = false;
     this.busy = true;
-    this.state.messages.push({ role: "user", text: preparedPrompt });
+    this.state.messages.push({ role: "user", text: preparedPrompt, references: taskReferences });
     this.assistantIndex = null;
     this.schedulePersist();
+    this.emitProgress("started", `Started ${activeModeLabel(this.currentModeId, this.getModes())} task.`);
 
     try {
       const modes = this.getModes();
@@ -244,9 +443,11 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         workspaceRoot,
         cwd: workspaceRoot,
         mode: activeMode,
+        references: taskReferences,
       });
     } catch (e: unknown) {
       this.activeTaskId = undefined;
+      this.activeTaskModeId = undefined;
       this.busy = false;
       this.post({ type: "error", error: e instanceof Error ? e.message : String(e) });
     }
@@ -308,6 +509,10 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         if (this.activeSubAgents.has(taskId)) {
           this.post({ type: "subagentDelta", subTaskId: taskId, text });
         } else {
+          if (!this.activeTaskSawDelta && text.trim()) {
+            this.activeTaskSawDelta = true;
+            this.emitProgress("writing", "Writing the response.");
+          }
           this.post({ type: "delta", text });
         }
       },
@@ -318,6 +523,9 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         this.routeToolResult(result);
       },
       onToolCall: async (call: ToolCall) => {
+        if (call.name === "ask_questions") {
+          return this.handleAskQuestions(call);
+        }
         this.toolStartTimes.set(call.callId, Date.now());
         if (call.requiresApproval) {
           if (this.isApprovedByHostPolicy(call)) {
@@ -418,6 +626,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       subagentType: spawn.type,
       task: spawn.task,
     });
+    this.emitProgress("researching", `Started research: ${trimProgressDetail(spawn.task)}`);
   }
 
   private handleSubAgentDone(done: SubAgentDone) {
@@ -433,6 +642,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       truncated: done.truncated,
     });
     this.activeSubAgents.delete(done.subTaskId);
+    this.emitProgress("researching", `Research ${done.status}: ${trimProgressDetail(done.summary || done.subTaskId)}`);
   }
 
   private routeToolCall(call: ToolCall) {
@@ -447,6 +657,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       });
       return;
     }
+    this.emitProgressForTool(call);
     this.post({ type: "toolCall", call });
   }
 
@@ -485,22 +696,97 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     });
   }
 
+  private async handleAskQuestions(call: ToolCall): Promise<ToolResult> {
+    this.toolStartTimes.set(call.callId, Date.now());
+    this.toolCallTasks.set(call.callId, call.taskId);
+    let request: AskQuestionsInput;
+    try {
+      request = normalizeAskQuestionsInput(call.input);
+    } catch (e: unknown) {
+      const result = this.failedToolResult(call.callId, e);
+      result.durationMs = this.finishToolTiming(call.callId);
+      this.toolCallTasks.delete(call.callId);
+      return result;
+    }
+    this.emitProgress("waiting", request.title ? `Waiting for answers: ${request.title}` : "Waiting for answers.");
+    this.post({ type: "questionRequest", callId: call.callId, request });
+    return new Promise<ToolResult>((resolve) => {
+      this.pendingQuestions.set(call.callId, { request, resolve });
+    });
+  }
+
+  private answerQuestions(callId: string, answers: QuestionAnswer[]) {
+    const pending = this.pendingQuestions.get(callId);
+    if (!pending) {
+      return;
+    }
+    let normalized: QuestionAnswer[];
+    try {
+      normalized = normalizeQuestionAnswers(pending.request, answers);
+    } catch (e: unknown) {
+      const error = e instanceof Error ? e.message : String(e);
+      this.post({ type: "error", error });
+      this.pendingQuestions.delete(callId);
+      this.toolCallTasks.delete(callId);
+      pending.resolve({ callId, ok: false, error, durationMs: this.finishToolTiming(callId) });
+      return;
+    }
+    this.pendingQuestions.delete(callId);
+    this.toolCallTasks.delete(callId);
+    this.post({ type: "questionAnswered", callId, answers: normalized });
+    pending.resolve({
+      callId,
+      ok: true,
+      content: formatQuestionToolResult(pending.request, normalized),
+      durationMs: this.finishToolTiming(callId),
+    });
+  }
+
+  private cancelPendingQuestions() {
+    for (const [callId, pending] of this.pendingQuestions) {
+      pending.resolve({
+        callId,
+        ok: false,
+        error: "cancelled",
+        durationMs: this.finishToolTiming(callId),
+      });
+    }
+    this.pendingQuestions.clear();
+  }
+
   private async handleDone({ taskId, reason }: TaskDone) {
     if (this.activeSubAgents.has(taskId)) {
       return;
     }
+    if (reason !== "completed") {
+      this.cancelPendingQuestions();
+    }
+    if (reason === "completed" && this.activeTaskModeId === "architect") {
+      const assistant = this.assistantIndex === null ? undefined : this.state.messages[this.assistantIndex];
+      if (assistant?.role === "assistant") {
+        const plan = extractProposedPlan(assistant.text);
+        if (plan) {
+          this.post({ type: "planReady" }, false);
+          void this.openPlanPreview(plan.markdown);
+        }
+      }
+    }
     this.post({ type: "done", reason });
+    this.emitProgress("completed", reason === "completed" ? "Task completed." : `Task ${reason}.`);
     if (this.activeTaskId === taskId) {
       this.activeTaskId = undefined;
     }
+    this.activeTaskModeId = undefined;
     this.busy = false;
 
     const next = this.queuedPrompt;
     const nextModeId = this.queuedModeId;
+    const nextReferences = this.queuedReferences;
     this.queuedPrompt = undefined;
     this.queuedModeId = undefined;
-    if (next && reason === "cancelled") {
-      await this.runTask(next, nextModeId);
+    this.queuedReferences = undefined;
+    if (next) {
+      await this.runTask(next, nextModeId, nextReferences);
     }
   }
 
@@ -514,6 +800,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
           subAgentOutputTokens: usage.subAgentOutputTokens,
           subAgentCount: usage.subAgentCount,
           model: usage.model,
+          promptVersion: usage.promptVersion,
         },
       });
       return;
@@ -528,6 +815,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         subAgentOutputTokens: usage.subAgentOutputTokens,
         subAgentCount: usage.subAgentCount,
         model: usage.model,
+        promptVersion: usage.promptVersion,
       },
     });
   }
@@ -542,6 +830,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       outputTokens: update.cumulativeOutput,
       cacheReadTokens: update.cumulativeCacheRead,
       model: update.model,
+      promptVersion: this.state.usage.promptVersion,
     };
     this.state.lastInputTokens = update.lastInputTokens;
     this.state.lastOutputTokens = update.lastOutputTokens;
@@ -562,10 +851,13 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.assistantIndex = null;
     this.pendingApprovals.clear();
     this.pendingApprovalCalls.clear();
+    this.cancelPendingQuestions();
     this.sessionBulkCounters.clear();
     this.toolStartTimes.clear();
     this.toolCallTasks.clear();
     this.activeSubAgents.clear();
+    this.activeProgressKeys.clear();
+    this.queuedReferences = undefined;
     this.persistNow();
     await this.restoreWebview();
     this.postSessions();
@@ -593,10 +885,13 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.assistantIndex = null;
     this.pendingApprovals.clear();
     this.pendingApprovalCalls.clear();
+    this.cancelPendingQuestions();
     this.sessionBulkCounters.clear();
     this.toolStartTimes.clear();
     this.toolCallTasks.clear();
     this.activeSubAgents.clear();
+    this.activeProgressKeys.clear();
+    this.queuedReferences = undefined;
     this.persistNow();
     await this.restoreWebview();
     this.postSessions();
@@ -712,6 +1007,14 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         this.state.messages[this.assistantIndex] = { ...cur, text: cur.text + msg.text };
       }
       this.schedulePersist();
+    } else if (msg.type === "progress") {
+      this.state.messages.push({
+        role: "progress",
+        phase: msg.phase,
+        text: msg.text,
+        createdAt: msg.createdAt,
+      });
+      this.schedulePersist();
     } else if (msg.type === "toolCall") {
       this.state.messages.push({
         role: "tool",
@@ -721,6 +1024,22 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         input: msg.call.input,
         expanded: false,
       });
+      this.schedulePersist();
+    } else if (msg.type === "questionRequest") {
+      this.state.messages.push({
+        role: "question",
+        callId: msg.callId,
+        title: msg.request.title,
+        questions: msg.request.questions,
+        status: "pending",
+      });
+      this.schedulePersist();
+    } else if (msg.type === "questionAnswered") {
+      this.state.messages = updateQuestion(this.state.messages, msg.callId, (question) => ({
+        ...question,
+        status: "answered",
+        answers: msg.answers,
+      }));
       this.schedulePersist();
     } else if (msg.type === "subagentSpawn") {
       this.state.messages.push({
@@ -1080,6 +1399,18 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     await closeDiffPreview(callId);
   }
 
+  private async openPlanPreview(markdown: string) {
+    try {
+      const doc = await vscode.workspace.openTextDocument({
+        language: "markdown",
+        content: markdown,
+      });
+      await vscode.commands.executeCommand("markdown.showPreviewToSide", doc.uri);
+    } catch (e: unknown) {
+      this.post({ type: "error", error: `Could not open plan preview: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  }
+
   private async applyLlmConfig(config: Omit<LlmConfigView, "hasApiKey">) {
     const provider = this.validProvider(config.provider) ? config.provider : "anthropic";
     const settings = vscode.workspace.getConfiguration("loom");
@@ -1161,14 +1492,18 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       }
       this.post({ type: "done", reason: "cancelled" });
       this.activeTaskId = undefined;
+      this.activeTaskModeId = undefined;
       this.busy = false;
     }
     this.pendingApprovals.clear();
     this.pendingApprovalCalls.clear();
+    this.cancelPendingQuestions();
     this.sessionBulkCounters.clear();
     this.toolStartTimes.clear();
     this.toolCallTasks.clear();
     this.activeSubAgents.clear();
+    this.activeProgressKeys.clear();
+    this.queuedReferences = undefined;
     this.persistNow();
     await this.agent?.dispose();
     this.agent = undefined;
@@ -1416,6 +1751,20 @@ function updateTool(
   }
 }
 
+function updateQuestion(
+  messages: Msg[],
+  callId: string,
+  update: (question: Extract<Msg, { role: "question" }>) => Msg,
+) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const question = messages[i];
+    if (question.role === "question" && question.callId === callId) {
+      messages[i] = update(question) as Msg;
+      break;
+    }
+  }
+}
+
 function updateSubAgent(
   messages: Msg[],
   subTaskId: string,
@@ -1435,6 +1784,48 @@ function mergeToolOutput(current: string | undefined, summary: string): string {
   const trimmed = summary.trim();
   if (!trimmed || current.includes(trimmed)) return current;
   return `${current.trimEnd()}\n\n${summary}`;
+}
+
+function activeModeLabel(modeId: string, modes: ModeDefinition[]): string {
+  return modes.find((mode) => mode.id === modeId)?.label ?? modeId;
+}
+
+function toolProgressDetail(call: ToolCall): string {
+  const input = (call.input && typeof call.input === "object") ? call.input as Record<string, unknown> : {};
+  const value = firstToolString(input, ["path", "query", "command", "task", "processId", "severity"]);
+  const suffix = value ? ` ${trimProgressDetail(value)}` : "";
+  switch (call.name) {
+    case "read_file": return `Reading${suffix}.`;
+    case "list_dir": return `Listing${suffix}.`;
+    case "search": return `Searching${suffix}.`;
+    case "find_symbol": return `Finding symbol${suffix}.`;
+    case "find_references": return `Finding references${suffix}.`;
+    case "semantic_search": return `Searching semantically${suffix}.`;
+    case "get_diagnostics": return `Checking diagnostics${suffix}.`;
+    case "load_skill": return `Loading skill guidance${suffix}.`;
+    case "apply_diff": return call.requiresApproval ? `Waiting to apply changes${suffix}.` : `Applying changes${suffix}.`;
+    case "run_command": return call.requiresApproval ? `Waiting to run command${suffix}.` : `Running command${suffix}.`;
+    case "run_command_background": return call.requiresApproval ? `Waiting to start process${suffix}.` : `Starting process${suffix}.`;
+    case "read_process_output": return `Reading process output${suffix}.`;
+    case "kill_process": return call.requiresApproval ? `Waiting to stop process${suffix}.` : `Stopping process${suffix}.`;
+    case "spawn_subagent": return `Starting research${suffix}.`;
+    default: return `Using ${call.name}${suffix}.`;
+  }
+}
+
+function firstToolString(input: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = input[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function trimProgressDetail(text: string): string {
+  const cleaned = text.trim().replace(/\s+/g, " ");
+  return cleaned.length > 80 ? `${cleaned.slice(0, 77)}...` : cleaned;
 }
 
 function deriveTitleFromMessages(messages: Msg[]): string {

@@ -11,9 +11,11 @@ import type {
   McpServerStatus,
   ModeDefinition,
   Msg,
+  ReferenceAttachment,
   SessionsIndex,
   ToolStatus,
 } from "../../src/shared/protocol";
+import { mergeReferenceAttachments, normalizeReferenceAttachments } from "../../src/shared/references";
 import { AutoApprovePopover } from "./components/AutoApprovePopover";
 import { EmptyState } from "./components/EmptyState";
 import { FirstRun } from "./components/FirstRun";
@@ -46,6 +48,16 @@ function updateTool(
 ): Msg[] {
   return msgs.map((m) =>
     m.role === "tool" && m.callId === callId ? fn(m) : m
+  );
+}
+
+function updateQuestion(
+  msgs: Msg[],
+  callId: string,
+  fn: (m: Extract<Msg, { role: "question" }>) => Extract<Msg, { role: "question" }>
+): Msg[] {
+  return msgs.map((m) =>
+    m.role === "question" && m.callId === callId ? fn(m) : m
   );
 }
 
@@ -122,6 +134,17 @@ function deriveLiveTaskStatus(messages: Msg[], busy: boolean): LiveTaskStatus | 
     };
   }
 
+  const activeQuestion = [...messages]
+    .reverse()
+    .find((m): m is Extract<Msg, { role: "question" }> => m.role === "question" && m.status === "pending");
+  if (activeQuestion) {
+    return {
+      phase: "waiting",
+      label: "Waiting for answers",
+      detail: activeQuestion.title || "Clarifying questions",
+    };
+  }
+
   const last = messages[messages.length - 1];
   if (last?.role === "assistant" && last.text.trim()) {
     return {
@@ -183,10 +206,8 @@ export function App() {
   const [modes, setModes] = useState<ModeDefinition[]>([]);
   const [currentModeId, setCurrentModeId] = useState<string>("code");
   const [notice, setNotice] = useState<string | null>(null);
-  // Mode the most recent task ran under; used to surface an "Implement plan"
-  // hand-off button when an Architect-mode plan finishes cleanly.
-  const [lastTaskModeId, setLastTaskModeId] = useState<string | null>(null);
   const [planHandoffArmed, setPlanHandoffArmed] = useState(false);
+  const [references, setReferences] = useState<ReferenceAttachment[]>([]);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const assistantRef = useRef<number | null>(null);
@@ -196,11 +217,6 @@ export function App() {
   const subagentDeltaBuffersRef = useRef<Map<string, string>>(new Map());
   const subagentDeltaFrameRef = useRef<number | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
-  // Mirrors lastTaskModeId so the message-handler closure (mounted once)
-  // can read the most recent value without re-subscribing.
-  const lastTaskModeIdRef = useRef<string | null>(null);
-  useEffect(() => { lastTaskModeIdRef.current = lastTaskModeId; }, [lastTaskModeId]);
-
   const announce = (text: string) => {
     setNotice(text);
     if (noticeTimerRef.current !== null) {
@@ -326,6 +342,8 @@ export function App() {
       }
       if (m.type === "indexStatus") { setIndexStatus(m.status); return; }
       if (m.type === "sessions") { setSessions(m.index); return; }
+      if (m.type === "referencesPicked") { setReferences(normalizeReferenceAttachments(m.references)); return; }
+      if (m.type === "referencePickError") { announce(m.error || "Could not add references."); return; }
       if (m.type === "toolProgress") {
         setPendingOutputs((po) => { const np = new Map(po); np.set(m.callId, (po.get(m.callId) ?? "") + m.chunk); return np; });
       }
@@ -352,8 +370,14 @@ export function App() {
       flushSubagentDeltas();
       setMessages((prev) => {
         const next = [...prev];
-        if (m.type === "toolCall") {
+        if (m.type === "progress") {
+          next.push({ role: "progress", phase: m.phase, text: m.text, createdAt: m.createdAt });
+        } else if (m.type === "toolCall") {
           next.push({ role: "tool", name: m.call.name, status: m.call.requiresApproval ? "pending" : "approved", callId: m.call.callId, input: m.call.input, expanded: false });
+        } else if (m.type === "questionRequest") {
+          next.push({ role: "question", callId: m.callId, title: m.request?.title, questions: m.request?.questions ?? [], status: "pending" });
+        } else if (m.type === "questionAnswered") {
+          return updateQuestion(next, m.callId, (question) => ({ ...question, status: "answered", answers: m.answers }));
         } else if (m.type === "toolProgress") {
           return updateTool(next, m.callId, (tool) => ({ ...tool, status: tool.status === "approved" ? "running" : tool.status, expanded: tool.expanded ?? true }));
         } else if (m.type === "toolResult") {
@@ -404,6 +428,14 @@ export function App() {
             truncated: m.truncated,
           }));
         } else if (m.type === "done") {
+          if (m.reason !== "completed") {
+            for (let i = 0; i < next.length; i++) {
+              const item = next[i];
+              if (item.role === "question" && item.status === "pending") {
+                next[i] = { ...item, status: "cancelled" };
+              }
+            }
+          }
           if (m.reason === "cancelled" && assistantRef.current !== null) {
             const cur = next[assistantRef.current];
             if (cur?.role === "assistant" && cur.text && !cur.text.endsWith(" [interrupted]")) {
@@ -414,9 +446,8 @@ export function App() {
           interruptQueuedRef.current = false;
           setBusy(keepBusy);
           assistantRef.current = null;
-          if (!keepBusy && m.reason === "completed") {
-            setPlanHandoffArmed((prev) => prev || lastTaskModeIdRef.current === "architect");
-          }
+        } else if (m.type === "planReady") {
+          setPlanHandoffArmed(true);
         } else if (m.type === "summarized") {
           next.push({ role: "assistant", text: `Context summarized (${m.droppedCount} older messages compacted).` });
         } else if (m.type === "error") {
@@ -444,7 +475,8 @@ export function App() {
 
   const submit = () => {
     let prompt = input.trim();
-    if (!prompt) return;
+    const submitReferences = normalizeReferenceAttachments(references);
+    if (!prompt && submitReferences.length === 0) return;
     let submitModeId: string | undefined;
     for (const [slash, preset] of Object.entries(SLASH_PRESETS)) {
       if (prompt === slash || prompt.startsWith(slash + " ")) {
@@ -468,20 +500,20 @@ export function App() {
       }
       prompt = modeIntent.prompt;
     }
-    setMessages((m) => [...m, { role: "user", text: prompt }]);
+    setMessages((m) => [...m, { role: "user", text: prompt, references: submitReferences }]);
     setShowSessions(false);
     // Any new user turn dismisses the previous plan-handoff CTA.
     setPlanHandoffArmed(false);
-    setLastTaskModeId(submitModeId ?? currentModeId);
     if (busy) {
       interruptQueuedRef.current = true;
       post({ type: "cancel" });
-      post({ type: "submit", prompt, modeId: submitModeId });
+      post({ type: "submit", prompt, modeId: submitModeId, references: submitReferences });
     } else {
-      post({ type: "submit", prompt, modeId: submitModeId });
+      post({ type: "submit", prompt, modeId: submitModeId, references: submitReferences });
       setBusy(true);
     }
     setInput("");
+    setReferences([]);
   };
 
   const implementPlan = () => {
@@ -491,7 +523,6 @@ export function App() {
     const prompt = "Implement the plan above.";
     setMessages((m) => [...m, { role: "user", text: prompt }]);
     setShowSessions(false);
-    setLastTaskModeId("code");
     post({ type: "submit", prompt, modeId: "code" });
     setBusy(true);
   };
@@ -500,6 +531,7 @@ export function App() {
   const isEmpty = messages.length === 0;
   const showFirstRun = isEmpty && firstRun && (!firstRun.completed || firstRun.needsSetup);
   const liveStatus = deriveLiveTaskStatus(messages, busy);
+  const hasPendingQuestion = !busy && messages.some((m) => m.role === "question" && m.status === "pending");
 
   return (
     <div className="panel" ref={rootRef}>
@@ -553,7 +585,19 @@ export function App() {
           </button>
         </div>
       )}
-      <InputArea busy={busy} input={input} onInput={setInput} onSubmit={submit} status={liveStatus} />
+      <InputArea
+        busy={busy}
+        input={input}
+        onInput={setInput}
+        onSubmit={submit}
+        status={liveStatus}
+        references={references}
+        onAddReference={() => post({ type: "pickReferences", existing: references })}
+        onRemoveReference={(id) => setReferences((prev) => prev.filter((ref) => ref.id !== id))}
+        onDirectReference={(ref) => setReferences((prev) => mergeReferenceAttachments(normalizeReferenceAttachments(prev), [ref]))}
+        disabled={hasPendingQuestion}
+        hint={hasPendingQuestion ? "Answer the question above to continue" : undefined}
+      />
       <div style={{ position: "relative" }}>
         <Toolbar
           llmConfig={llmConfig}

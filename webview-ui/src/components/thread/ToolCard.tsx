@@ -38,11 +38,12 @@ export function ToolCard({ msg, pendingDiff, liveOutput }: ToolCardProps) {
     const inputHint = summarizeInput(msg.name, msg.input);
 
     return (
-        <div className={`tool-card tc-${statusClass}`}>
+        <div className={`tool-card tc-${statusClass}${expanded ? " open" : ""}`}>
             <button
                 className="tc-head"
                 onClick={() => setExpanded((v) => !v)}
                 aria-expanded={expanded}
+                title={inputHint ? `${msg.name}: ${inputHint}` : msg.name}
             >
                 <span className="tc-icon"><ToolIcon name={msg.name} /></span>
                 <span className="tc-name">{msg.name}</span>

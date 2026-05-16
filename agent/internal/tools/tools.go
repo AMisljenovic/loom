@@ -18,11 +18,14 @@ type Tool struct {
 	LocalExec func(workspaceRoot string, input json.RawMessage) (string, error)
 }
 
+// Registry returns the static tool set. Each tool's `Description` is overlaid
+// from `descriptions/<name>.md` at call time; a missing description file
+// panics loudly because the registry is embedded at build time and a mismatch
+// means the build is wrong.
 func Registry() []Tool {
-	return []Tool{
+	tools := []Tool{
 		{
-			Name:        "read_file",
-			Description: "Read a UTF-8 text file relative to the workspace root.",
+			Name: "read_file",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -46,8 +49,7 @@ func Registry() []Tool {
 			},
 		},
 		{
-			Name:        "list_dir",
-			Description: "List entries in a directory relative to the workspace root.",
+			Name: "list_dir",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -78,8 +80,7 @@ func Registry() []Tool {
 			},
 		},
 		{
-			Name:        "search",
-			Description: "Search the codebase with a regex query, optional relative path, include globs, and maxResults; returns path:line:snippet matches.",
+			Name: "search",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -99,8 +100,7 @@ func Registry() []Tool {
 			},
 		},
 		{
-			Name:        "get_diagnostics",
-			Description: "Get VS Code diagnostics for the whole workspace or a relative file path, filtered by severity error, warning, or all.",
+			Name: "get_diagnostics",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -112,7 +112,6 @@ func Registry() []Tool {
 		},
 		{
 			Name:             "apply_diff",
-			Description:      "Modify or create a file relative to the workspace root using edits. For existing files, provide unique oldText/newText pairs. For new files, provide one edit with empty oldText and the full file content as newText.",
 			RequiresApproval: true,
 			InputSchema: map[string]any{
 				"type": "object",
@@ -136,7 +135,6 @@ func Registry() []Tool {
 		},
 		{
 			Name:             "run_command",
-			Description:      "Run a shell command in the workspace terminal. Blocking; for long-running processes (dev servers, watchers) use run_command_background instead.",
 			RequiresApproval: true,
 			InputSchema: map[string]any{
 				"type": "object",
@@ -148,7 +146,6 @@ func Registry() []Tool {
 		},
 		{
 			Name:             "run_command_background",
-			Description:      "Start a shell command as a background process and return immediately with a processId. Use for dev servers, watchers, or anything that should outlive the turn. Read incremental output with read_process_output and terminate with kill_process.",
 			RequiresApproval: true,
 			InputSchema: map[string]any{
 				"type": "object",
@@ -160,8 +157,7 @@ func Registry() []Tool {
 			},
 		},
 		{
-			Name:        "read_process_output",
-			Description: "Read accumulated stdout/stderr from a background process started with run_command_background. Returns the chunk since the optional cursor plus a new cursor for the next read.",
+			Name: "read_process_output",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -174,7 +170,6 @@ func Registry() []Tool {
 		},
 		{
 			Name:             "kill_process",
-			Description:      "Terminate a background process started with run_command_background.",
 			RequiresApproval: true,
 			InputSchema: map[string]any{
 				"type": "object",
@@ -185,8 +180,7 @@ func Registry() []Tool {
 			},
 		},
 		{
-			Name:        "load_skill",
-			Description: "Load one or more skills by id. Each skill is a short Markdown guide for a specific topic; the skill catalogue is listed in the system prompt. Loaded skill bodies are injected into the system prompt for the rest of the conversation and inform later answers.",
+			Name: "load_skill",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -203,8 +197,42 @@ func Registry() []Tool {
 			// signature with state-mutating dependencies.
 		},
 		{
-			Name:        "spawn_subagent",
-			Description: "Delegate focused read-only research to a fresh sub-agent with isolated context. Use only for non-trivial investigation; pass explicit task, context, and optional starting files.",
+			Name: "ask_questions",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"title": map[string]any{"type": "string"},
+					"questions": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"id":       map[string]any{"type": "string"},
+								"question": map[string]any{"type": "string"},
+								"kind":     map[string]any{"type": "string", "enum": []string{"single", "multiple"}},
+								"options": map[string]any{
+									"type": "array",
+									"items": map[string]any{
+										"type": "object",
+										"properties": map[string]any{
+											"id":          map[string]any{"type": "string"},
+											"label":       map[string]any{"type": "string"},
+											"description": map[string]any{"type": "string"},
+										},
+										"required": []string{"id", "label"},
+									},
+								},
+							},
+							"required": []string{"id", "question", "kind", "options"},
+						},
+					},
+				},
+				"required": []string{"questions"},
+			},
+			// No LocalExec - executed interactively on the TS side.
+		},
+		{
+			Name: "spawn_subagent",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -222,4 +250,26 @@ func Registry() []Tool {
 			// same LLM/tool machinery while preserving isolated context.
 		},
 	}
+	if err := overlayDescriptions(tools); err != nil {
+		// Fail loud: descriptions are embedded at build time, so this can
+		// only happen if a description file was deleted without removing the
+		// tool, or the front-matter name drifted from the filename.
+		panic(fmt.Sprintf("tools: %v", err))
+	}
+	return tools
+}
+
+func overlayDescriptions(tools []Tool) error {
+	descs, err := Descriptions()
+	if err != nil {
+		return err
+	}
+	for i := range tools {
+		d, ok := descs[tools[i].Name]
+		if !ok {
+			return fmt.Errorf("missing description for %q", tools[i].Name)
+		}
+		tools[i].Description = d.Purpose
+	}
+	return nil
 }

@@ -1,6 +1,7 @@
 ---
 id: go-conventions
 synopsis: idiomatic Go conventions specific to this codebase
+triggers: [go, golang, agent, internal, .go file, gofmt, go vet]
 ---
 
 When writing Go in this repo:

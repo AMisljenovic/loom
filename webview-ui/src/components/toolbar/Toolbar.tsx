@@ -12,6 +12,7 @@ import { autoApprovePillLabel } from "../AutoApprovePopover";
 import * as Ico from "../../brand/icons";
 import { formatTokens } from "../../util/format";
 import { post } from "../../vscode";
+import { estimateCost } from "../../../../src/shared/pricing";
 
 interface ToolbarProps {
     llmConfig: LlmConfigView | null;
@@ -96,9 +97,15 @@ export function Toolbar({
             {usage && (usage.inputTokens > 0 || usage.outputTokens > 0) && (
                 <div className="token-meter" title={usageTitle(usage)}>
                     <Ico.Code size={11} />
-                    <span className="token-val">
-                        {formatTokens((usage.inputTokens + usage.outputTokens) + (usage.subAgentInputTokens ?? 0) + (usage.subAgentOutputTokens ?? 0))}
-                    </span>
+                    <span className="tm-item">in {formatTokens(totalInput(usage))}</span>
+                    <span className="tm-arrow">/</span>
+                    <span className="tm-item">out {formatTokens(totalOutput(usage))}</span>
+                    {formatCost(estimateCost(usage)) && (
+                        <>
+                            <span className="tm-arrow">/</span>
+                            <span className="tm-item">{formatCost(estimateCost(usage))}</span>
+                        </>
+                    )}
                     {usage.subAgentCount ? <span className="token-sub">+{usage.subAgentCount} research</span> : null}
                 </div>
             )}
@@ -134,11 +141,36 @@ export function Toolbar({
 }
 
 function usageTitle(usage: ConversationUsage): string {
-    const main = `Main input: ${usage.inputTokens} / output: ${usage.outputTokens}`;
     const subIn = usage.subAgentInputTokens ?? 0;
     const subOut = usage.subAgentOutputTokens ?? 0;
-    if (!subIn && !subOut) return main;
-    return `${main} / Sub-agents input: ${subIn} / output: ${subOut}`;
+    const parts = [
+        `Main input: ${usage.inputTokens}`,
+        `Main output: ${usage.outputTokens}`,
+        `Total input: ${totalInput(usage)}`,
+        `Total output: ${totalOutput(usage)}`,
+    ];
+    if (subIn || subOut) {
+        parts.push(`Sub-agents input: ${subIn}`, `Sub-agents output: ${subOut}`);
+    }
+    const cost = formatCost(estimateCost(usage));
+    if (cost) parts.push(`Estimated cost: ${cost}`);
+    if (usage.model) parts.push(`Model: ${usage.model}`);
+    if (usage.promptVersion) parts.push(`Prompt: ${usage.promptVersion}`);
+    return parts.join(" / ");
+}
+
+function totalInput(usage: ConversationUsage): number {
+    return usage.inputTokens + (usage.subAgentInputTokens ?? 0);
+}
+
+function totalOutput(usage: ConversationUsage): number {
+    return usage.outputTokens + (usage.subAgentOutputTokens ?? 0);
+}
+
+function formatCost(cost: number | undefined): string | undefined {
+    if (cost === undefined) return undefined;
+    if (cost < 0.01) return `$${cost.toFixed(4)}`;
+    return `$${cost.toFixed(2)}`;
 }
 
 function shortModel(model: string): string {

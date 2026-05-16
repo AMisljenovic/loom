@@ -85,6 +85,10 @@ newline-delimited JSON-RPC over stdio.
     `TaskRegistry.Register`. Per-turn cap is `subAgentMaxPerTurn=5`. Do not
     add custom presets, fire-and-forget orchestration, or sub-agent model
     routing without updating `SUBAGENTS.md`.
+17. Tool descriptions live in `agent/internal/tools/descriptions/*.md`, shared
+    output conventions live in `agent/internal/prompts/_output_conventions.md`,
+    and prompt changes must update `docs/prompt-changelog.md`. Run
+    `npm run eval` when provider credentials are available.
 
 ## Pre-commit hook
 

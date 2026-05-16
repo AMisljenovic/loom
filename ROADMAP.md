@@ -1,5 +1,14 @@
 # Roadmap
 
+## Current release
+
+**v0.2.0 - Prompt layer as a product surface.** Loom now has unified mode
+prompts, shared output conventions, Markdown-backed tool descriptions, an
+expanded skills catalogue, documented `.loomrules`, structured sub-agent
+briefing, prompt snapshots, a prompt changelog, and a provider-backed eval
+harness. The natural follow-up for v0.2.1 is improving eval stability from real
+dogfood runs and adding focused prompt regression cases as issues appear.
+
 A versioned plan from the current scaffold to a polished, shippable agent.
 Each iteration is sized to be a focused chunk of work — small enough to
 finish, large enough to feel like progress.
