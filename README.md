@@ -26,8 +26,6 @@ and trust inside their editor.
   instruction files, and common convention files so the agent follows the
   rules your repo already carries.
 
-For a direct positioning guide, see [Why Loom Code](docs/why-loom-code.md).
-
 ## Features
 
 **Agent modes**
