@@ -132,9 +132,13 @@ handoff:
     standard settings cascade still lets a workspace `.vscode/settings.json`
     override globals. API keys still go through VS Code SecretStorage
     via `setSecret`. Four
-    providers are exposed: `anthropic`, `openai`, `openai-compatible`
-    (Azure/OpenRouter/Groq/vLLM, distinct from `local`), and `local`. Models
-    are editable combos (curated dropdown + `Other…` text input). The
+    providers are exposed: `anthropic`, `openai`, `openai-compatible`, and
+    `local`. Picking `openai-compatible` reveals a Preset dropdown
+    (OpenRouter, Groq, Cerebras, Vercel AI Gateway, LM Studio, Generic) that
+    pre-fills Base URL and the curated model list; presets are UI-only
+    ([webview-ui/src/util/provider.ts](webview-ui/src/util/provider.ts)) and
+    still collapse to `openai-compatible` on the wire. Models are editable
+    combos (curated dropdown + `Other…` text input). The
     full-pane Settings view stores per-provider advanced options
     (max output tokens, context-window override, reasoning effort, custom
     HTTP headers) under `globalState["loom.llm.advanced"]` and ships
@@ -155,6 +159,17 @@ handoff:
     `agent/internal/prompts/_output_conventions.md`. Prompt changes require
     updating `docs/prompt-changelog.md` and running `npm run eval` when
     provider credentials are available.
+18. Project rules are auto-loaded by `agent/internal/rules/` and frozen at task
+    start. `.loomrules` is always loaded first and declared top-precedence in
+    the prompt envelope. Provider-native files come next (CLAUDE.md +
+    `.claude/rules/*.md` for Anthropic, AGENTS.md + `.codex/rules/*.md` for
+    OpenAI). When the provider's native files are absent, a universal
+    fallback chain picks up the opposite provider's files, then
+    `.github/copilot-instructions.md`, `.github/instructions/*.md`,
+    `GEMINI.md`, `.gemini/rules/*.md`, `.cursor/rules/*.md`, and
+    `.cursorrules`, so Loom respects whichever convention the workspace
+    already uses. The bundle is capped at 32 KB, deduped by content hash,
+    and lives in the volatile tail of the system prompt.
 
 ## Pre-commit hook
 

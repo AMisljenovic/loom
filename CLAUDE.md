@@ -54,9 +54,16 @@ change to a message type must be made on both sides.
 - **Rules are auto-loaded, provider-aware, task-frozen.**
   `agent/internal/rules/` reads `.loomrules` always, plus `CLAUDE.md` +
   `.claude/rules/*.md` for Anthropic or `AGENTS.md` + `.codex/rules/*.md`
-  for OpenAI. The bundle hash is captured on the conversation `Entry` at
-  task start; mid-task file edits do not invalidate the running cache.
-  Provider family is reported by `llm.Provider.Family()`.
+  for OpenAI. When the provider's native files are absent, a universal
+  fallback chain picks up the opposite provider's files, then
+  `.github/copilot-instructions.md`, `.github/instructions/*.md`,
+  `GEMINI.md`, `.gemini/rules/*.md`, `.cursor/rules/*.md`, and
+  `.cursorrules` — so Loom respects whatever convention the workspace
+  already uses without forcing duplication. `.loomrules` is always loaded
+  first and the envelope advertises it as top precedence on conflict. The
+  bundle hash is captured on the conversation `Entry` at task start;
+  mid-task file edits do not invalidate the running cache. Provider family
+  is reported by `llm.Provider.Family()`.
 - **Skills are advertised in the prefix, loaded on demand.** The catalogue
   (id + synopsis) sits in the stable prefix; bodies are injected into the
   volatile tail only after the model calls `load_skill`. Builtin skills
@@ -146,9 +153,14 @@ change to a message type must be made on both sides.
   Legacy `workspaceState` keys are migrated to `globalState` on activation.
   The webview renders the setup panel and forwards provider/key choices only.
 - **Providers are flexible.** Four providers are exposed in the UI:
-  `anthropic`, `openai`, `openai-compatible` (Azure/OpenRouter/Groq/vLLM),
-  and `local` (Ollama preset). Model fields are combo-style — a curated
-  dropdown plus an `Other…` text input so any model id can be typed. The
+  `anthropic`, `openai`, `openai-compatible`, and `local` (Ollama preset).
+  Picking `openai-compatible` reveals a Preset dropdown (OpenRouter, Groq,
+  Cerebras, Vercel AI Gateway, LM Studio, Generic) that pre-fills Base URL
+  and the curated model list; presets are a UI-only concept in
+  [webview-ui/src/util/provider.ts](webview-ui/src/util/provider.ts) — on
+  the wire every preset still collapses to `openai-compatible` with an
+  explicit BaseURL. Model fields are combo-style — a curated dropdown plus
+  an `Other…` text input so any model id can be typed. The
   full-pane Settings view
   ([webview-ui/src/components/SettingsView.tsx](webview-ui/src/components/SettingsView.tsx))
   exposes Advanced fields — max output tokens, context-window override,

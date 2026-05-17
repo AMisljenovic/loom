@@ -1,8 +1,11 @@
 // Package rules loads provider-aware project rule files (.loomrules,
 // CLAUDE.md/.claude/, AGENTS.md/.codex/) and produces a single bundle the
-// agent system prompt can include. The bundle text is wrapped in a stable
-// <rules sources="..."> envelope and capped at MaxBundleBytes so it cannot
-// dominate the prompt.
+// agent system prompt can include. When the provider's native convention
+// files are absent, a universal fallback chain picks up other common
+// conventions (Copilot, Gemini, Cursor, plus the opposite provider's files)
+// so Loom respects whatever convention the workspace already uses. The
+// bundle text is wrapped in a stable <rules sources="..."> envelope and
+// capped at MaxBundleBytes so it cannot dominate the prompt.
 package rules
 
 import (
@@ -29,51 +32,53 @@ type Bundle struct {
 
 // Load reads the rule files appropriate for the LLM family and returns the
 // concatenated bundle. family is "anthropic" or "openai" (other values fall
-// through with only .loomrules considered).
+// through to the universal fallback chain after .loomrules).
 //
-// File order (concatenated in this order, duplicates by content hash skipped):
-//  1. .loomrules                                  (always)
-//  2. anthropic: CLAUDE.md, then .claude/rules/*.md (sorted)
-//  3. openai:    AGENTS.md, then .codex/rules/*.md  (sorted)
+// Load order (concatenated in this order, duplicates by content hash skipped):
+//  1. .loomrules                                       (always; top precedence)
+//  2. Provider-native:
+//     anthropic: CLAUDE.md, then .claude/rules/*.md (sorted)
+//     openai:    AGENTS.md, then .codex/rules/*.md  (sorted)
+//  3. Universal fallback — appended only if step 2 contributed zero files:
+//     the other provider's native files, then
+//     .github/copilot-instructions.md, .github/instructions/*.md,
+//     GEMINI.md, .gemini/rules/*.md,
+//     .cursor/rules/*.md, .cursorrules
 func Load(workspaceRoot, family string) Bundle {
 	if workspaceRoot == "" {
 		return Bundle{}
 	}
 
-	candidates := []string{".loomrules"}
-	switch family {
-	case "anthropic":
-		candidates = append(candidates, "CLAUDE.md")
-		candidates = append(candidates, globMarkdown(workspaceRoot, ".claude/rules")...)
-	case "openai":
-		candidates = append(candidates, "AGENTS.md")
-		candidates = append(candidates, globMarkdown(workspaceRoot, ".codex/rules")...)
-	}
+	// Step 1: always-loaded.
+	always := []string{".loomrules"}
 
-	seen := make(map[string]bool, len(candidates))
+	// Step 2: provider-native.
+	native := nativeCandidates(workspaceRoot, family)
+
+	seen := make(map[string]bool, 16)
 	var (
 		bodyB     strings.Builder
 		sources   []string
 		truncated int
 	)
-	for _, rel := range candidates {
+
+	appendFile := func(rel string) (read bool) {
 		full := filepath.Join(workspaceRoot, rel)
 		data, err := os.ReadFile(full)
 		if err != nil {
-			continue
+			return false
 		}
 		sum := sha256.Sum256(data)
 		key := hex.EncodeToString(sum[:])
 		if seen[key] {
-			continue
+			return false
 		}
 		seen[key] = true
 
-		// Estimate remaining budget: body so far + this file + section header.
 		header := fmt.Sprintf("\n--- %s ---\n", rel)
 		if bodyB.Len()+len(header)+len(data) > MaxBundleBytes {
 			truncated++
-			continue
+			return false
 		}
 		if bodyB.Len() > 0 {
 			bodyB.WriteString("\n")
@@ -81,6 +86,25 @@ func Load(workspaceRoot, family string) Bundle {
 		bodyB.WriteString(header)
 		bodyB.Write(data)
 		sources = append(sources, rel)
+		return true
+	}
+
+	for _, rel := range always {
+		appendFile(rel)
+	}
+
+	nativeRead := 0
+	for _, rel := range native {
+		if appendFile(rel) {
+			nativeRead++
+		}
+	}
+
+	// Step 3: universal fallback only when no provider-native file contributed.
+	if nativeRead == 0 {
+		for _, rel := range fallbackCandidates(workspaceRoot, family) {
+			appendFile(rel)
+		}
 	}
 
 	if bodyB.Len() == 0 {
@@ -96,7 +120,8 @@ func Load(workspaceRoot, family string) Bundle {
 	var envelope strings.Builder
 	envelope.WriteString(`<rules sources="`)
 	envelope.WriteString(strings.Join(sources, ","))
-	envelope.WriteString("\">\n")
+	envelope.WriteString(`" precedence=".loomrules">`)
+	envelope.WriteString("\nOn conflict, rules from .loomrules take precedence over other listed sources.\n")
 	envelope.WriteString(body)
 	envelope.WriteString("\n</rules>")
 
@@ -105,6 +130,48 @@ func Load(workspaceRoot, family string) Bundle {
 		Sources: sources,
 		Hash:    hex.EncodeToString(hash[:]),
 	}
+}
+
+// nativeCandidates returns the provider's own convention files in load order.
+func nativeCandidates(workspaceRoot, family string) []string {
+	switch family {
+	case "anthropic":
+		out := []string{"CLAUDE.md"}
+		out = append(out, globMarkdown(workspaceRoot, ".claude/rules")...)
+		return out
+	case "openai":
+		out := []string{"AGENTS.md"}
+		out = append(out, globMarkdown(workspaceRoot, ".codex/rules")...)
+		return out
+	}
+	return nil
+}
+
+// fallbackCandidates returns the universal chain to try when the provider's
+// own files are absent. The opposite provider's files come first so a user
+// who only has AGENTS.md still gets it under Anthropic (and vice versa).
+func fallbackCandidates(workspaceRoot, family string) []string {
+	var out []string
+	switch family {
+	case "anthropic":
+		out = append(out, "AGENTS.md")
+		out = append(out, globMarkdown(workspaceRoot, ".codex/rules")...)
+	case "openai":
+		out = append(out, "CLAUDE.md")
+		out = append(out, globMarkdown(workspaceRoot, ".claude/rules")...)
+	default:
+		out = append(out, "CLAUDE.md")
+		out = append(out, globMarkdown(workspaceRoot, ".claude/rules")...)
+		out = append(out, "AGENTS.md")
+		out = append(out, globMarkdown(workspaceRoot, ".codex/rules")...)
+	}
+	out = append(out, ".github/copilot-instructions.md")
+	out = append(out, globMarkdown(workspaceRoot, ".github/instructions")...)
+	out = append(out, "GEMINI.md")
+	out = append(out, globMarkdown(workspaceRoot, ".gemini/rules")...)
+	out = append(out, globMarkdown(workspaceRoot, ".cursor/rules")...)
+	out = append(out, ".cursorrules")
+	return out
 }
 
 // globMarkdown lists *.md under dir (relative to root), returning paths

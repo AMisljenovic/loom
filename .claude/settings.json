@@ -35,7 +35,16 @@
       "Bash(go run *)",
       "Bash(awk '/^# Safety/,/^# Output/' __TRACKED_VAR__.md)",
       "Bash(Get-ChildItem -Path \"c:\\\\Projects\\\\loom\" -Recurse -Directory)",
-      "Bash(Select-Object -ExpandProperty FullName)"
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(grep -E \"^/c/Projects/loom/package.json$\")",
+      "Bash(xargs ls -la)",
+      "Bash(powershell -NoProfile -Command \"Get-ChildItem 'c:\\\\Projects\\\\loom\\\\webview-ui\\\\src\\\\util\\\\'; Write-Host '---'; Get-ChildItem 'c:\\\\Projects\\\\loom\\\\agent\\\\internal\\\\llm\\\\'\")",
+      "Bash(powershell -NoProfile -Command \"cd 'c:\\\\Projects\\\\loom'; npm run test:ts -- --root webview-ui 2>&1 | Select-Object -Last 40\")",
+      "Bash(powershell -NoProfile -Command \"cd 'c:\\\\Projects\\\\loom\\\\agent'; go vet ./...; go test ./internal/llm/... 2>&1 | Select-Object -Last 30\")",
+      "Bash(powershell -NoProfile -Command \"cd 'c:\\\\Projects\\\\loom'; npm run build 2>&1 | Select-Object -Last 40\")",
+      "Bash(powershell -NoProfile -Command \"cd 'c:\\\\Projects\\\\loom\\\\agent'; go test ./... 2>&1 | Select-Object -Last 30\")",
+      "Bash(powershell -NoProfile -Command \"cd 'c:\\\\Projects\\\\loom'; npm run test:ts -- --root webview-ui 2>&1 | Select-Object -Last 50\")",
+      "Bash(powershell -NoProfile -Command \"Test-Path 'c:\\\\Projects\\\\loom\\\\webview-ui\\\\src\\\\styles\\\\components.test.ts'\")"
     ],
     "deny": [
       "Bash(rm -rf:*)",

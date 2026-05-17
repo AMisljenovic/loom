@@ -10,6 +10,8 @@ func ModelContextLimit(model string) int64 {
 		return 1_000_000
 	case "claude-haiku-4-5", "claude-haiku-4-5-20251001":
 		return 200_000
+	case "gpt-5.1", "gpt-5.1-mini", "o5", "o5-mini":
+		return 400_000
 	default:
 		return defaultContextTokens
 	}

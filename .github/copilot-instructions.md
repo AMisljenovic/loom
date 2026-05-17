@@ -82,8 +82,11 @@ newline-delimited JSON-RPC over stdio.
     provider/model VS Code settings at `ConfigurationTarget.Global`. The
     standard VS Code settings cascade still honors per-workspace overrides
     via `.vscode/settings.json`. API keys must still use VS Code
-    SecretStorage. Providers are `anthropic`, `openai`, `openai-compatible`
-    (Azure/OpenRouter/Groq/vLLM — distinct from `local`), and `local`.
+    SecretStorage. Providers are `anthropic`, `openai`, `openai-compatible`,
+    and `local`. Picking `openai-compatible` reveals a Preset dropdown
+    (OpenRouter, Groq, Cerebras, Vercel AI Gateway, LM Studio, Generic) that
+    pre-fills Base URL and the curated model list; presets are UI-only and
+    still collapse to `openai-compatible` on the wire.
     Models are editable combos; the Settings view stores per-provider
     advanced options (max output tokens, context window, reasoning effort,
     custom headers) under `globalState["loom.llm.advanced"]` and ships them to Go via
@@ -118,6 +121,17 @@ newline-delimited JSON-RPC over stdio.
     smallest focused test command while iterating, then the broader suite
     before handoff (`go test ./...` from `agent/`, `npm run test:ts`, and
     `npm run build` when the extension surface is touched).
+19. Project rules are auto-loaded by `agent/internal/rules/` and frozen at task
+    start. `.loomrules` is always loaded first and declared top-precedence in
+    the prompt envelope. Provider-native files are loaded next (CLAUDE.md +
+    `.claude/rules/*.md` for Anthropic, AGENTS.md + `.codex/rules/*.md` for
+    OpenAI). When the provider's native files are absent, a universal
+    fallback chain picks up the opposite provider's files, then
+    `.github/copilot-instructions.md`, `.github/instructions/*.md`,
+    `GEMINI.md`, `.gemini/rules/*.md`, `.cursor/rules/*.md`, and
+    `.cursorrules`, so Loom respects whatever convention the workspace
+    already uses. The whole bundle is capped at 32 KB, deduped by content
+    hash, and lives in the volatile tail of the system prompt.
 
 ## Pre-commit hook
 

@@ -2,7 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 import type { LlmConfigView, LlmProvider } from "../../../../src/shared/protocol";
 import * as Ico from "../../brand/icons";
 import { post } from "../../vscode";
-import { defaultModel, modelSuggestions, providerNeedsBaseUrl, providerNeedsKey } from "../../util/provider";
+import {
+    OPENAI_COMPATIBLE_PRESETS,
+    defaultCompatiblePresetId,
+    defaultModel,
+    detectPreset,
+    modelSuggestions,
+    presetById,
+    providerNeedsBaseUrl,
+    providerNeedsKey,
+} from "../../util/provider";
 
 interface ModelPopoverProps {
     config: LlmConfigView | null;
@@ -14,17 +23,29 @@ const OTHER_VALUE = "__other__";
 
 export function ModelPopover({ config, onClose, onOpenSettings }: ModelPopoverProps) {
     const [provider, setProvider] = useState<LlmProvider>(config?.provider ?? "anthropic");
+    const [presetId, setPresetId] = useState<string>(
+        (config?.provider ?? "anthropic") === "openai-compatible"
+            ? detectPreset(config?.baseUrl).id
+            : defaultCompatiblePresetId(),
+    );
     const [model, setModel] = useState(config?.model ?? defaultModel(config?.provider ?? "anthropic"));
     const [apiKey, setApiKey] = useState("");
     const [baseUrl, setBaseUrl] = useState(config?.baseUrl ?? "");
 
     useEffect(() => {
-        setProvider(config?.provider ?? "anthropic");
-        setModel(config?.model ?? defaultModel(config?.provider ?? "anthropic"));
+        const nextProvider = config?.provider ?? "anthropic";
+        setProvider(nextProvider);
+        setModel(config?.model ?? defaultModel(nextProvider));
         setBaseUrl(config?.baseUrl ?? "");
+        setPresetId(nextProvider === "openai-compatible"
+            ? detectPreset(config?.baseUrl).id
+            : defaultCompatiblePresetId());
     }, [config?.provider, config?.model, config?.baseUrl]);
 
-    const suggestions = useMemo(() => modelSuggestions(provider), [provider]);
+    const suggestions = useMemo(
+        () => modelSuggestions(provider, presetId),
+        [provider, presetId],
+    );
     const inSuggestions = suggestions.some((m) => m.value === model);
     const [selectMode, setSelectMode] = useState<"preset" | "other">(inSuggestions ? "preset" : "other");
 
@@ -64,23 +85,47 @@ export function ModelPopover({ config, onClose, onOpenSettings }: ModelPopoverPr
                     onChange={(e) => {
                         const next = e.target.value as LlmProvider;
                         setProvider(next);
-                        setModel(defaultModel(next));
                         if (next === "local") {
                             setBaseUrl("http://localhost:11434/v1");
-                        } else if (next === "anthropic") {
+                            setModel(defaultModel(next));
+                        } else if (next === "anthropic" || next === "openai") {
                             setBaseUrl("");
-                        } else if (next === "openai") {
-                            setBaseUrl("");
+                            setModel(defaultModel(next));
                         } else if (next === "openai-compatible") {
-                            setBaseUrl(config?.baseUrl ?? "");
+                            const id = defaultCompatiblePresetId();
+                            setPresetId(id);
+                            const preset = presetById(id);
+                            setBaseUrl(preset.baseUrl);
+                            setModel(defaultModel(next, id));
                         }
                     }}
                 >
                     <option value="anthropic">Anthropic</option>
                     <option value="openai">OpenAI</option>
-                    <option value="openai-compatible">OpenAI-Compatible</option>
+                    <option value="openai-compatible">More Providers</option>
                     <option value="local">Local</option>
                 </select>
+
+                {provider === "openai-compatible" && (
+                    <>
+                        <label className="pop-label">Preset</label>
+                        <select
+                            className="pop-select"
+                            value={presetId}
+                            onChange={(e) => {
+                                const nextId = e.target.value;
+                                setPresetId(nextId);
+                                const preset = presetById(nextId);
+                                setBaseUrl(preset.baseUrl);
+                                setModel(defaultModel("openai-compatible", nextId));
+                            }}
+                        >
+                            {OPENAI_COMPATIBLE_PRESETS.map((p) => (
+                                <option key={p.id} value={p.id}>{p.label}</option>
+                            ))}
+                        </select>
+                    </>
+                )}
 
                 <label className="pop-label">Model</label>
                 <select

@@ -9,11 +9,16 @@ import type {
 import * as Ico from "../brand/icons";
 import { post } from "../vscode";
 import {
+    OPENAI_COMPATIBLE_PRESETS,
+    defaultCompatiblePresetId,
     defaultModel,
+    detectPreset,
     modelSuggestions,
+    presetById,
     providerLabel,
     providerNeedsBaseUrl,
     providerNeedsKey,
+    providerSubtitle,
     providerSupportsReasoning,
 } from "../util/provider";
 
@@ -39,8 +44,12 @@ function toFormHeaders(input: CustomHeader[] | undefined): FormHeader[] {
 
 export function SettingsView({ config, onClose }: SettingsViewProps) {
     const initialProvider = config?.provider ?? "anthropic";
+    const initialPresetId = initialProvider === "openai-compatible"
+        ? detectPreset(config?.baseUrl).id
+        : defaultCompatiblePresetId();
     const [provider, setProvider] = useState<LlmProvider>(initialProvider);
-    const [model, setModel] = useState(config?.model ?? defaultModel(initialProvider));
+    const [presetId, setPresetId] = useState<string>(initialPresetId);
+    const [model, setModel] = useState(config?.model ?? defaultModel(initialProvider, initialPresetId));
     const [baseUrl, setBaseUrl] = useState(config?.baseUrl ?? "");
     const [apiKey, setApiKey] = useState("");
 
@@ -61,13 +70,20 @@ export function SettingsView({ config, onClose }: SettingsViewProps) {
         setProvider(config.provider);
         setModel(config.model);
         setBaseUrl(config.baseUrl ?? "");
+        setPresetId(config.provider === "openai-compatible"
+            ? detectPreset(config.baseUrl).id
+            : defaultCompatiblePresetId());
         setMaxOutput(config.advanced?.maxOutputTokens ? String(config.advanced.maxOutputTokens) : "");
         setContextWindow(config.advanced?.contextWindow ? String(config.advanced.contextWindow) : "");
         setReasoning((config.advanced?.reasoningEffort ?? config.reasoningEffort ?? "") as ReasoningEffort);
         setHeaders(toFormHeaders(config.advanced?.customHeaders));
     }, [config?.provider]);
 
-    const suggestions = useMemo(() => modelSuggestions(provider), [provider]);
+    const suggestions = useMemo(
+        () => modelSuggestions(provider, presetId),
+        [provider, presetId],
+    );
+    const activePreset = provider === "openai-compatible" ? presetById(presetId) : null;
     const inSuggestions = suggestions.some((m) => m.value === model);
     const [modelMode, setModelMode] = useState<"preset" | "other">(inSuggestions ? "preset" : "other");
     useEffect(() => {
@@ -79,13 +95,27 @@ export function SettingsView({ config, onClose }: SettingsViewProps) {
 
     const pickProvider = (next: LlmProvider) => {
         setProvider(next);
-        setModel(defaultModel(next));
         if (next === "local") {
             setBaseUrl("http://localhost:11434/v1");
+            setModel(defaultModel(next));
         } else if (next === "anthropic" || next === "openai") {
             setBaseUrl("");
+            setModel(defaultModel(next));
+        } else if (next === "openai-compatible") {
+            const id = defaultCompatiblePresetId();
+            setPresetId(id);
+            const preset = presetById(id);
+            setBaseUrl(preset.baseUrl);
+            setModel(defaultModel(next, id));
         }
         setApiKey("");
+    };
+
+    const pickPreset = (nextId: string) => {
+        setPresetId(nextId);
+        const preset = presetById(nextId);
+        setBaseUrl(preset.baseUrl);
+        setModel(defaultModel("openai-compatible", nextId));
     };
 
     const save = () => {
@@ -143,13 +173,30 @@ export function SettingsView({ config, onClose }: SettingsViewProps) {
                             className={`provider-btn${provider === p ? " active" : ""}`}
                             onClick={() => pickProvider(p)}
                         >
-                            <span className="provider-dot" />
-                            <span>{providerLabel(p)}</span>
+                            <span className="provider-btn-title">
+                                <span className="provider-dot" />
+                                <span>{providerLabel(p)}</span>
+                            </span>
+                            <span className="provider-btn-sub">{providerSubtitle(p)}</span>
                         </button>
                     ))}
                 </div>
 
                 <div className="settings-fields">
+                    {provider === "openai-compatible" && (
+                        <label>
+                            <span>Preset</span>
+                            <select
+                                value={presetId}
+                                onChange={(e) => pickPreset(e.target.value)}
+                            >
+                                {OPENAI_COMPATIBLE_PRESETS.map((p) => (
+                                    <option key={p.id} value={p.id}>{p.label}</option>
+                                ))}
+                            </select>
+                        </label>
+                    )}
+
                     {providerNeedsBaseUrl(provider) && (
                         <label>
                             <span>Base URL</span>
@@ -202,7 +249,21 @@ export function SettingsView({ config, onClose }: SettingsViewProps) {
 
                     {needsKey && (
                         <label>
-                            <span>API Key {hasKey ? "(set)" : "(required)"}</span>
+                            <span>
+                                API Key {hasKey ? "(set)" : "(required)"}
+                                {activePreset?.keyHintUrl && (
+                                    <>
+                                        {" — "}
+                                        <a
+                                            href={activePreset.keyHintUrl}
+                                            target="_blank"
+                                            rel="noreferrer noopener"
+                                        >
+                                            {activePreset.keyHintLabel ?? "Get a key"} →
+                                        </a>
+                                    </>
+                                )}
+                            </span>
                             <input
                                 type="password"
                                 value={apiKey}

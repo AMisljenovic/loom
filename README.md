@@ -1,20 +1,90 @@
-# Loom
+# Loom Code
 
-Loom is a VS Code AI coding agent with a TypeScript extension host, a React
-webview, and a Go backend. The Go agent owns the LLM loop and pure-Go tools;
-the TypeScript host owns VS Code APIs, approvals, sessions, and webview state.
+Loom Code is a local-first AI coding agent for VS Code. It pairs a polished
+React chat UI with a TypeScript extension host and a fast Go agent backend, so
+the model can inspect code, edit files, run commands, ask planning questions,
+use MCP tools, and keep long work visible without hiding the machinery.
 
-![Loom demo](media/loom-demo.gif)
+![Loom Code demo](media/loom-demo.gif)
+
+## Why Loom Code?
+
+Loom is built for developers who want an agent they can actually read, steer,
+and trust inside their editor.
+
+- **Fast local agent backend**: the LLM loop, tools, prompt assembly, indexing,
+  MCP client, and sub-agent orchestration run in Go.
+- **VS Code-native control plane**: the TypeScript host owns editor APIs,
+  SecretStorage, approvals, sessions, diagnostics, diff previews, and webview
+  state.
+- **Readable transcripts**: every tool call renders as one compact card with
+  input, output, approval state, and expandable details.
+- **Real approval controls**: approve one action, batch approvals, allow a
+  category, remember specific rules, or keep everything manual.
+- **Provider choice**: use Anthropic, OpenAI, OpenAI-compatible providers such
+  as OpenRouter, Groq, Cerebras, Vercel AI Gateway, Azure OpenAI, vLLM, or
+  local OpenAI-compatible servers such as Ollama and LM Studio.
+- **Repo-native behavior**: Loom loads `.loomrules`, provider-native agent
+  instruction files, and common convention files so the agent follows the
+  rules your repo already carries.
+
+For a direct positioning guide, see [Why Loom Code](docs/why-loom-code.md).
+
+## Features
+
+**Agent modes**
+
+Switch between Code, Architect, Ask, and Debug modes. Modes define the active
+prompt and available tools, and natural-language requests such as "use
+architect mode" are detected by shared host/webview code. Custom modes can be
+added through `loom.modes`.
+
+**Safe edits and command execution**
+
+Loom can read files, search, inspect diagnostics, apply diffs, run foreground
+or background commands, read process output, and stop processes. Write and
+execute tools require approval unless your workspace policy allows them.
+
+**Sessions that survive reloads**
+
+Conversation sessions are owned by the VS Code host. Session indexes live in
+workspace state, while larger session bodies are stored under the extension
+storage directory so long chats stay usable.
+
+**MCP support**
+
+Configure stdio MCP servers through VS Code settings, `.vscode/mcp.json`, or
+the user MCP config directory. MCP tools appear beside Loom's built-in tools
+and keep their own approval category.
+
+**Workspace awareness**
+
+Loom maintains a workspace symbol index in Go. Tree-sitter extraction is
+available in CGO builds, non-CGO builds keep working with empty symbol lists,
+and optional embeddings add semantic search through Ollama or Voyage.
+
+**Read-only sub-agents**
+
+The built-in `research` sub-agent preset lets the main agent delegate focused
+read-only investigations in parallel. Sub-agents use isolated conversation
+state and return structured Answer / Evidence / Unverified summaries.
+
+**First-run setup**
+
+The first-run panel is global, not per workspace. Pick a provider once, store
+API keys in VS Code SecretStorage, tune model settings, and override per
+workspace only when needed.
 
 ## Install
 
-For local testing, install one of the per-platform VSIX files from `dist/`:
+Loom Code is currently distributed as per-platform VSIX packages from GitHub
+Releases or local builds.
 
 ```bash
 code --install-extension dist/loom-win32-x64.vsix
 ```
 
-Use the VSIX that matches your platform:
+Choose the package that matches your platform:
 
 - `loom-darwin-arm64.vsix`
 - `loom-darwin-x64.vsix`
@@ -22,90 +92,18 @@ Use the VSIX that matches your platform:
 - `loom-linux-x64.vsix`
 - `loom-win32-x64.vsix`
 
-The binaries are not code-signed for v1.0. macOS Gatekeeper and Windows
-SmartScreen may require the workaround documented in `TROUBLESHOOTING.md`.
-
-## First Run
-
-Open the Loom view from the activity bar. The first-run panel lets you choose:
-
-- Anthropic with an Anthropic API key
-- OpenAI with an OpenAI API key
-- OpenAI-Compatible endpoint with its own Base URL and API key (Azure OpenAI,
-  OpenRouter, Groq, vLLM, LM Studio, etc.)
-- Local OpenAI-compatible endpoint, such as Ollama
-
-You only set Loom up **once**. Provider, model, advanced settings, and the
-first-run completion flag are stored globally, so opening a new folder picks
-up the same configuration without re-prompting. API keys are stored in VS
-Code SecretStorage (already global). Loom also supports `.env` and
-environment variables for development. To override Loom for a specific
-project, edit that workspace's `.vscode/settings.json` — workspace settings
-shadow user settings through the normal VS Code cascade.
-
-The model field is editable everywhere — pick from a curated list or choose
-`Other…` to type any model id. Open the full Settings view from the model
-popover's **Advanced settings…** link to configure max output tokens, a
-context-window override, reasoning effort (OpenAI / OpenAI-Compatible only),
-and custom HTTP headers sent with every LLM request.
-
-## Reading the chat
-
-Every tool call renders as a single uniform card: a short label
-(`Bash` / `Edit` / `Read` / `Search` / …), a one-line description, an `IN`
-pane with the input summary, and an `OUT` pane showing the first few lines
-of output. Click any card to expand inline details: full output, raw args,
-and approval controls when the tool is waiting. Expanded cards reserve their
-own transcript space so they remain readable above the composer. Between tool calls
-the model's own prose appears as slim italic *intent lines*, and the
-turn-final wrap-up is promoted to a **Summary** card. Live status
-(thinking / reading / running / waiting for approval) is shown in the
-composer pill, not inline in the transcript.
-
-Hover any prose message — your own prompts, intent lines, summary cards,
-and error cards — to reveal a small **Copy** button that copies the raw
-message text (without structural tags like `<proposed_plan>`) to your
-system clipboard. Intent lines, summary cards, and the expanded output pane
-of any tool card also expose an **Open** button that pops the content into
-a real read-only editor tab (with the right syntax highlighting picked
-automatically), making long output easy to read, search, and reference.
-
-## Build
-
-Requires Node 20+ and Go 1.22+.
-
-```bash
-npm run install:all
-npm run build
-```
-
-This produces:
-
-- `dist/extension.js` - bundled extension host
-- `dist/webview/` - built React webview
-- `bin/agent-<platform>-<arch>` - Go agent for the current platform
-
-## Package
-
-```bash
-npm run package
-```
-
-Packaging cross-compiles the Go agent for all supported targets, builds the
-webview and extension bundle, then writes one VSIX per platform to `dist/`.
-Each VSIX is staged with only the matching Go binary.
-
-Before packaging a release, bump the root package version and lockfile version
-so generated VSIX metadata matches the Marketplace release.
+See [INSTALL.md](INSTALL.md) for the full install and first-run guide. If macOS
+Gatekeeper or Windows SmartScreen blocks an unsigned binary, see
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ## Configuration
 
 Important settings:
 
 - `loom.provider`: `anthropic`, `openai`, `openai-compatible`, or `local`
-- `loom.telemetry.enabled`: opt-in telemetry, disabled by default
-- `loom.telemetry.endpoint`: HTTPS endpoint for batched sanitized events
 - `loom.mcp.servers`: stdio MCP server configuration
+- `loom.embeddings.provider`: `disabled`, `ollama`, or `voyage`
+- `loom.telemetry.enabled`: opt-in telemetry, disabled by default
 - `loom.ui.accent`, `loom.ui.density`, `loom.ui.themeBias`: webview theme
 
 Telemetry never sends prompts, file contents, workspace paths, API keys, or raw
@@ -113,23 +111,13 @@ machine IDs.
 
 ## Project Instructions
 
-Loom automatically loads `.loomrules` from the workspace, plus provider-specific
-agent instruction files such as `CLAUDE.md` or `AGENTS.md`. See
-[`docs/loomrules.md`](docs/loomrules.md) for precedence, size limits, and
+Loom automatically loads `.loomrules` first, then provider-native files such as
+`CLAUDE.md` or `AGENTS.md`. When those are absent, it falls back to common
+workspace conventions such as `.github/copilot-instructions.md`,
+`GEMINI.md`, `.cursor/rules/*.md`, and `.cursorrules`.
+
+See [docs/loomrules.md](docs/loomrules.md) for precedence, size limits, and
 examples.
-
-## Planning
-
-Architect mode can ask structured pre-plan questions directly in the chat. Each
-question offers concrete choices plus an `Other` text option, and Loom waits for
-answers before producing the final plan. Completed Architect plans are emitted
-as Markdown and opened in VS Code's Markdown preview for easier review.
-
-During longer sessions, Loom records a compact progress timeline in chat so you
-can follow observable work like reading files, searching, running commands, and
-writing the final response. You can also attach file or folder references from
-the composer; Loom includes capped previews or folder listings as starting
-context and reads more with tools when needed.
 
 ## Architecture
 
@@ -138,10 +126,32 @@ React webview <-> TypeScript extension host <-> Go agent binary
         postMessage        JSON-RPC 2.0 over LSP framing
 ```
 
-Wire types live in `src/shared/protocol.ts`.
+Wire types live in `src/shared/protocol.ts`. The internal extension-agent RPC
+uses LSP `Content-Length` framing; external MCP stdio servers use
+newline-delimited JSON-RPC in `agent/internal/mcp/`.
+
+## Development
+
+Requires Node 20+ and Go 1.22+.
+
+```bash
+npm run install:all
+npm run build
+```
+
+This builds the Go agent for the current platform, the React webview, and the
+extension bundle. To package release VSIX files for every supported platform:
+
+```bash
+npm run package
+```
+
+Before release packaging, bump both `package.json` and `package-lock.json` so
+the generated VSIX metadata matches the release version.
 
 ## Contributing
 
-See `CONTRIBUTING.md` for development workflow, release notes, and PR
-expectations. See `TROUBLESHOOTING.md` for common setup, packaging, and
-runtime issues.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development workflow and PR
+expectations. See [SUBAGENTS.md](SUBAGENTS.md) for the sub-agent contract and
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md) for setup, packaging, and runtime
+issues.

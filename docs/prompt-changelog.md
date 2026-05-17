@@ -2,6 +2,25 @@
 
 Reverse-chronological notes for meaningful Loom prompt-layer changes.
 
+## 2026-05-17 - Universal convention-file fallback in rules bundle
+
+- Affected files: `agent/internal/rules/rules.go`,
+  `agent/internal/rules/rules_test.go`, `docs/loomrules.md`.
+- Rationale: Loom is provider-agnostic, but the rules loader previously only
+  recognised `CLAUDE.md`/`.claude/rules/` for Anthropic and
+  `AGENTS.md`/`.codex/rules/` for OpenAI. Workspaces set up for Copilot,
+  Gemini, or Cursor were silently ignored. The loader now falls back to the
+  opposite provider's files, `.github/copilot-instructions.md`,
+  `.github/instructions/*.md`, `GEMINI.md`, `.gemini/rules/*.md`,
+  `.cursor/rules/*.md`, and `.cursorrules` when the provider's native files
+  are absent. `.loomrules` is always loaded first and the envelope now
+  carries a `precedence=".loomrules"` attribute plus a one-line conflict
+  note.
+- Eval impact: prompt envelope gains a precedence attribute and conflict
+  note (byte-stable across turns). The `<rules>` body is unchanged when a
+  workspace's provider-native files are present, so the bundle hash for
+  existing workspaces is unchanged.
+
 ## 2026-05-16 - User-selected references in prompts
 
 - Affected files: `agent/internal/prompts/_output_conventions.md`,

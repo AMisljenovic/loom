@@ -3,7 +3,17 @@ import type { FirstRunState, LlmProvider } from "../../../src/shared/protocol";
 import { LoomMark } from "../brand/LoomMark";
 import * as Ico from "../brand/icons";
 import { post } from "../vscode";
-import { defaultModel, modelSuggestions, providerNeedsBaseUrl, providerNeedsKey } from "../util/provider";
+import {
+    OPENAI_COMPATIBLE_PRESETS,
+    defaultCompatiblePresetId,
+    defaultModel,
+    detectPreset,
+    modelSuggestions,
+    presetById,
+    providerNeedsBaseUrl,
+    providerNeedsKey,
+    providerSubtitle,
+} from "../util/provider";
 
 interface FirstRunProps {
     state: FirstRunState;
@@ -15,6 +25,11 @@ const OTHER_VALUE = "__other__";
 
 export function FirstRun({ state, onSample }: FirstRunProps) {
     const [provider, setProvider] = useState<LlmProvider>(state.llmConfig.provider);
+    const [presetId, setPresetId] = useState<string>(
+        state.llmConfig.provider === "openai-compatible"
+            ? detectPreset(state.llmConfig.baseUrl).id
+            : defaultCompatiblePresetId(),
+    );
     const [model, setModel] = useState(state.llmConfig.model);
     const [baseUrl, setBaseUrl] = useState(state.llmConfig.baseUrl ?? "http://localhost:11434/v1");
     const [apiKey, setApiKey] = useState("");
@@ -23,9 +38,16 @@ export function FirstRun({ state, onSample }: FirstRunProps) {
         setProvider(state.llmConfig.provider);
         setModel(state.llmConfig.model);
         setBaseUrl(state.llmConfig.baseUrl ?? "http://localhost:11434/v1");
+        setPresetId(state.llmConfig.provider === "openai-compatible"
+            ? detectPreset(state.llmConfig.baseUrl).id
+            : defaultCompatiblePresetId());
     }, [state.llmConfig.provider, state.llmConfig.model, state.llmConfig.baseUrl]);
 
-    const suggestions = useMemo(() => modelSuggestions(provider), [provider]);
+    const suggestions = useMemo(
+        () => modelSuggestions(provider, presetId),
+        [provider, presetId],
+    );
+    const activePreset = provider === "openai-compatible" ? presetById(presetId) : null;
     const inSuggestions = suggestions.some((m) => m.value === model);
     const [selectMode, setSelectMode] = useState<"preset" | "other">(inSuggestions ? "preset" : "other");
     useEffect(() => {
@@ -53,12 +75,26 @@ export function FirstRun({ state, onSample }: FirstRunProps) {
 
     const pickProvider = (next: LlmProvider) => {
         setProvider(next);
-        setModel(defaultModel(next));
         if (next === "local") {
             setBaseUrl("http://localhost:11434/v1");
+            setModel(defaultModel(next));
         } else if (next === "openai-compatible") {
-            setBaseUrl(state.llmConfig.baseUrl ?? "");
+            const id = defaultCompatiblePresetId();
+            setPresetId(id);
+            const preset = presetById(id);
+            setBaseUrl(preset.baseUrl);
+            setModel(defaultModel(next, id));
+        } else {
+            setBaseUrl("");
+            setModel(defaultModel(next));
         }
+    };
+
+    const pickPreset = (nextId: string) => {
+        setPresetId(nextId);
+        const preset = presetById(nextId);
+        setBaseUrl(preset.baseUrl);
+        setModel(defaultModel("openai-compatible", nextId));
     };
 
     return (
@@ -72,13 +108,26 @@ export function FirstRun({ state, onSample }: FirstRunProps) {
             </div>
 
             <div className="provider-grid" aria-label="Provider">
-                <ProviderButton active={provider === "anthropic"} label="Anthropic" onClick={() => pickProvider("anthropic")} />
-                <ProviderButton active={provider === "openai"} label="OpenAI" onClick={() => pickProvider("openai")} />
-                <ProviderButton active={provider === "openai-compatible"} label="OpenAI-Compatible" onClick={() => pickProvider("openai-compatible")} />
-                <ProviderButton active={provider === "local"} label="Local" onClick={() => pickProvider("local")} />
+                <ProviderButton active={provider === "anthropic"} label="Anthropic" sub={providerSubtitle("anthropic")} onClick={() => pickProvider("anthropic")} />
+                <ProviderButton active={provider === "openai"} label="OpenAI" sub={providerSubtitle("openai")} onClick={() => pickProvider("openai")} />
+                <ProviderButton active={provider === "openai-compatible"} label="More Providers" sub={providerSubtitle("openai-compatible")} onClick={() => pickProvider("openai-compatible")} />
+                <ProviderButton active={provider === "local"} label="Local" sub={providerSubtitle("local")} onClick={() => pickProvider("local")} />
             </div>
 
             <div className="setup-fields">
+                {provider === "openai-compatible" && (
+                    <label>
+                        <span>Preset</span>
+                        <select
+                            value={presetId}
+                            onChange={(e) => pickPreset(e.target.value)}
+                        >
+                            {OPENAI_COMPATIBLE_PRESETS.map((p) => (
+                                <option key={p.id} value={p.id}>{p.label}</option>
+                            ))}
+                        </select>
+                    </label>
+                )}
                 {providerNeedsBaseUrl(provider) && (
                     <label>
                         <span>Base URL</span>
@@ -123,7 +172,21 @@ export function FirstRun({ state, onSample }: FirstRunProps) {
                 )}
                 {needsKey && (
                     <label>
-                        <span>API Key {hasKey ? "(set)" : "(required)"}</span>
+                        <span>
+                            API Key {hasKey ? "(set)" : "(required)"}
+                            {activePreset?.keyHintUrl && (
+                                <>
+                                    {" — "}
+                                    <a
+                                        href={activePreset.keyHintUrl}
+                                        target="_blank"
+                                        rel="noreferrer noopener"
+                                    >
+                                        {activePreset.keyHintLabel ?? "Get a key"} →
+                                    </a>
+                                </>
+                            )}
+                        </span>
                         <input
                             type="password"
                             value={apiKey}
@@ -149,11 +212,14 @@ export function FirstRun({ state, onSample }: FirstRunProps) {
     );
 }
 
-function ProviderButton({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+function ProviderButton({ active, label, sub, onClick }: { active: boolean; label: string; sub: string; onClick: () => void }) {
     return (
         <button className={`provider-btn${active ? " active" : ""}`} onClick={onClick}>
-            <span className="provider-dot" />
-            <span>{label}</span>
+            <span className="provider-btn-title">
+                <span className="provider-dot" />
+                <span>{label}</span>
+            </span>
+            <span className="provider-btn-sub">{sub}</span>
         </button>
     );
 }
