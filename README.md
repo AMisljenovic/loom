@@ -5,8 +5,6 @@ React chat UI with a TypeScript extension host and a fast Go agent backend, so
 the model can inspect code, edit files, run commands, ask planning questions,
 use MCP tools, and keep long work visible without hiding the machinery.
 
-![Loom Code demo](media/loom-demo.gif)
-
 ## Why Loom Code?
 
 Loom is built for developers who want an agent they can actually read, steer,
