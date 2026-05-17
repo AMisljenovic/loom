@@ -57,6 +57,12 @@ turn-final wrap-up is promoted to a **Summary** card. Live status
 (thinking / reading / running / waiting for approval) is shown in the
 composer pill, not inline in the transcript.
 
+Hover any prose message — your own prompts, intent lines, summary cards,
+and error cards — to reveal a small **Copy** button that copies the raw
+message text (without structural tags like `<proposed_plan>`) to your
+system clipboard. Tool cards intentionally don't have a copy button;
+their output lives in the expanded view if you need to grab it.
+
 ## Build
 
 Requires Node 20+ and Go 1.22+.

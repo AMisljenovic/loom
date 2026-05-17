@@ -2689,6 +2689,61 @@
     font-size: 11.5px;
 }
 
+/* Per-message copy action. Rendered at the bottom of user messages,
+   intent lines, summary cards, and error cards. Hidden until the parent
+   is hovered or the button is focused, to keep the transcript quiet. */
+.msg-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 4px;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+}
+
+.msg:hover .msg-actions,
+.intent-line:hover .msg-actions,
+.summary-card:hover .msg-actions,
+.error-card:hover .msg-actions,
+.msg-actions:focus-within {
+    opacity: 1;
+}
+
+.intent-actions {
+    margin-top: 2px;
+}
+
+.copy-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    background: transparent;
+    border: 1px solid var(--border-faint);
+    border-radius: var(--r-1);
+    color: var(--text-muted);
+    cursor: pointer;
+    font: inherit;
+    font-size: 10.5px;
+    line-height: 1.2;
+    letter-spacing: 0.02em;
+}
+
+.copy-btn:hover {
+    background: var(--surface-hover, rgba(255, 255, 255, 0.04));
+    color: var(--text);
+    border-color: var(--border);
+}
+
+.copy-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+.copy-btn.copied {
+    color: var(--ok, var(--accent));
+    border-color: var(--ok, var(--accent));
+}
+
 /* ---------------------------------------------------------------------------
    Minimal chat: uniform tool card + intent lines + summary card.
    Designed to read like Claude Code's transcript: every tool gets the same
@@ -2789,8 +2844,15 @@
 }
 
 @keyframes tc-pulse {
-    0%, 100% { opacity: 1; }
-    50%      { opacity: 0.55; }
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.55;
+    }
 }
 
 .tc-label {
@@ -2808,13 +2870,15 @@
     overflow: hidden;
     text-overflow: ellipsis;
     min-width: 0;
-    direction: rtl;             /* keep the meaningful tail visible
+    direction: rtl;
+    /* keep the meaningful tail visible
                                    when paths get truncated */
     text-align: left;
 }
 
 .tc-desc::before {
-    content: "\200E";            /* LTR mark — re-anchors text direction
+    content: "\200E";
+    /* LTR mark — re-anchors text direction
                                    so punctuation/path separators read
                                    normally even with direction: rtl */
 }
@@ -2832,9 +2896,17 @@
     white-space: nowrap;
 }
 
-.tc-status-running { color: var(--accent); }
-.tc-status-error   { color: var(--warn); }
-.tc-status-pending { color: var(--warn); }
+.tc-status-running {
+    color: var(--accent);
+}
+
+.tc-status-error {
+    color: var(--warn);
+}
+
+.tc-status-pending {
+    color: var(--warn);
+}
 
 .tc-mini .tc-chev {
     color: var(--text-faint);

@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import type { Msg } from "../../../../src/shared/protocol";
 import * as Ico from "../../brand/icons";
+import { stripStructuralTags } from "../../util/markdown";
+import { CopyButton } from "./CopyButton";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { QuestionForm } from "./QuestionForm";
 import { SubAgentCard } from "./SubAgentCard";
@@ -44,6 +46,11 @@ export function Thread({ messages, pendingDiffs, pendingOutputs, onToggleToolExp
                                     </div>
                                 )}
                             </div>
+                            {msg.text && (
+                                <div className="msg-actions">
+                                    <CopyButton text={msg.text} />
+                                </div>
+                            )}
                         </div>
                     );
                 }
@@ -97,10 +104,21 @@ export function Thread({ messages, pendingDiffs, pendingOutputs, onToggleToolExp
 export function IntentLine({ text }: { text: string }) {
     const trimmed = text.trim();
     if (!trimmed) return null;
-    return <div className="intent-line"><MarkdownMessage text={trimmed} /></div>;
+    const copyText = stripStructuralTags(trimmed);
+    return (
+        <div className="intent-line">
+            <MarkdownMessage text={trimmed} />
+            {copyText && (
+                <div className="msg-actions intent-actions">
+                    <CopyButton text={copyText} />
+                </div>
+            )}
+        </div>
+    );
 }
 
 export function SummaryCard({ text }: { text: string }) {
+    const copyText = stripStructuralTags(text);
     return (
         <div className="summary-card">
             <div className="summary-head">
@@ -110,6 +128,11 @@ export function SummaryCard({ text }: { text: string }) {
             <div className="summary-body markdown-body">
                 <MarkdownMessage text={text} />
             </div>
+            {copyText && (
+                <div className="msg-actions">
+                    <CopyButton text={copyText} />
+                </div>
+            )}
         </div>
     );
 }
@@ -122,6 +145,11 @@ export function ErrorCard({ text }: { text: string }) {
                 <span>Error</span>
             </div>
             <div className="error-body">{text}</div>
+            {text && (
+                <div className="msg-actions">
+                    <CopyButton text={text} />
+                </div>
+            )}
         </div>
     );
 }

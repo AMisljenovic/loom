@@ -1,12 +1,13 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { safeMarkdownHref } from "../../util/markdown";
+import { safeMarkdownHref, stripStructuralTags } from "../../util/markdown";
 
 interface MarkdownMessageProps {
     text: string;
 }
 
 export function MarkdownMessage({ text }: MarkdownMessageProps) {
+    const rendered = stripStructuralTags(text);
     return (
         <ReactMarkdown
             remarkPlugins={[remarkGfm]}
@@ -31,7 +32,7 @@ export function MarkdownMessage({ text }: MarkdownMessageProps) {
                 },
             }}
         >
-            {text}
+            {rendered}
         </ReactMarkdown>
     );
 }
