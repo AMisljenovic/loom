@@ -35,8 +35,13 @@ Open the Loom view from the activity bar. The first-run panel lets you choose:
   OpenRouter, Groq, vLLM, LM Studio, etc.)
 - Local OpenAI-compatible endpoint, such as Ollama
 
-API keys are stored in VS Code SecretStorage. Loom also supports `.env` and
-environment variables for development.
+You only set Loom up **once**. Provider, model, advanced settings, and the
+first-run completion flag are stored globally, so opening a new folder picks
+up the same configuration without re-prompting. API keys are stored in VS
+Code SecretStorage (already global). Loom also supports `.env` and
+environment variables for development. To override Loom for a specific
+project, edit that workspace's `.vscode/settings.json` — workspace settings
+shadow user settings through the normal VS Code cascade.
 
 The model field is editable everywhere — pick from a curated list or choose
 `Other…` to type any model id. Open the full Settings view from the model
@@ -60,8 +65,10 @@ composer pill, not inline in the transcript.
 Hover any prose message — your own prompts, intent lines, summary cards,
 and error cards — to reveal a small **Copy** button that copies the raw
 message text (without structural tags like `<proposed_plan>`) to your
-system clipboard. Tool cards intentionally don't have a copy button;
-their output lives in the expanded view if you need to grab it.
+system clipboard. Intent lines, summary cards, and the expanded output pane
+of any tool card also expose an **Open** button that pops the content into
+a real read-only editor tab (with the right syntax highlighting picked
+automatically), making long output easy to read, search, and reference.
 
 ## Build
 

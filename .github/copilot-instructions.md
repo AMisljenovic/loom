@@ -76,13 +76,17 @@ newline-delimited JSON-RPC over stdio.
     `ToolCardMinimal.test.tsx` and `components.test.ts` with transcript UI
     changes.
 
-10. First-run setup is host-owned state (`loom.firstRun.completed`) rendered
-    by the webview. API keys must still use VS Code SecretStorage. Providers
-    are `anthropic`, `openai`, `openai-compatible` (Azure/OpenRouter/Groq/
-    vLLM — distinct from `local`), and `local`. Models are editable combos;
-    the Settings view stores per-provider advanced options
-    (max output tokens, context window, reasoning effort, custom headers)
-    under `workspaceState["loom.llm.advanced"]` and ships them to Go via
+10. First-run setup is host-owned and **global**: `loom.firstRun.completed`
+    and `loom.llm.advanced` live in `globalState` (with one-shot migration
+    from legacy workspaceState), and `configurationTarget()` writes
+    provider/model VS Code settings at `ConfigurationTarget.Global`. The
+    standard VS Code settings cascade still honors per-workspace overrides
+    via `.vscode/settings.json`. API keys must still use VS Code
+    SecretStorage. Providers are `anthropic`, `openai`, `openai-compatible`
+    (Azure/OpenRouter/Groq/vLLM — distinct from `local`), and `local`.
+    Models are editable combos; the Settings view stores per-provider
+    advanced options (max output tokens, context window, reasoning effort,
+    custom headers) under `globalState["loom.llm.advanced"]` and ships them to Go via
     `ConfigUpdateParams` and spawn env (`OPENAI_MAX_OUTPUT_TOKENS`,
     `OPENAI_CONTEXT_WINDOW`, `OPENAI_CUSTOM_HEADERS`). `openai-compatible`
     collapses to `openai` on the wire.

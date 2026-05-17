@@ -4,6 +4,7 @@ import * as Ico from "../../brand/icons";
 import { stripStructuralTags } from "../../util/markdown";
 import { CopyButton } from "./CopyButton";
 import { MarkdownMessage } from "./MarkdownMessage";
+import { OpenInEditorButton } from "./OpenInEditorButton";
 import { QuestionForm } from "./QuestionForm";
 import { SubAgentCard } from "./SubAgentCard";
 import { ToolCardMinimal } from "./ToolCardMinimal";
@@ -62,12 +63,12 @@ export function Thread({ messages, pendingDiffs, pendingOutputs, onToggleToolExp
                 }
                 if (msg.role === "assistant") {
                     if (msg.kind === "summary") {
-                        return <SummaryCard key={i} text={msg.text} />;
+                        return <SummaryCard key={i} id={`assistant-${i}`} text={msg.text} />;
                     }
                     if (msg.kind === "error") {
                         return <ErrorCard key={i} text={msg.text} />;
                     }
-                    return <IntentLine key={i} text={msg.text} />;
+                    return <IntentLine key={i} id={`assistant-${i}`} text={msg.text} />;
                 }
                 if (msg.role === "tool") {
                     return (
@@ -101,7 +102,7 @@ export function Thread({ messages, pendingDiffs, pendingOutputs, onToggleToolExp
     );
 }
 
-export function IntentLine({ text }: { text: string }) {
+export function IntentLine({ text, id }: { text: string; id?: string }) {
     const trimmed = text.trim();
     if (!trimmed) return null;
     const copyText = stripStructuralTags(trimmed);
@@ -110,6 +111,14 @@ export function IntentLine({ text }: { text: string }) {
             <MarkdownMessage text={trimmed} />
             {copyText && (
                 <div className="msg-actions intent-actions">
+                    {id && (
+                        <OpenInEditorButton
+                            id={id}
+                            title="Loom reasoning"
+                            content={copyText}
+                            language="markdown"
+                        />
+                    )}
                     <CopyButton text={copyText} />
                 </div>
             )}
@@ -117,7 +126,7 @@ export function IntentLine({ text }: { text: string }) {
     );
 }
 
-export function SummaryCard({ text }: { text: string }) {
+export function SummaryCard({ text, id }: { text: string; id?: string }) {
     const copyText = stripStructuralTags(text);
     return (
         <div className="summary-card">
@@ -130,6 +139,14 @@ export function SummaryCard({ text }: { text: string }) {
             </div>
             {copyText && (
                 <div className="msg-actions">
+                    {id && (
+                        <OpenInEditorButton
+                            id={id}
+                            title="Loom summary"
+                            content={copyText}
+                            language="markdown"
+                        />
+                    )}
                     <CopyButton text={copyText} />
                 </div>
             )}

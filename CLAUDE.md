@@ -100,6 +100,14 @@ change to a message type must be made on both sides.
   parser for responsiveness, but `ChatPanel.ts` owns persisted mode state.
 - **Markdown rendering is webview-only.** Session state stores raw assistant
   text. The webview renders safe Markdown without raw HTML.
+- **Open-in-editor uses a virtual document scheme.** `src/tools/openInEditor.ts`
+  registers a `loom-doc:` `TextDocumentContentProvider`. The webview posts
+  `openInEditor` with `{ id, title, content, language? }`; the host opens a
+  read-only editor tab through `vscode.workspace.openTextDocument` +
+  `vscode.window.showTextDocument`. Wired into `ToolCardMinimal`'s expanded
+  output pane, `IntentLine`, and `SummaryCard` — not into tool input args,
+  error cards, or user messages. Content lives only in memory for the
+  panel's lifetime.
 - **Transcript is minimal-by-design.** Every tool call renders through a
   single uniform `ToolCardMinimal` (header = friendly label + short
   description, IN pane = one-line input summary, OUT pane = first ~3 lines
@@ -128,10 +136,15 @@ change to a message type must be made on both sides.
   outside the registry. Per-turn cap stays at `subAgentMaxPerTurn=5`. Do
   not add custom presets, fire-and-forget orchestration, or sub-agent model
   routing without updating `SUBAGENTS.md`.
-- **First-run setup is host-owned.** `ChatPanel.ts` stores
-  `workspaceState["loom.firstRun.completed"]`, posts `firstRunState`, and
-  keeps API keys on the existing SecretStorage path. The webview renders the
-  setup panel and forwards provider/key choices only.
+- **First-run setup is host-owned and global.** `ChatPanel.ts` stores
+  `globalState["loom.firstRun.completed"]` and
+  `globalState["loom.llm.advanced"]`, posts `firstRunState`, and keeps API
+  keys on the existing SecretStorage path. `configurationTarget()` always
+  writes provider/model VS Code settings at `ConfigurationTarget.Global`.
+  Workspace overrides remain possible — the standard VS Code settings
+  cascade lets `.vscode/settings.json` shadow user-level Loom settings.
+  Legacy `workspaceState` keys are migrated to `globalState` on activation.
+  The webview renders the setup panel and forwards provider/key choices only.
 - **Providers are flexible.** Four providers are exposed in the UI:
   `anthropic`, `openai`, `openai-compatible` (Azure/OpenRouter/Groq/vLLM),
   and `local` (Ollama preset). Model fields are combo-style — a curated

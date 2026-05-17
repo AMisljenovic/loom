@@ -125,14 +125,19 @@ handoff:
     any transcript UI changes.
 
 13. First-run setup is host-owned state and webview-rendered UI. The
-    `loom.firstRun.completed` workspaceState key gates the setup panel; API
-    keys still go through VS Code SecretStorage via `setSecret`. Four
+    `loom.firstRun.completed` **globalState** key gates the setup panel
+    (with one-shot migration from the legacy workspaceState key), so the
+    setup persists across all workspaces. `configurationTarget()` writes
+    provider/model settings at `ConfigurationTarget.Global`; VS Code's
+    standard settings cascade still lets a workspace `.vscode/settings.json`
+    override globals. API keys still go through VS Code SecretStorage
+    via `setSecret`. Four
     providers are exposed: `anthropic`, `openai`, `openai-compatible`
     (Azure/OpenRouter/Groq/vLLM, distinct from `local`), and `local`. Models
     are editable combos (curated dropdown + `Other…` text input). The
     full-pane Settings view stores per-provider advanced options
     (max output tokens, context-window override, reasoning effort, custom
-    HTTP headers) under `workspaceState["loom.llm.advanced"]` and ships
+    HTTP headers) under `globalState["loom.llm.advanced"]` and ships
     them to Go via `ConfigUpdateParams` plus the spawn env
     (`OPENAI_MAX_OUTPUT_TOKENS`, `OPENAI_CONTEXT_WINDOW`,
     `OPENAI_CUSTOM_HEADERS`). On the wire `openai-compatible` collapses to

@@ -2,11 +2,13 @@ import * as vscode from "vscode";
 import { ChatPanel } from "./panel/ChatPanel";
 import { secretKeyFor, SecretProvider } from "./secrets";
 import { registerApplyDiffContentProvider } from "./tools/diffPreview";
+import { registerOpenInEditor } from "./tools/openInEditor";
 
 let activePanel: ChatPanel | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
   registerApplyDiffContentProvider(context);
+  registerOpenInEditor(context);
   await migratePlaintextSecrets(context);
   const panel = new ChatPanel(context);
   activePanel = panel;

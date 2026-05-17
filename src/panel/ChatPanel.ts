@@ -69,6 +69,7 @@ import {
   openDiffPreview,
   setDiffPreview,
 } from "../tools/diffPreview";
+import { openVirtualDoc } from "../tools/openInEditor";
 import { createUnifiedDiff } from "../tools/unifiedDiff";
 
 const LEGACY_STATE_KEY = "loom.conversation";
@@ -133,6 +134,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.autoApprove = migrateAutoApprove(this.ctx.workspaceState.get<unknown>(AUTO_APPROVE_KEY));
     this.alwaysAllow = this.loadAlwaysAllow();
     this.currentModeId = this.ctx.workspaceState.get<string>(MODE_KEY) ?? "code";
+    void this.migrateLegacyWorkspaceToGlobal();
     this.ctx.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("loom.mcp")) {
         this.configureMcpSoon();
@@ -397,8 +399,14 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     } else if (m.type === "setLlmConfig") {
       await this.applyLlmConfig(m.config);
     } else if (m.type === "completeFirstRun") {
-      await this.ctx.workspaceState.update(FIRST_RUN_KEY, true);
+      await this.ctx.globalState.update(FIRST_RUN_KEY, true);
       await this.postFirstRunState();
+    } else if (m.type === "openInEditor") {
+      try {
+        await openVirtualDoc(m.id, m.title, m.content, m.language);
+      } catch (e: unknown) {
+        this.post({ type: "error", error: e instanceof Error ? e.message : String(e) });
+      }
     } else if (m.type === "approve") {
       const call = this.pendingApprovalCalls.get(m.callId);
       if (m.approved) {
@@ -1071,11 +1079,33 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private async postFirstRunState() {
     const llmConfig = await this.currentLlmConfigView();
     const state: FirstRunState = {
-      completed: this.ctx.workspaceState.get<boolean>(FIRST_RUN_KEY, false),
+      completed: this.ctx.globalState.get<boolean>(FIRST_RUN_KEY, false),
       needsSetup: !llmConfig.hasApiKey,
       llmConfig,
     };
     this.post({ type: "firstRunState", state }, false);
+  }
+
+  private async migrateLegacyWorkspaceToGlobal() {
+    try {
+      const legacyFirstRun = this.ctx.workspaceState.get<boolean>(FIRST_RUN_KEY);
+      if (legacyFirstRun === true && this.ctx.globalState.get<boolean>(FIRST_RUN_KEY) === undefined) {
+        await this.ctx.globalState.update(FIRST_RUN_KEY, true);
+      }
+      if (legacyFirstRun !== undefined) {
+        await this.ctx.workspaceState.update(FIRST_RUN_KEY, undefined);
+      }
+      const legacyAdvanced = this.ctx.workspaceState.get<unknown>(ADVANCED_OPTS_KEY);
+      if (legacyAdvanced && typeof legacyAdvanced === "object") {
+        const current = this.ctx.globalState.get<unknown>(ADVANCED_OPTS_KEY);
+        if (!current || typeof current !== "object") {
+          await this.ctx.globalState.update(ADVANCED_OPTS_KEY, legacyAdvanced);
+        }
+        await this.ctx.workspaceState.update(ADVANCED_OPTS_KEY, undefined);
+      }
+    } catch (e: unknown) {
+      this.log(`legacy setup migration failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   private postThemeConfig() {
@@ -2010,9 +2040,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   }
 
   private configurationTarget(): vscode.ConfigurationTarget {
-    return vscode.workspace.workspaceFolders?.length
-      ? vscode.ConfigurationTarget.Workspace
-      : vscode.ConfigurationTarget.Global;
+    return vscode.ConfigurationTarget.Global;
   }
 
   private validProvider(provider: string): provider is LlmProvider {
@@ -2025,7 +2053,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   }
 
   private readAdvancedAll(): AdvancedByProvider {
-    const raw = this.ctx.workspaceState.get<unknown>(ADVANCED_OPTS_KEY);
+    const raw = this.ctx.globalState.get<unknown>(ADVANCED_OPTS_KEY);
     if (!raw || typeof raw !== "object") return {};
     return raw as AdvancedByProvider;
   }
@@ -2041,7 +2069,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     } else {
       all[provider] = opts;
     }
-    await this.ctx.workspaceState.update(ADVANCED_OPTS_KEY, all);
+    await this.ctx.globalState.update(ADVANCED_OPTS_KEY, all);
   }
 
   private normalizeAdvanced(input: AdvancedLlmOptions | undefined): AdvancedLlmOptions | undefined {

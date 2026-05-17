@@ -434,7 +434,8 @@ export type WebviewToHost =
   | { type: "removeAlwaysAllowRule"; id: string }
   | { type: "requestAlwaysAllowList" }
   | { type: "subagentCancel"; subTaskId: string }
-  | { type: "setMode"; modeId: string };
+  | { type: "setMode"; modeId: string }
+  | { type: "openInEditor"; id: string; title: string; content: string; language?: string };
 
 export type HostToWebview =
   | { type: "delta"; text: string }

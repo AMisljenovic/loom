@@ -3,6 +3,7 @@ import type { Msg } from "../../../../src/shared/protocol";
 import * as Ico from "../../brand/icons";
 import { peekLines, toolInputLine, toolLabel } from "../../util/activity";
 import { ApprovalActions } from "./ApprovalActions";
+import { OpenInEditorButton } from "./OpenInEditorButton";
 
 interface ToolCardMinimalProps {
     msg: Extract<Msg, { role: "tool" }>;
@@ -46,6 +47,26 @@ function prettyInput(input: unknown): string {
         return JSON.stringify(input, null, 2);
     } catch {
         return String(input);
+    }
+}
+
+function guessLanguage(name: string, output: string): string {
+    const trimmed = output.trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        try {
+            JSON.parse(trimmed);
+            return "json";
+        } catch {
+            // not valid JSON, fall through
+        }
+    }
+    switch (name) {
+        case "run_command":
+        case "run_command_background":
+        case "read_process_output":
+            return "shellscript";
+        default:
+            return "plaintext";
     }
 }
 
@@ -119,7 +140,17 @@ export function ToolCardMinimal({ msg, pendingDiff, liveOutput, onToggleExpanded
             {expanded && (
                 <div className="tc-expand" ref={expandRef}>
                     <div className="tc-pane tc-out">
-                        <div className="tc-pane-label">output</div>
+                        <div className="tc-pane-label">
+                            <span>output</span>
+                            {outputText && (
+                                <OpenInEditorButton
+                                    id={`tool-${msg.callId}`}
+                                    title={`${msg.name} output (${msg.callId.slice(0, 4)})`}
+                                    content={outputText}
+                                    language={guessLanguage(msg.name, outputText)}
+                                />
+                            )}
+                        </div>
                         <pre className="tc-pane-body">{expandedOutput}</pre>
                     </div>
                     <div className="tc-pane tc-args">
