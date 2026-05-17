@@ -110,6 +110,20 @@ handoff:
     `TaskRegistry.Register`. Per-turn cap is `subAgentMaxPerTurn=5`. Do not
     add custom presets, fire-and-forget orchestration, or sub-agent model
     routing without updating `SUBAGENTS.md`.
+12b. The transcript is uniform-minimal: every tool call renders through one
+    `ToolCardMinimal` (header + IN pane + OUT peek; click to expand). Do
+    not re-introduce per-tool specialty body components. Assistant deltas
+    are split on tool-call / question / progress boundaries so inter-tool
+    prose becomes slim italic `intent-line` messages, and the last
+    non-empty assistant message before `task.done` (reason `completed`)
+    is tagged `kind: "summary"` and rendered as a Summary card. Promotion
+    happens client-side in [webview-ui/src/App.tsx](webview-ui/src/App.tsx);
+    no prompt-side change. `ToolCardMinimal` must not flex-shrink inside the
+    scrollable `.thread`; keep the CSS/layout regression tests in
+    `webview-ui/src/styles/components.test.ts` and
+    `webview-ui/src/components/thread/ToolCardMinimal.test.tsx` aligned with
+    any transcript UI changes.
+
 13. First-run setup is host-owned state and webview-rendered UI. The
     `loom.firstRun.completed` workspaceState key gates the setup panel; API
     keys still go through VS Code SecretStorage via `setSecret`. Four

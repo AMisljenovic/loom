@@ -1,21 +1,27 @@
 import { useEffect, useRef } from "react";
 import type { Msg } from "../../../../src/shared/protocol";
+import * as Ico from "../../brand/icons";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { QuestionForm } from "./QuestionForm";
 import { SubAgentCard } from "./SubAgentCard";
-import { ToolCard } from "./ToolCard";
+import { ToolCardMinimal } from "./ToolCardMinimal";
 
 interface ThreadProps {
     messages: Msg[];
     pendingDiffs: Map<string, string>;
     pendingOutputs: Map<string, string>;
     busy: boolean;
+    onToggleToolExpanded: (callId: string) => void;
 }
 
-export function Thread({ messages, pendingDiffs, pendingOutputs }: ThreadProps) {
+export function Thread({ messages, pendingDiffs, pendingOutputs, onToggleToolExpanded }: ThreadProps) {
     const bottomRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
+        const active = document.activeElement;
+        if (active instanceof HTMLElement && active.closest(".tc-mini")) {
+            return;
+        }
         bottomRef.current?.scrollIntoView({ block: "end" });
     }, [messages, pendingOutputs]);
 
@@ -42,30 +48,28 @@ export function Thread({ messages, pendingDiffs, pendingOutputs }: ThreadProps) 
                     );
                 }
                 if (msg.role === "progress") {
-                    return (
-                        <div key={i} className={`progress-note progress-${msg.phase}`}>
-                            <span className="progress-dot" />
-                            <span>{msg.text}</span>
-                        </div>
-                    );
+                    // Progress notes are surfaced through the composer's
+                    // live-status pill — no inline rendering in the
+                    // transcript.
+                    return null;
                 }
                 if (msg.role === "assistant") {
-                    return (
-                        <div key={i} className="msg msg-assistant">
-                            <div className="msg-who">Loom</div>
-                            <div className="msg-body markdown-body">
-                                <MarkdownMessage text={msg.text} />
-                            </div>
-                        </div>
-                    );
+                    if (msg.kind === "summary") {
+                        return <SummaryCard key={i} text={msg.text} />;
+                    }
+                    if (msg.kind === "error") {
+                        return <ErrorCard key={i} text={msg.text} />;
+                    }
+                    return <IntentLine key={i} text={msg.text} />;
                 }
                 if (msg.role === "tool") {
                     return (
-                        <ToolCard
+                        <ToolCardMinimal
                             key={msg.callId ?? i}
                             msg={msg}
                             pendingDiff={pendingDiffs.get(msg.callId)}
                             liveOutput={pendingOutputs.get(msg.callId)}
+                            onToggleExpanded={onToggleToolExpanded}
                         />
                     );
                 }
@@ -79,12 +83,45 @@ export function Thread({ messages, pendingDiffs, pendingOutputs }: ThreadProps) 
                             msg={msg}
                             pendingDiffs={pendingDiffs}
                             pendingOutputs={pendingOutputs}
+                            onToggleToolExpanded={onToggleToolExpanded}
                         />
                     );
                 }
                 return null;
             })}
             <div ref={bottomRef} />
+        </div>
+    );
+}
+
+export function IntentLine({ text }: { text: string }) {
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+    return <div className="intent-line"><MarkdownMessage text={trimmed} /></div>;
+}
+
+export function SummaryCard({ text }: { text: string }) {
+    return (
+        <div className="summary-card">
+            <div className="summary-head">
+                <Ico.Check size={12} />
+                <span>Summary</span>
+            </div>
+            <div className="summary-body markdown-body">
+                <MarkdownMessage text={text} />
+            </div>
+        </div>
+    );
+}
+
+export function ErrorCard({ text }: { text: string }) {
+    return (
+        <div className="error-card" role="alert">
+            <div className="error-head">
+                <Ico.Warn size={12} />
+                <span>Error</span>
+            </div>
+            <div className="error-body">{text}</div>
         </div>
     );
 }

@@ -64,6 +64,18 @@ newline-delimited JSON-RPC over stdio.
    stays in `workspaceState`, while bulky per-session bodies are JSON under
    `ExtensionContext.storageUri` with legacy workspaceState bodies migrated
    and cleared. Switching active sessions must cancel any in-flight task first.
+9b. Transcript rendering is uniform-minimal: one `ToolCardMinimal` for every
+    tool (label + IN/OUT panes; click to expand); inter-tool assistant
+    prose splits into slim italic `intent-line` messages; the last
+    assistant message of a completed turn is promoted to `kind: "summary"`
+    and renders as a Summary card. Promotion is client-side in
+    `webview-ui/src/App.tsx`. Do not add specialty per-tool body
+    components or prompt-side summary scaffolding. `ToolCardMinimal` must keep
+    `flex-shrink: 0` in the scrollable transcript so expanded output/args and
+    approval controls are not clipped behind the composer; update
+    `ToolCardMinimal.test.tsx` and `components.test.ts` with transcript UI
+    changes.
+
 10. First-run setup is host-owned state (`loom.firstRun.completed`) rendered
     by the webview. API keys must still use VS Code SecretStorage. Providers
     are `anthropic`, `openai`, `openai-compatible` (Azure/OpenRouter/Groq/

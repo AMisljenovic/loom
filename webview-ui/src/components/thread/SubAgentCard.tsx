@@ -4,15 +4,17 @@ import * as Ico from "../../brand/icons";
 import { formatTokens } from "../../util/format";
 import { post } from "../../vscode";
 import { MarkdownMessage } from "./MarkdownMessage";
-import { ToolCard } from "./ToolCard";
+import { IntentLine, SummaryCard } from "./Thread";
+import { ToolCardMinimal } from "./ToolCardMinimal";
 
 interface SubAgentCardProps {
     msg: Extract<Msg, { role: "subagent" }>;
     pendingDiffs: Map<string, string>;
     pendingOutputs: Map<string, string>;
+    onToggleToolExpanded: (callId: string) => void;
 }
 
-export function SubAgentCard({ msg, pendingDiffs, pendingOutputs }: SubAgentCardProps) {
+export function SubAgentCard({ msg, pendingDiffs, pendingOutputs, onToggleToolExpanded }: SubAgentCardProps) {
     const [expanded, setExpanded] = useState(msg.expanded === true);
     const running = msg.status === "running";
 
@@ -61,22 +63,19 @@ export function SubAgentCard({ msg, pendingDiffs, pendingOutputs }: SubAgentCard
                                 );
                             }
                             if (trace.role === "assistant") {
-                                return (
-                                    <div key={i} className="msg msg-assistant subagent-msg">
-                                        <div className="msg-who">Research</div>
-                                        <div className="msg-body markdown-body">
-                                            <MarkdownMessage text={trace.text} />
-                                        </div>
-                                    </div>
-                                );
+                                if (trace.kind === "summary") {
+                                    return <SummaryCard key={i} text={trace.text} />;
+                                }
+                                return <IntentLine key={i} text={trace.text} />;
                             }
                             if (trace.role === "tool") {
                                 return (
-                                    <ToolCard
+                                    <ToolCardMinimal
                                         key={trace.callId ?? i}
                                         msg={trace}
                                         pendingDiff={pendingDiffs.get(trace.callId)}
                                         liveOutput={pendingOutputs.get(trace.callId)}
+                                        onToggleExpanded={onToggleToolExpanded}
                                     />
                                 );
                             }

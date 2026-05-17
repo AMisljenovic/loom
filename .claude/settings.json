@@ -33,7 +33,9 @@
       "Bash(grep -o \"tc-head[^}]\\\\{0,300\\\\}}\" c:/Projects/loom/dist/webview/assets/index.css)",
       "Bash(git commit -m ' *)",
       "Bash(go run *)",
-      "Bash(awk '/^# Safety/,/^# Output/' __TRACKED_VAR__.md)"
+      "Bash(awk '/^# Safety/,/^# Output/' __TRACKED_VAR__.md)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Projects\\\\loom\" -Recurse -Directory)",
+      "Bash(Select-Object -ExpandProperty FullName)"
     ],
     "deny": [
       "Bash(rm -rf:*)",

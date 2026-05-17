@@ -80,3 +80,64 @@ function compact(text: string): string {
     const cleaned = text.trim().replace(/\s+/g, " ");
     return cleaned.length > 90 ? `${cleaned.slice(0, 87)}...` : cleaned;
 }
+
+// Short bold label shown as the tool card's title — Claude-Code-style.
+// Groups verbose internal names into one familiar word users can scan.
+export function toolLabel(name: string): string {
+    switch (name) {
+        case "run_command":
+        case "run_command_background":
+            return "Bash";
+        case "read_process_output":
+        case "kill_process":
+            return "Process";
+        case "apply_diff":
+            return "Edit";
+        case "read_file":
+            return "Read";
+        case "list_dir":
+            return "List";
+        case "search":
+        case "grep":
+            return "Search";
+        case "find_symbol":
+        case "find_references":
+            return "Symbol";
+        case "semantic_search":
+            return "Semantic";
+        case "get_diagnostics":
+            return "Diagnostics";
+        case "spawn_subagent":
+            return "Research";
+        case "load_skill":
+            return "Skill";
+        default:
+            return titleCase(name);
+    }
+}
+
+// Single-line content for the IN pane. Falls back to the input summary,
+// then to the tool name. Always one short line.
+export function toolInputLine(name: string, input: unknown): string {
+    const summary = summarizeToolInput(name, input);
+    if (summary) return summary;
+    return name;
+}
+
+// First N lines of output for the OUT peek. Returns trimmed lines; the
+// caller decides how to render the ellipsis state.
+export function peekLines(output: string | undefined, max = 3): { lines: string[]; more: boolean } {
+    if (!output) return { lines: [], more: false };
+    const all = output.replace(/\r\n/g, "\n").split("\n");
+    const trimmed = all.length > 0 && all[all.length - 1] === "" ? all.slice(0, -1) : all;
+    const lines = trimmed.slice(0, max);
+    return { lines, more: trimmed.length > max };
+}
+
+function titleCase(name: string): string {
+    return name
+        .split(/[_\-\s]+/)
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ");
+}

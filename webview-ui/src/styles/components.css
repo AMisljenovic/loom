@@ -5,7 +5,7 @@
 /* ---- Panel shell ---- */
 .panel {
     display: grid;
-    grid-template-rows: auto auto auto auto 1fr auto auto;
+    grid-template-rows: auto auto auto minmax(0, 1fr) auto auto auto;
     height: 100vh;
     overflow: hidden;
     background: var(--bg);
@@ -14,6 +14,7 @@
 }
 
 .notice-toast {
+    grid-row: 3;
     margin: 6px 12px 0;
     padding: 7px 10px;
     border: 1px solid var(--accent-ring);
@@ -74,6 +75,7 @@
 
 /* ---- Conversation list (sidebar) ---- */
 .convo-list {
+    grid-row: 2;
     border-bottom: 1px solid var(--border-faint);
     padding: 4px 8px 6px;
     display: flex;
@@ -315,6 +317,8 @@
 
 /* ---- Empty state ---- */
 .empty-state {
+    grid-row: 4;
+    min-height: 0;
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -403,6 +407,8 @@
 
 /* ---- First run ---- */
 .first-run {
+    grid-row: 4;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     align-items: stretch;
@@ -526,8 +532,10 @@
 
 /* ---- Thread ---- */
 .thread {
+    grid-row: 4;
     overflow-y: auto;
     padding: 14px 14px 18px;
+    scroll-padding-block: 14px;
     display: flex;
     flex-direction: column;
     gap: 14px;
@@ -613,7 +621,13 @@
     white-space: nowrap;
 }
 
+/* Inline progress notes are superseded by the live-status pill in the
+   composer. Kept in state for diagnostics but hidden in the transcript. */
 .progress-note {
+    display: none !important;
+}
+
+.progress-note-legacy {
     display: flex;
     align-items: center;
     gap: 7px;
@@ -1455,6 +1469,7 @@
 
 /* ---- Composer / input area ---- */
 .input-area {
+    grid-row: 6;
     border-top: 1px solid var(--border-faint);
     background: var(--bg);
     padding: 10px 12px 12px;
@@ -1812,6 +1827,12 @@
     background: var(--bg-2);
     position: relative;
     flex-wrap: wrap;
+    min-width: 0;
+}
+
+.toolbar-shell {
+    grid-row: 7;
+    position: relative;
     min-width: 0;
 }
 
@@ -2305,6 +2326,7 @@
 
 /* Plan hand-off CTA (Architect → Code) */
 .plan-handoff {
+    grid-row: 5;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -2493,6 +2515,8 @@
 
 /* Settings view (full-pane) */
 .settings-view {
+    grid-row: 4;
+    min-height: 0;
     flex: 1;
     overflow-y: auto;
     padding: 16px 18px 32px;
@@ -2663,4 +2687,315 @@
     min-height: 24px;
     padding: 2px 8px;
     font-size: 11.5px;
+}
+
+/* ---------------------------------------------------------------------------
+   Minimal chat: uniform tool card + intent lines + summary card.
+   Designed to read like Claude Code's transcript: every tool gets the same
+   shell, every inter-tool prose chunk is a slim italic line, and the
+   turn-final message is promoted to a Summary card.
+--------------------------------------------------------------------------- */
+
+.tc-mini {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    gap: 0;
+    margin: 8px 0;
+    min-height: 34px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-3);
+    background: var(--surface-2);
+    overflow: hidden;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+
+.tc-mini.tc-error,
+.tc-mini.errored {
+    border-color: var(--danger, var(--warn));
+}
+
+.tc-mini.tc-rejected {
+    opacity: 0.65;
+}
+
+.tc-head {
+    display: grid;
+    grid-template-columns: 16px 8px auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 34px;
+    padding: 9px 12px;
+    color: var(--text);
+    line-height: 1.3;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+}
+
+.tc-head:hover {
+    background: var(--surface-hover, rgba(255, 255, 255, 0.04));
+}
+
+.tc-head:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
+.tc-icon {
+    color: var(--text-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+}
+
+.tc-mini.tc-running .tc-icon,
+.tc-mini.tc-done .tc-icon {
+    color: var(--text);
+}
+
+.tc-pip {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-faint);
+    flex-shrink: 0;
+}
+
+.tc-mini.tc-running .tc-pip,
+.tc-pip.running {
+    background: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+    animation: tc-pulse 1.4s ease-in-out infinite;
+}
+
+.tc-mini.tc-done .tc-pip {
+    background: var(--ok);
+}
+
+.tc-mini.tc-error .tc-pip,
+.tc-mini.errored .tc-pip {
+    background: var(--warn);
+}
+
+.tc-mini.tc-pending .tc-pip {
+    background: var(--warn);
+    box-shadow: 0 0 0 3px rgba(255, 170, 0, 0.18);
+}
+
+@keyframes tc-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.55; }
+}
+
+.tc-label {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-strong);
+    letter-spacing: 0.01em;
+}
+
+.tc-desc {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    direction: rtl;             /* keep the meaningful tail visible
+                                   when paths get truncated */
+    text-align: left;
+}
+
+.tc-desc::before {
+    content: "\200E";            /* LTR mark — re-anchors text direction
+                                   so punctuation/path separators read
+                                   normally even with direction: rtl */
+}
+
+.tc-status {
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    background: var(--surface-3, rgba(255, 255, 255, 0.05));
+    padding: 2px 7px;
+    border-radius: var(--r-1);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.tc-status-running { color: var(--accent); }
+.tc-status-error   { color: var(--warn); }
+.tc-status-pending { color: var(--warn); }
+
+.tc-mini .tc-chev {
+    color: var(--text-faint);
+    display: inline-flex;
+    align-items: center;
+    transition: transform 0.15s ease;
+}
+
+.tc-mini .tc-chev.open {
+    transform: rotate(90deg);
+}
+
+.tc-pane {
+    padding: 8px 12px 10px 36px;
+    border-top: 1px solid var(--border-faint);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.5;
+}
+
+.tc-pane-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 5px;
+}
+
+.tc-pane-body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    border: none;
+    font-family: inherit;
+    font-size: inherit;
+    color: inherit;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    overflow: hidden;
+    max-height: 4.8em;
+}
+
+.tc-expand {
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+}
+
+.tc-expand .tc-pane-body {
+    max-height: 600px;
+    overflow: auto;
+    color: var(--text-strong);
+}
+
+.tc-expand .tc-args .tc-pane-body {
+    max-height: 240px;
+    padding: 7px 8px;
+    border: 1px solid var(--border-faint);
+    border-radius: var(--r-2);
+    background: var(--bg);
+    color: var(--text);
+}
+
+.tc-pending {
+    padding: 8px 10px;
+    border-top: 1px solid rgba(217, 168, 88, 0.32);
+    background: var(--surface);
+}
+
+/* Intent line: a slim italic snippet of the model's own prose between
+   tool calls. No header, no accent bar — meant to feel like a thought. */
+.intent-line {
+    margin: 6px 2px 6px 4px;
+    padding-left: 8px;
+    border-left: 2px solid var(--border-faint);
+    color: var(--text-muted);
+    font-size: 12.5px;
+    font-style: italic;
+    line-height: 1.55;
+}
+
+.intent-line .markdown-body p {
+    margin: 0;
+}
+
+.intent-line .markdown-body>*:first-child {
+    margin-top: 0;
+}
+
+.intent-line .markdown-body>*:last-child {
+    margin-bottom: 0;
+}
+
+/* Summary card: the turn-final assistant message, promoted on task.done. */
+.summary-card {
+    margin: 12px 0 6px;
+    padding: 12px 14px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-faint);
+    border-radius: var(--r-3);
+    box-shadow: 0 1px 0 var(--border-faint);
+}
+
+.summary-head {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    margin-bottom: 6px;
+}
+
+.summary-body {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text);
+}
+
+.summary-body>*:first-child {
+    margin-top: 0;
+}
+
+.summary-body>*:last-child {
+    margin-bottom: 0;
+}
+
+/* Error card: prominent, never hides. Used for any agent-side failure
+   (LLM 4xx/5xx, missing API key, agent crash) and for the "no response"
+   placeholder when a turn completes without assistant text. */
+.error-card {
+    margin: 10px 0;
+    padding: 10px 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--warn);
+    border-left-width: 3px;
+    border-radius: var(--r-3);
+}
+
+.error-head {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--warn);
+    margin-bottom: 6px;
+}
+
+.error-body {
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
 }

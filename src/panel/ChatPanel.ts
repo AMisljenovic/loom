@@ -1112,7 +1112,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         status: msg.call.requiresApproval ? "pending" : "approved",
         callId: msg.call.callId,
         input: msg.call.input,
-        expanded: false,
+        expanded: msg.call.requiresApproval,
       });
       this.schedulePersist();
     } else if (msg.type === "questionRequest") {
@@ -1166,7 +1166,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
             status: msg.call.requiresApproval ? "pending" : "approved",
             callId: msg.call.callId,
             input: msg.call.input,
-            expanded: false,
+            expanded: msg.call.requiresApproval,
           },
         ],
       }));
@@ -1178,7 +1178,6 @@ export class ChatPanel implements vscode.WebviewViewProvider {
           ...tool,
           status: tool.status === "approved" ? "running" : tool.status,
           output: `${tool.output ?? ""}${msg.chunk}`,
-          expanded: tool.expanded ?? true,
         })),
       }));
       this.schedulePersist();
@@ -1215,7 +1214,6 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         ...tool,
         status: tool.status === "approved" ? "running" : tool.status,
         output: `${tool.output ?? ""}${msg.chunk}`,
-        expanded: tool.expanded ?? true,
       }));
       this.schedulePersist();
     } else if (msg.type === "toolResult") {

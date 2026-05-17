@@ -358,7 +358,7 @@ export type ToolStatus = "pending" | "approved" | "rejected" | "running" | "done
 
 export type Msg =
   | { role: "user"; text: string; references?: ReferenceAttachment[] }
-  | { role: "assistant"; text: string }
+  | { role: "assistant"; text: string; kind?: "intent" | "summary" | "error" }
   | { role: "progress"; text: string; phase: ProgressPhase; createdAt: number }
   | {
     role: "tool";

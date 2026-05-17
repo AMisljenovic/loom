@@ -44,6 +44,19 @@ popover's **Advanced settings…** link to configure max output tokens, a
 context-window override, reasoning effort (OpenAI / OpenAI-Compatible only),
 and custom HTTP headers sent with every LLM request.
 
+## Reading the chat
+
+Every tool call renders as a single uniform card: a short label
+(`Bash` / `Edit` / `Read` / `Search` / …), a one-line description, an `IN`
+pane with the input summary, and an `OUT` pane showing the first few lines
+of output. Click any card to expand inline details: full output, raw args,
+and approval controls when the tool is waiting. Expanded cards reserve their
+own transcript space so they remain readable above the composer. Between tool calls
+the model's own prose appears as slim italic *intent lines*, and the
+turn-final wrap-up is promoted to a **Summary** card. Live status
+(thinking / reading / running / waiting for approval) is shown in the
+composer pill, not inline in the transcript.
+
 ## Build
 
 Requires Node 20+ and Go 1.22+.
@@ -76,7 +89,7 @@ so generated VSIX metadata matches the Marketplace release.
 
 Important settings:
 
-- `loom.provider`: `anthropic`, `openai`, or `local`
+- `loom.provider`: `anthropic`, `openai`, `openai-compatible`, or `local`
 - `loom.telemetry.enabled`: opt-in telemetry, disabled by default
 - `loom.telemetry.endpoint`: HTTPS endpoint for batched sanitized events
 - `loom.mcp.servers`: stdio MCP server configuration

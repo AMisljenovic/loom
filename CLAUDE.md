@@ -100,6 +100,24 @@ change to a message type must be made on both sides.
   parser for responsiveness, but `ChatPanel.ts` owns persisted mode state.
 - **Markdown rendering is webview-only.** Session state stores raw assistant
   text. The webview renders safe Markdown without raw HTML.
+- **Transcript is minimal-by-design.** Every tool call renders through a
+  single uniform `ToolCardMinimal` (header = friendly label + short
+  description, IN pane = one-line input summary, OUT pane = first ~3 lines
+  truncated; click to expand). Do not re-introduce per-tool specialty body
+  components. Assistant deltas are split on tool-call / question / progress
+  boundaries — each chunk of inter-tool prose becomes a slim italic
+  `intent-line`. The last non-empty assistant message before
+  `task.done` with `reason === "completed"` is promoted to `kind: "summary"`
+  and renders as a Summary card. Inline progress notes are hidden in the
+  transcript — they're surfaced through the composer's live-status pill.
+  The promotion logic lives in [webview-ui/src/App.tsx](webview-ui/src/App.tsx),
+  not in Go; do not add prompt-side machinery to make summaries explicit.
+  `ToolCardMinimal` must reserve its full height inside the scrollable
+  transcript (`flex-shrink: 0`) so expanded output/args and approval controls
+  are never clipped behind the composer. Keep the component and CSS regression
+  tests in `webview-ui/src/components/thread/ToolCardMinimal.test.tsx` and
+  `webview-ui/src/styles/components.test.ts` updated with transcript UI
+  changes.
 - **Sub-agents run in parallel within a turn (v0.1.4).** The only built-in
   preset is `research`, exposed through `spawn_subagent`. Multiple
   `spawn_subagent` calls emitted in the same turn run concurrently through

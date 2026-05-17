@@ -72,6 +72,36 @@ function updateSubAgent(
   );
 }
 
+export function toggleToolExpanded(msgs: Msg[], callId: string): Msg[] {
+  let changed = false;
+  const toggle = (tool: Extract<Msg, { role: "tool" }>): Extract<Msg, { role: "tool" }> => {
+    changed = true;
+    return { ...tool, expanded: tool.expanded !== true };
+  };
+
+  const next = msgs.map((m) => {
+    if (m.role === "tool" && m.callId === callId) {
+      return toggle(m);
+    }
+    if (m.role !== "subagent") {
+      return m;
+    }
+
+    let traceChanged = false;
+    const trace = m.trace.map((traceMsg) => {
+      if (traceMsg.role !== "tool" || traceMsg.callId !== callId) {
+        return traceMsg;
+      }
+      traceChanged = true;
+      return toggle(traceMsg);
+    });
+
+    return traceChanged ? { ...m, trace } : m;
+  });
+
+  return changed ? next : msgs;
+}
+
 function mergeToolOutput(existing: string | undefined, summary: string): string {
   if (!existing) return summary;
   if (existing.includes(summary)) return existing;
@@ -370,18 +400,29 @@ export function App() {
       }
       flushDelta();
       flushSubagentDeltas();
+      // Anything that interrupts the assistant text stream closes the
+      // in-progress assistant bubble so subsequent deltas open a fresh
+      // intent line instead of being appended to the previous chunk.
+      if (
+        m.type === "toolCall" ||
+        m.type === "subagentSpawn" ||
+        m.type === "questionRequest" ||
+        m.type === "progress"
+      ) {
+        assistantRef.current = null;
+      }
       setMessages((prev) => {
         const next = [...prev];
         if (m.type === "progress") {
           next.push({ role: "progress", phase: m.phase, text: m.text, createdAt: m.createdAt });
         } else if (m.type === "toolCall") {
-          next.push({ role: "tool", name: m.call.name, status: m.call.requiresApproval ? "pending" : "approved", callId: m.call.callId, input: m.call.input, expanded: false });
+          next.push({ role: "tool", name: m.call.name, status: m.call.requiresApproval ? "pending" : "approved", callId: m.call.callId, input: m.call.input, expanded: m.call.requiresApproval });
         } else if (m.type === "questionRequest") {
           next.push({ role: "question", callId: m.callId, title: m.request?.title, questions: m.request?.questions ?? [], status: "pending" });
         } else if (m.type === "questionAnswered") {
           return updateQuestion(next, m.callId, (question) => ({ ...question, status: "answered", answers: m.answers }));
         } else if (m.type === "toolProgress") {
-          return updateTool(next, m.callId, (tool) => ({ ...tool, status: tool.status === "approved" ? "running" : tool.status, expanded: tool.expanded ?? true }));
+          return updateTool(next, m.callId, (tool) => ({ ...tool, status: tool.status === "approved" ? "running" : tool.status }));
         } else if (m.type === "toolResult") {
           return updateTool(next, m.callId, (tool) => {
             const finalOutput = mergeToolOutput(tool.output, m.summary);
@@ -402,12 +443,12 @@ export function App() {
         } else if (m.type === "subagentToolCall") {
           return updateSubAgent(next, m.subTaskId, (sub) => ({
             ...sub,
-            trace: [...sub.trace, { role: "tool", name: m.call.name, status: m.call.requiresApproval ? "pending" : "approved", callId: m.call.callId, input: m.call.input, expanded: false }],
+            trace: [...sub.trace, { role: "tool", name: m.call.name, status: m.call.requiresApproval ? "pending" : "approved", callId: m.call.callId, input: m.call.input, expanded: m.call.requiresApproval }],
           }));
         } else if (m.type === "subagentToolProgress") {
           return updateSubAgent(next, m.subTaskId, (sub) => ({
             ...sub,
-            trace: updateTool(sub.trace, m.callId, (tool) => ({ ...tool, status: tool.status === "approved" ? "running" : tool.status, expanded: tool.expanded ?? true })),
+            trace: updateTool(sub.trace, m.callId, (tool) => ({ ...tool, status: tool.status === "approved" ? "running" : tool.status })),
           }));
         } else if (m.type === "subagentToolResult") {
           return updateSubAgent(next, m.subTaskId, (sub) => ({
@@ -444,6 +485,30 @@ export function App() {
               next[assistantRef.current] = { ...cur, text: `${cur.text} [interrupted]` };
             }
           }
+          if (m.reason === "completed") {
+            // Promote the last non-empty assistant message to a summary
+            // card. Intermediate inter-tool prose stays as intent lines.
+            // If the model finished without producing any assistant text
+            // since the last user turn, surface a placeholder so the
+            // transcript isn't silent.
+            let promoted = false;
+            for (let i = next.length - 1; i >= 0; i--) {
+              const item = next[i];
+              if (item.role === "user") break;
+              if (item.role === "assistant" && item.text.trim()) {
+                next[i] = { ...item, kind: "summary" };
+                promoted = true;
+                break;
+              }
+            }
+            if (!promoted) {
+              next.push({
+                role: "assistant",
+                text: "Loom finished this turn without producing a response.",
+                kind: "error",
+              });
+            }
+          }
           const keepBusy = m.reason === "cancelled" && interruptQueuedRef.current;
           interruptQueuedRef.current = false;
           setBusy(keepBusy);
@@ -453,7 +518,8 @@ export function App() {
         } else if (m.type === "summarized") {
           next.push({ role: "assistant", text: `Context summarized (${m.droppedCount} older messages compacted).` });
         } else if (m.type === "error") {
-          next.push({ role: "assistant", text: `Error: ${m.error}` });
+          next.push({ role: "assistant", text: m.error || "Unknown error.", kind: "error" });
+          assistantRef.current = null;
           interruptQueuedRef.current = false;
           setBusy(false);
         }
@@ -529,6 +595,10 @@ export function App() {
     setBusy(true);
   };
 
+  const toggleToolExpandedForCall = (callId: string) => {
+    setMessages((m) => toggleToolExpanded(m, callId));
+  };
+
   const currentMode = modes.find((m) => m.id === currentModeId);
   const isEmpty = messages.length === 0;
   const showFirstRun = isEmpty && firstRun && (!firstRun.completed || firstRun.needsSetup);
@@ -579,7 +649,13 @@ export function App() {
       ) : isEmpty ? (
         <EmptyState mode={currentMode} onSuggest={(p) => { setInput(p); }} />
       ) : (
-        <Thread messages={messages} pendingDiffs={pendingDiffs} pendingOutputs={pendingOutputs} busy={busy} />
+        <Thread
+          messages={messages}
+          pendingDiffs={pendingDiffs}
+          pendingOutputs={pendingOutputs}
+          busy={busy}
+          onToggleToolExpanded={toggleToolExpandedForCall}
+        />
       )}
       {planHandoffArmed && !busy && (
         <div className="plan-handoff">
@@ -602,7 +678,7 @@ export function App() {
         disabled={hasPendingQuestion}
         hint={hasPendingQuestion ? "Answer the question above to continue" : undefined}
       />
-      <div style={{ position: "relative" }}>
+      <div className="toolbar-shell">
         <Toolbar
           llmConfig={llmConfig}
           usage={usage}
