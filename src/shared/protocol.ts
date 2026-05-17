@@ -3,19 +3,41 @@
 
 export type TaskId = string;
 export type CallId = string;
-export type LlmProvider = "openai" | "anthropic" | "local";
+export type LlmProvider = "openai" | "anthropic" | "local" | "openai-compatible";
 export type AgentLlmProvider = "openai" | "anthropic";
 export type ReasoningEffort = "" | "low" | "medium" | "high";
+
+export interface CustomHeader {
+  name: string;
+  value: string;
+}
+
+// Advanced per-config options exposed by the Settings view. All optional;
+// blank fields fall back to provider defaults.
+export interface AdvancedLlmOptions {
+  // Max tokens the model may generate. -1 / undefined => server default.
+  maxOutputTokens?: number;
+  // Override the model's known context window. Blank => use ModelContextLimit.
+  contextWindow?: number;
+  // Reasoning effort for reasoning-capable OpenAI / openai-compatible models.
+  reasoningEffort?: ReasoningEffort;
+  // Extra HTTP headers added to every outbound LLM request.
+  customHeaders?: CustomHeader[];
+}
 
 export interface LlmConfigView {
   provider: LlmProvider;
   model: string;
   baseUrl?: string;
+  // Legacy top-level field, kept for backward compatibility with persisted
+  // state. New code should read advanced.reasoningEffort.
   reasoningEffort?: ReasoningEffort;
+  advanced?: AdvancedLlmOptions;
   hasApiKey?: boolean;
   apiKeys?: {
     anthropic: boolean;
     openai: boolean;
+    "openai-compatible": boolean;
   };
 }
 
@@ -27,6 +49,9 @@ export interface ConfigUpdateParams {
   apiKey: string;
   baseUrl?: string;
   reasoningEffort?: ReasoningEffort;
+  maxOutputTokens?: number;
+  contextWindow?: number;
+  customHeaders?: CustomHeader[];
 }
 
 export type ConfigUpdateResult =

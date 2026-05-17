@@ -20,6 +20,7 @@ import { AutoApprovePopover } from "./components/AutoApprovePopover";
 import { EmptyState } from "./components/EmptyState";
 import { FirstRun } from "./components/FirstRun";
 import { PanelHeader } from "./components/PanelHeader";
+import { SettingsView } from "./components/SettingsView";
 import { InputArea, type LiveTaskStatus } from "./components/composer/InputArea";
 import { ConversationList } from "./components/conversations/ConversationList";
 import { AllowlistPopover } from "./components/popovers/AllowlistPopover";
@@ -203,6 +204,7 @@ export function App() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [showAllowlist, setShowAllowlist] = useState(false);
   const [showModel, setShowModel] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [modes, setModes] = useState<ModeDefinition[]>([]);
   const [currentModeId, setCurrentModeId] = useState<string>("code");
   const [notice, setNotice] = useState<string | null>(null);
@@ -570,7 +572,9 @@ export function App() {
         />
       )}
       {notice && <div className="notice-toast" role="status">{notice}</div>}
-      {showFirstRun ? (
+      {showSettings ? (
+        <SettingsView config={llmConfig} onClose={() => setShowSettings(false)} />
+      ) : showFirstRun ? (
         <FirstRun state={firstRun} onSample={(p) => setInput(p)} />
       ) : isEmpty ? (
         <EmptyState mode={currentMode} onSuggest={(p) => { setInput(p); }} />
@@ -613,7 +617,16 @@ export function App() {
           onShowAutoApprove={() => setShowAutoApprove((v) => !v)}
         />
         {showAllowlist && <AllowlistPopover rules={alwaysAllowRules} onClose={() => setShowAllowlist(false)} />}
-        {showModel && <ModelPopover config={llmConfig} onClose={() => setShowModel(false)} />}
+        {showModel && (
+          <ModelPopover
+            config={llmConfig}
+            onClose={() => setShowModel(false)}
+            onOpenSettings={() => {
+              setShowModel(false);
+              setShowSettings(true);
+            }}
+          />
+        )}
         {showAutoApprove && <AutoApprovePopover config={autoApprove} onClose={() => setShowAutoApprove(false)} />}
       </div>
     </div>

@@ -2,7 +2,7 @@
   "name": "loom-code",
   "displayName": "Loom Code",
   "description": "A VS Code coding agent with a fast Go backend, approval-aware tools, sessions, modes, MCP, and local indexing.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "Loom",
   "license": "Apache-2.0",
   "icon": "assets/icon.png",
@@ -84,11 +84,12 @@
           "enum": [
             "openai",
             "anthropic",
-            "local"
+            "local",
+            "openai-compatible"
           ],
           "default": "anthropic",
           "order": 10,
-          "markdownDescription": "**Loom: Provider**\n\nLLM provider. Can also be set via `MY_AGENT_PROVIDER` in `.env`."
+          "markdownDescription": "**Loom: Provider**\n\nLLM provider. Use `openai-compatible` for Azure OpenAI, OpenRouter, Groq, vLLM, or any OpenAI-API-shaped endpoint that requires its own key. Can also be set via `MY_AGENT_PROVIDER` in `.env`."
         },
         "loom.anthropicApiKey": {
           "type": "string",
@@ -145,6 +146,30 @@
           "default": "llama3.1",
           "order": 41,
           "markdownDescription": "**Loom: Local**\n\nLocal OpenAI-compatible model id."
+        },
+        "loom.openaiCompatible.baseUrl": {
+          "type": "string",
+          "default": "",
+          "order": 45,
+          "markdownDescription": "**Loom: OpenAI-Compatible**\n\nBase URL for an OpenAI-compatible endpoint (Azure OpenAI, OpenRouter, Groq, vLLM, etc.). Also `OPENAI_COMPATIBLE_BASE_URL`."
+        },
+        "loom.openaiCompatible.model": {
+          "type": "string",
+          "default": "gpt-4o",
+          "order": 46,
+          "markdownDescription": "**Loom: OpenAI-Compatible**\n\nModel id passed through to the endpoint. Also `OPENAI_COMPATIBLE_MODEL`."
+        },
+        "loom.openaiCompatible.reasoningEffort": {
+          "type": "string",
+          "enum": [
+            "",
+            "low",
+            "medium",
+            "high"
+          ],
+          "default": "",
+          "order": 47,
+          "markdownDescription": "**Loom: OpenAI-Compatible**\n\nReasoning effort for reasoning-capable models on the endpoint. Empty uses provider default."
         },
         "loom.mcp.servers": {
           "type": "object",

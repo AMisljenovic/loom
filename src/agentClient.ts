@@ -5,6 +5,7 @@ import { JsonRpc } from "./rpc";
 import type {
   ConfigUpdateParams,
   ConfigUpdateResult,
+  CustomHeader,
   IndexStatusNotify,
   McpConfig,
   McpConfigureResult,
@@ -44,6 +45,12 @@ export interface AgentEvents {
   onLog?: (line: string) => void;
 }
 
+export interface AdvancedOpts {
+  maxOutputTokens?: number;
+  contextWindow?: number;
+  customHeaders?: CustomHeader[];
+}
+
 export type LlmConfig =
   | {
     provider: "openai";
@@ -52,6 +59,17 @@ export type LlmConfig =
       baseUrl?: string;
       model: string;
       reasoningEffort?: ReasoningEffort;
+      advanced?: AdvancedOpts;
+    };
+  }
+  | {
+    provider: "openai-compatible";
+    openaiCompatible: {
+      apiKey: string;
+      baseUrl: string;
+      model: string;
+      reasoningEffort?: ReasoningEffort;
+      advanced?: AdvancedOpts;
     };
   }
   | {
@@ -66,6 +84,7 @@ export type LlmConfig =
     local: {
       baseUrl: string;
       model: string;
+      advanced?: AdvancedOpts;
     };
   };
 
@@ -275,6 +294,15 @@ function buildSpawnEnv(cfg: LlmConfig): Record<string, string> {
     env.OPENAI_MODEL = agentCfg.model;
     if (agentCfg.baseUrl) env.OPENAI_BASE_URL = agentCfg.baseUrl;
     if (agentCfg.reasoningEffort) env.OPENAI_REASONING_EFFORT = agentCfg.reasoningEffort;
+    if (typeof agentCfg.maxOutputTokens === "number" && agentCfg.maxOutputTokens > 0) {
+      env.OPENAI_MAX_OUTPUT_TOKENS = String(agentCfg.maxOutputTokens);
+    }
+    if (typeof agentCfg.contextWindow === "number" && agentCfg.contextWindow > 0) {
+      env.OPENAI_CONTEXT_WINDOW = String(agentCfg.contextWindow);
+    }
+    if (agentCfg.customHeaders && agentCfg.customHeaders.length > 0) {
+      env.OPENAI_CUSTOM_HEADERS = JSON.stringify(agentCfg.customHeaders);
+    }
   } else {
     env.ANTHROPIC_API_KEY = agentCfg.apiKey;
     env.MY_AGENT_MODEL = agentCfg.model;
@@ -289,6 +317,7 @@ function toAgentConfig(cfg: LlmConfig): ConfigUpdateParams {
       apiKey: "local",
       model: cfg.local.model,
       baseUrl: cfg.local.baseUrl,
+      ...advancedToParams(cfg.local.advanced),
     };
   }
   if (cfg.provider === "openai") {
@@ -298,6 +327,17 @@ function toAgentConfig(cfg: LlmConfig): ConfigUpdateParams {
       model: cfg.openai.model,
       baseUrl: cfg.openai.baseUrl,
       reasoningEffort: cfg.openai.reasoningEffort,
+      ...advancedToParams(cfg.openai.advanced),
+    };
+  }
+  if (cfg.provider === "openai-compatible") {
+    return {
+      provider: "openai",
+      apiKey: cfg.openaiCompatible.apiKey,
+      model: cfg.openaiCompatible.model,
+      baseUrl: cfg.openaiCompatible.baseUrl,
+      reasoningEffort: cfg.openaiCompatible.reasoningEffort,
+      ...advancedToParams(cfg.openaiCompatible.advanced),
     };
   }
   return {
@@ -305,4 +345,19 @@ function toAgentConfig(cfg: LlmConfig): ConfigUpdateParams {
     apiKey: cfg.anthropic.apiKey,
     model: cfg.anthropic.model,
   };
+}
+
+function advancedToParams(advanced: AdvancedOpts | undefined): Partial<ConfigUpdateParams> {
+  if (!advanced) return {};
+  const out: Partial<ConfigUpdateParams> = {};
+  if (typeof advanced.maxOutputTokens === "number" && advanced.maxOutputTokens > 0) {
+    out.maxOutputTokens = advanced.maxOutputTokens;
+  }
+  if (typeof advanced.contextWindow === "number" && advanced.contextWindow > 0) {
+    out.contextWindow = advanced.contextWindow;
+  }
+  if (advanced.customHeaders && advanced.customHeaders.length > 0) {
+    out.customHeaders = advanced.customHeaders.filter((h) => h.name.trim() !== "");
+  }
+  return out;
 }

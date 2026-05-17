@@ -114,6 +114,21 @@ change to a message type must be made on both sides.
   `workspaceState["loom.firstRun.completed"]`, posts `firstRunState`, and
   keeps API keys on the existing SecretStorage path. The webview renders the
   setup panel and forwards provider/key choices only.
+- **Providers are flexible.** Four providers are exposed in the UI:
+  `anthropic`, `openai`, `openai-compatible` (Azure/OpenRouter/Groq/vLLM),
+  and `local` (Ollama preset). Model fields are combo-style — a curated
+  dropdown plus an `Other…` text input so any model id can be typed. The
+  full-pane Settings view
+  ([webview-ui/src/components/SettingsView.tsx](webview-ui/src/components/SettingsView.tsx))
+  exposes Advanced fields — max output tokens, context-window override,
+  reasoning effort, custom HTTP headers — stored per-provider in
+  `workspaceState["loom.llm.advanced"]` and shipped to Go through
+  `ConfigUpdateParams` (and on first spawn via
+  `OPENAI_MAX_OUTPUT_TOKENS`, `OPENAI_CONTEXT_WINDOW`,
+  `OPENAI_CUSTOM_HEADERS` JSON). API keys for `openai-compatible` live in
+  SecretStorage under `loom.secret.openaiCompatibleApiKey`. On the wire to
+  Go, `openai-compatible` collapses to the `openai` provider with an
+  explicit `BaseURL` — there is no parallel agent-side branch.
 - **Shutdown is deliberate.** `ChatPanel.dispose()` cancels an active task,
   persists session state, clears pending approvals, and disposes
   `AgentClient`. Do not rely on VS Code process cleanup for update/reload

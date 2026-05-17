@@ -65,7 +65,15 @@ newline-delimited JSON-RPC over stdio.
    `ExtensionContext.storageUri` with legacy workspaceState bodies migrated
    and cleared. Switching active sessions must cancel any in-flight task first.
 10. First-run setup is host-owned state (`loom.firstRun.completed`) rendered
-    by the webview. API keys must still use VS Code SecretStorage.
+    by the webview. API keys must still use VS Code SecretStorage. Providers
+    are `anthropic`, `openai`, `openai-compatible` (Azure/OpenRouter/Groq/
+    vLLM — distinct from `local`), and `local`. Models are editable combos;
+    the Settings view stores per-provider advanced options
+    (max output tokens, context window, reasoning effort, custom headers)
+    under `workspaceState["loom.llm.advanced"]` and ships them to Go via
+    `ConfigUpdateParams` and spawn env (`OPENAI_MAX_OUTPUT_TOKENS`,
+    `OPENAI_CONTEXT_WINDOW`, `OPENAI_CUSTOM_HEADERS`). `openai-compatible`
+    collapses to `openai` on the wire.
 11. Extension shutdown/update cleanup must cancel active tasks, persist the
     session, and dispose the Go process explicitly.
 12. Go task panics must recover with sanitized opt-in telemetry and generic

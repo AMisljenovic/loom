@@ -13,12 +13,14 @@ import { detectModeSwitchIntent } from "../shared/modeIntent";
 import { extractProposedPlan } from "../shared/plans";
 import { progressKey, shouldAppendProgress } from "../shared/progress";
 import type {
+  AdvancedLlmOptions,
   AlwaysAllowRule,
   AskQuestionsInput,
   AutoApproveCategory,
   AutoApproveConfig,
   ConversationState,
   ConversationUpdated,
+  CustomHeader,
   FirstRunState,
   HostToWebview,
   LlmConfigView,
@@ -76,11 +78,15 @@ const AUTO_APPROVE_KEY = "loom.autoApprove";
 const ALWAYS_ALLOW_KEY = "loom.alwaysAllow";
 const MODE_KEY = "loom.currentMode";
 const FIRST_RUN_KEY = "loom.firstRun.completed";
+const ADVANCED_OPTS_KEY = "loom.llm.advanced";
 const MAX_TITLE_LEN = 60;
 const LOCAL_BASE_URL = "http://localhost:11434/v1";
 const LOCAL_MODEL = "llama3.1";
 const ANTHROPIC_MODEL = "claude-opus-4-7";
 const OPENAI_MODEL = "gpt-5";
+const OAI_COMPATIBLE_MODEL = "gpt-4o";
+
+type AdvancedByProvider = Partial<Record<LlmProvider, AdvancedLlmOptions>>;
 
 export class ChatPanel implements vscode.WebviewViewProvider {
   public static readonly viewType = "loom.chat";
@@ -1349,7 +1355,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   }
 
   private clearLegacySessionBodiesFromWorkspaceState() {
-    for (const id of legacySessionBodyIds(this.ctx.workspaceState.keys(), SESSION_BODY_PREFIX)) {
+    for (const id of legacySessionBodyIds([...this.ctx.workspaceState.keys()], SESSION_BODY_PREFIX)) {
       const key = this.bodyKey(id);
       const migrated = normalizeStoredConversationState(this.ctx.workspaceState.get<unknown>(key), id);
       if (migrated) {
@@ -1667,11 +1673,20 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     } else if (provider === "openai") {
       await settings.update("openai.model", config.model || OPENAI_MODEL, target);
       await settings.update("openai.baseUrl", config.baseUrl ?? "", target);
-      await settings.update("openai.reasoningEffort", this.validReasoningEffort(config.reasoningEffort), target);
+      const effort = this.validReasoningEffort(config.advanced?.reasoningEffort ?? config.reasoningEffort);
+      await settings.update("openai.reasoningEffort", effort, target);
+    } else if (provider === "openai-compatible") {
+      await settings.update("openaiCompatible.model", config.model || OAI_COMPATIBLE_MODEL, target);
+      await settings.update("openaiCompatible.baseUrl", config.baseUrl ?? "", target);
+      const effort = this.validReasoningEffort(config.advanced?.reasoningEffort ?? config.reasoningEffort);
+      await settings.update("openaiCompatible.reasoningEffort", effort, target);
     } else {
       await settings.update("local.model", config.model || LOCAL_MODEL, target);
       await settings.update("local.baseUrl", config.baseUrl || LOCAL_BASE_URL, target);
     }
+
+    const normalizedAdvanced = this.normalizeAdvanced(config.advanced);
+    await this.writeAdvanced(provider, normalizedAdvanced);
 
     const cfg = await this.resolveLlmConfig(this.workspaceRoot(), this.ctx.extensionPath);
     if ("error" in cfg) {
@@ -1828,15 +1843,32 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     const apiKeys = {
       anthropic: await this.hasApiKey("anthropic", "anthropicApiKey", "ANTHROPIC_API_KEY"),
       openai: await this.hasApiKey("openai", "openai.apiKey", "OPENAI_API_KEY"),
+      "openai-compatible": await this.hasApiKey("openai-compatible"),
     };
+    const advanced = this.readAdvanced(provider);
     if (provider === "openai") {
-      const reasoningEffort = this.validReasoningEffort(pick("openai.reasoningEffort", "OPENAI_REASONING_EFFORT"));
+      const reasoningEffort = this.validReasoningEffort(
+        advanced?.reasoningEffort ?? pick("openai.reasoningEffort", "OPENAI_REASONING_EFFORT"),
+      );
       return {
         provider,
         model: pick("openai.model", "OPENAI_MODEL") || OPENAI_MODEL,
         baseUrl: pick("openai.baseUrl", "OPENAI_BASE_URL") || undefined,
         reasoningEffort,
+        advanced: advanced ? { ...advanced, reasoningEffort } : { reasoningEffort },
         hasApiKey: apiKeys.openai,
+        apiKeys,
+      };
+    }
+    if (provider === "openai-compatible") {
+      const reasoningEffort = this.validReasoningEffort(advanced?.reasoningEffort);
+      return {
+        provider,
+        model: pick("openaiCompatible.model", "OPENAI_COMPATIBLE_MODEL") || OAI_COMPATIBLE_MODEL,
+        baseUrl: pick("openaiCompatible.baseUrl", "OPENAI_COMPATIBLE_BASE_URL") || undefined,
+        reasoningEffort,
+        advanced: advanced ? { ...advanced, reasoningEffort } : { reasoningEffort },
+        hasApiKey: apiKeys["openai-compatible"],
         apiKeys,
       };
     }
@@ -1845,6 +1877,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         provider,
         model: pick("local.model", "OPENAI_MODEL") || LOCAL_MODEL,
         baseUrl: pick("local.baseUrl", "OPENAI_BASE_URL") || LOCAL_BASE_URL,
+        advanced,
         hasApiKey: true,
         apiKeys,
       };
@@ -1865,12 +1898,13 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   ): Promise<LlmConfig | { error: string }> {
     const { pick, dotenv, dotenvSource } = this.configPickers(workspaceRoot, extensionPath);
     const pickApiKey = async (
-      providerName: "anthropic" | "openai",
-      settingKey: string,
-      envKey: string,
+      providerName: "anthropic" | "openai" | "openai-compatible",
+      settingKey?: string,
+      envKey?: string,
     ): Promise<string> => {
       const secret = await this.ctx.secrets.get(secretKeyFor(providerName));
       if (secret) return secret;
+      if (!settingKey || !envKey) return "";
       return pick(settingKey, envKey);
     };
 
@@ -1882,6 +1916,13 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       `.env=${dotenvFound ? `loaded from ${dotenvSource}` : "missing"} provider=${provider}`
     );
 
+    const advancedOpts = this.readAdvanced(provider);
+    const advancedForAgent = advancedOpts ? {
+      maxOutputTokens: advancedOpts.maxOutputTokens,
+      contextWindow: advancedOpts.contextWindow,
+      customHeaders: advancedOpts.customHeaders,
+    } : undefined;
+
     if (provider === "openai") {
       const apiKey = await pickApiKey("openai", "openai.apiKey", "OPENAI_API_KEY");
       if (!apiKey) {
@@ -1889,10 +1930,29 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       }
       const model = pick("openai.model", "OPENAI_MODEL") || OPENAI_MODEL;
       const baseUrl = pick("openai.baseUrl", "OPENAI_BASE_URL");
-      const validEffort = this.validReasoningEffort(pick("openai.reasoningEffort", "OPENAI_REASONING_EFFORT"));
+      const validEffort = this.validReasoningEffort(
+        advancedOpts?.reasoningEffort ?? pick("openai.reasoningEffort", "OPENAI_REASONING_EFFORT"),
+      );
       return {
         provider: "openai",
-        openai: { apiKey, model, baseUrl: baseUrl || undefined, reasoningEffort: validEffort },
+        openai: { apiKey, model, baseUrl: baseUrl || undefined, reasoningEffort: validEffort, advanced: advancedForAgent },
+      };
+    }
+
+    if (provider === "openai-compatible") {
+      const apiKey = await pickApiKey("openai-compatible");
+      if (!apiKey) {
+        return { error: "Set an API key for the OpenAI-compatible provider in Loom Settings." };
+      }
+      const model = pick("openaiCompatible.model", "OPENAI_COMPATIBLE_MODEL") || OAI_COMPATIBLE_MODEL;
+      const baseUrl = pick("openaiCompatible.baseUrl", "OPENAI_COMPATIBLE_BASE_URL");
+      if (!baseUrl) {
+        return { error: "Set a Base URL for the OpenAI-compatible provider in Loom Settings." };
+      }
+      const validEffort = this.validReasoningEffort(advancedOpts?.reasoningEffort);
+      return {
+        provider: "openai-compatible",
+        openaiCompatible: { apiKey, model, baseUrl, reasoningEffort: validEffort, advanced: advancedForAgent },
       };
     }
 
@@ -1908,19 +1968,20 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     if (provider === "local") {
       const model = pick("local.model", "OPENAI_MODEL") || LOCAL_MODEL;
       const baseUrl = pick("local.baseUrl", "OPENAI_BASE_URL") || LOCAL_BASE_URL;
-      return { provider: "local", local: { model, baseUrl } };
+      return { provider: "local", local: { model, baseUrl, advanced: advancedForAgent } };
     }
 
-    return { error: `Unknown provider "${provider}" - expected openai, anthropic, or local.` };
+    return { error: `Unknown provider "${provider}" - expected anthropic, openai, openai-compatible, or local.` };
   }
 
   private async hasApiKey(
-    provider: "anthropic" | "openai",
-    settingKey: string,
-    envKey: string,
+    provider: "anthropic" | "openai" | "openai-compatible",
+    settingKey?: string,
+    envKey?: string,
   ): Promise<boolean> {
     const secret = await this.ctx.secrets.get(secretKeyFor(provider));
     if (secret) return true;
+    if (!settingKey || !envKey) return false;
     const { pick } = this.configPickers(this.workspaceRoot(), this.ctx.extensionPath);
     return Boolean(pick(settingKey, envKey));
   }
@@ -1957,7 +2018,58 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   }
 
   private validProvider(provider: string): provider is LlmProvider {
-    return provider === "anthropic" || provider === "openai" || provider === "local";
+    return (
+      provider === "anthropic" ||
+      provider === "openai" ||
+      provider === "local" ||
+      provider === "openai-compatible"
+    );
+  }
+
+  private readAdvancedAll(): AdvancedByProvider {
+    const raw = this.ctx.workspaceState.get<unknown>(ADVANCED_OPTS_KEY);
+    if (!raw || typeof raw !== "object") return {};
+    return raw as AdvancedByProvider;
+  }
+
+  private readAdvanced(provider: LlmProvider): AdvancedLlmOptions | undefined {
+    return this.readAdvancedAll()[provider];
+  }
+
+  private async writeAdvanced(provider: LlmProvider, opts: AdvancedLlmOptions | undefined) {
+    const all = this.readAdvancedAll();
+    if (!opts || Object.keys(opts).length === 0) {
+      delete all[provider];
+    } else {
+      all[provider] = opts;
+    }
+    await this.ctx.workspaceState.update(ADVANCED_OPTS_KEY, all);
+  }
+
+  private normalizeAdvanced(input: AdvancedLlmOptions | undefined): AdvancedLlmOptions | undefined {
+    if (!input) return undefined;
+    const out: AdvancedLlmOptions = {};
+    if (typeof input.maxOutputTokens === "number" && input.maxOutputTokens > 0) {
+      out.maxOutputTokens = Math.floor(input.maxOutputTokens);
+    }
+    if (typeof input.contextWindow === "number" && input.contextWindow > 0) {
+      out.contextWindow = Math.floor(input.contextWindow);
+    }
+    if (input.reasoningEffort && this.validReasoningEffort(input.reasoningEffort)) {
+      out.reasoningEffort = input.reasoningEffort;
+    }
+    if (Array.isArray(input.customHeaders)) {
+      const headers: CustomHeader[] = [];
+      for (const h of input.customHeaders) {
+        if (!h || typeof h !== "object") continue;
+        const name = typeof h.name === "string" ? h.name.trim() : "";
+        const value = typeof h.value === "string" ? h.value : "";
+        if (!name) continue;
+        headers.push({ name, value });
+      }
+      if (headers.length > 0) out.customHeaders = headers;
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
   }
 
   private validReasoningEffort(value: string | undefined): ReasoningEffort {
@@ -1988,7 +2100,7 @@ function updateTool(
   messages: Msg[],
   callId: string,
   update: (tool: Extract<Msg, { role: "tool" }>) => Msg,
-) {
+): Msg[] {
   for (let i = messages.length - 1; i >= 0; i--) {
     const tool = messages[i];
     if (tool.role === "tool" && tool.callId === callId) {
@@ -1996,13 +2108,14 @@ function updateTool(
       break;
     }
   }
+  return messages;
 }
 
 function updateQuestion(
   messages: Msg[],
   callId: string,
   update: (question: Extract<Msg, { role: "question" }>) => Msg,
-) {
+): Msg[] {
   for (let i = messages.length - 1; i >= 0; i--) {
     const question = messages[i];
     if (question.role === "question" && question.callId === callId) {
@@ -2010,13 +2123,14 @@ function updateQuestion(
       break;
     }
   }
+  return messages;
 }
 
 function updateSubAgent(
   messages: Msg[],
   subTaskId: string,
   update: (subAgent: Extract<Msg, { role: "subagent" }>) => Msg,
-) {
+): Msg[] {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     if (msg.role === "subagent" && msg.subTaskId === subTaskId) {
@@ -2024,6 +2138,7 @@ function updateSubAgent(
       break;
     }
   }
+  return messages;
 }
 
 function mergeToolOutput(current: string | undefined, summary: string): string {

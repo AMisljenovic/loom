@@ -112,7 +112,17 @@ handoff:
     routing without updating `SUBAGENTS.md`.
 13. First-run setup is host-owned state and webview-rendered UI. The
     `loom.firstRun.completed` workspaceState key gates the setup panel; API
-    keys still go through VS Code SecretStorage via `setSecret`.
+    keys still go through VS Code SecretStorage via `setSecret`. Four
+    providers are exposed: `anthropic`, `openai`, `openai-compatible`
+    (Azure/OpenRouter/Groq/vLLM, distinct from `local`), and `local`. Models
+    are editable combos (curated dropdown + `Other…` text input). The
+    full-pane Settings view stores per-provider advanced options
+    (max output tokens, context-window override, reasoning effort, custom
+    HTTP headers) under `workspaceState["loom.llm.advanced"]` and ships
+    them to Go via `ConfigUpdateParams` plus the spawn env
+    (`OPENAI_MAX_OUTPUT_TOKENS`, `OPENAI_CONTEXT_WINDOW`,
+    `OPENAI_CUSTOM_HEADERS`). On the wire `openai-compatible` collapses to
+    `openai` with an explicit `BaseURL`.
 14. Extension shutdown and update handling must cancel any active task, persist
     the active session, and dispose the Go process deliberately. Keep cleanup
     in `ChatPanel.dispose()` / `AgentClient.dispose()`.

@@ -2490,3 +2490,177 @@
         gap: 5px;
     }
 }
+
+/* Settings view (full-pane) */
+.settings-view {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 18px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.settings-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.settings-head h2 {
+    margin: 0;
+    font-size: 15px;
+    color: var(--text-strong);
+    font-weight: 600;
+}
+
+.settings-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-faint);
+    border-radius: var(--r-3);
+}
+
+.settings-section>h3 {
+    margin: 0;
+    font-size: 12.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+.settings-section.settings-advanced>summary {
+    cursor: pointer;
+    font-size: 12.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    font-weight: 600;
+    list-style: none;
+    user-select: none;
+}
+
+.settings-section.settings-advanced>summary::-webkit-details-marker {
+    display: none;
+}
+
+.settings-section.settings-advanced>summary::before {
+    content: "▸ ";
+    font-size: 11px;
+}
+
+.settings-section.settings-advanced[open]>summary::before {
+    content: "▾ ";
+}
+
+.settings-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.settings-fields label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 11.5px;
+    color: var(--text-muted);
+}
+
+.settings-fields label>span {
+    font-size: 11.5px;
+    color: var(--text-muted);
+}
+
+.settings-fields input,
+.settings-fields select {
+    min-height: 32px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-2);
+    background: var(--bg);
+    color: var(--text);
+    padding: 6px 9px;
+    font-size: 12.5px;
+    outline: none;
+}
+
+.settings-fields input:focus,
+.settings-fields select:focus {
+    border-color: var(--accent-ring);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.settings-hint {
+    margin: 0;
+    color: var(--text-faint);
+    font-size: 11.5px;
+}
+
+.custom-headers {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.custom-headers-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11.5px;
+    color: var(--text-muted);
+}
+
+.custom-header-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 6px;
+    align-items: center;
+}
+
+.custom-header-row input {
+    min-height: 30px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-2);
+    background: var(--bg);
+    color: var(--text);
+    padding: 5px 8px;
+    font-size: 12px;
+    font-family: var(--font-mono);
+    outline: none;
+}
+
+.custom-header-row input:focus {
+    border-color: var(--accent-ring);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.settings-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.pop-link {
+    margin-top: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    border: none;
+    font-size: 11.5px;
+    text-decoration: underline;
+    cursor: pointer;
+    padding: 4px 0;
+    text-align: left;
+}
+
+.pop-link:hover {
+    color: var(--text);
+}
+
+.btn-sm {
+    min-height: 24px;
+    padding: 2px 8px;
+    font-size: 11.5px;
+}

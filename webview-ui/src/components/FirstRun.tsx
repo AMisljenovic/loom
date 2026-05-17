@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FirstRunState, LlmProvider } from "../../../src/shared/protocol";
 import { LoomMark } from "../brand/LoomMark";
 import * as Ico from "../brand/icons";
 import { post } from "../vscode";
+import { defaultModel, modelSuggestions, providerNeedsBaseUrl, providerNeedsKey } from "../util/provider";
 
 interface FirstRunProps {
     state: FirstRunState;
@@ -10,19 +11,7 @@ interface FirstRunProps {
 }
 
 const SAMPLE_PROMPT = "What does this project do? Read the README and summarize the main architecture.";
-
-const MODELS: Record<Exclude<LlmProvider, "local">, { label: string; value: string }[]> = {
-    anthropic: [
-        { label: "Claude Opus 4.7", value: "claude-opus-4-7" },
-        { label: "Claude 3.7 Sonnet", value: "claude-3-7-sonnet-20250219" },
-        { label: "Claude 3.5 Sonnet", value: "claude-3-5-sonnet-20241022" },
-    ],
-    openai: [
-        { label: "GPT-5", value: "gpt-5" },
-        { label: "GPT-4o", value: "gpt-4o" },
-        { label: "GPT-4o Mini", value: "gpt-4o-mini" },
-    ],
-};
+const OTHER_VALUE = "__other__";
 
 export function FirstRun({ state, onSample }: FirstRunProps) {
     const [provider, setProvider] = useState<LlmProvider>(state.llmConfig.provider);
@@ -36,23 +25,40 @@ export function FirstRun({ state, onSample }: FirstRunProps) {
         setBaseUrl(state.llmConfig.baseUrl ?? "http://localhost:11434/v1");
     }, [state.llmConfig.provider, state.llmConfig.model, state.llmConfig.baseUrl]);
 
-    const providerModels = provider === "local" ? [] : MODELS[provider];
-    const hasKey = provider === "local" || Boolean(state.llmConfig.apiKeys?.[provider as Exclude<LlmProvider, "local">]);
-    const canContinue = provider === "local" || hasKey || apiKey.trim().length > 0;
+    const suggestions = useMemo(() => modelSuggestions(provider), [provider]);
+    const inSuggestions = suggestions.some((m) => m.value === model);
+    const [selectMode, setSelectMode] = useState<"preset" | "other">(inSuggestions ? "preset" : "other");
+    useEffect(() => {
+        setSelectMode(inSuggestions ? "preset" : "other");
+    }, [inSuggestions]);
+
+    const needsKey = providerNeedsKey(provider);
+    const hasKey = !needsKey || Boolean(state.llmConfig.apiKeys?.[provider as "anthropic" | "openai" | "openai-compatible"]);
+    const canContinue = !needsKey || hasKey || apiKey.trim().length > 0;
 
     const apply = () => {
-        if (provider !== "local" && apiKey.trim()) {
-            post({ type: "setSecret", provider, apiKey: apiKey.trim() });
+        if (needsKey && apiKey.trim()) {
+            post({ type: "setSecret", provider: provider as "anthropic" | "openai" | "openai-compatible", apiKey: apiKey.trim() });
         }
         post({
             type: "setLlmConfig",
             config: {
                 provider,
                 model: model || defaultModel(provider),
-                baseUrl: provider === "local" || provider === "openai" ? baseUrl || undefined : undefined,
+                baseUrl: providerNeedsBaseUrl(provider) ? (baseUrl || undefined) : undefined,
             },
         });
         post({ type: "completeFirstRun" });
+    };
+
+    const pickProvider = (next: LlmProvider) => {
+        setProvider(next);
+        setModel(defaultModel(next));
+        if (next === "local") {
+            setBaseUrl("http://localhost:11434/v1");
+        } else if (next === "openai-compatible") {
+            setBaseUrl(state.llmConfig.baseUrl ?? "");
+        }
     };
 
     return (
@@ -66,50 +72,66 @@ export function FirstRun({ state, onSample }: FirstRunProps) {
             </div>
 
             <div className="provider-grid" aria-label="Provider">
-                <ProviderButton active={provider === "anthropic"} label="Anthropic" onClick={() => { setProvider("anthropic"); setModel(defaultModel("anthropic")); }} />
-                <ProviderButton active={provider === "openai"} label="OpenAI" onClick={() => { setProvider("openai"); setModel(defaultModel("openai")); }} />
-                <ProviderButton active={provider === "local"} label="Local" onClick={() => { setProvider("local"); setModel(defaultModel("local")); setBaseUrl("http://localhost:11434/v1"); }} />
+                <ProviderButton active={provider === "anthropic"} label="Anthropic" onClick={() => pickProvider("anthropic")} />
+                <ProviderButton active={provider === "openai"} label="OpenAI" onClick={() => pickProvider("openai")} />
+                <ProviderButton active={provider === "openai-compatible"} label="OpenAI-Compatible" onClick={() => pickProvider("openai-compatible")} />
+                <ProviderButton active={provider === "local"} label="Local" onClick={() => pickProvider("local")} />
             </div>
 
             <div className="setup-fields">
-                {provider === "local" ? (
-                    <>
-                        <label>
-                            <span>Base URL</span>
-                            <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="http://localhost:11434/v1" />
-                        </label>
-                        <label>
-                            <span>Model</span>
-                            <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="llama3.1" />
-                        </label>
-                    </>
-                ) : (
-                    <>
-                        <label>
-                            <span>Model</span>
-                            <select value={model} onChange={(e) => setModel(e.target.value)}>
-                                {providerModels.map((m) => (
-                                    <option key={m.value} value={m.value}>{m.label}</option>
-                                ))}
-                            </select>
-                        </label>
-                        {provider === "openai" && (
-                            <label>
-                                <span>Base URL</span>
-                                <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.openai.com/v1" />
-                            </label>
-                        )}
-                        <label>
-                            <span>API Key {hasKey ? "(set)" : "(required)"}</span>
-                            <input
-                                type="password"
-                                value={apiKey}
-                                onChange={(e) => setApiKey(e.target.value)}
-                                placeholder={hasKey ? "Leave blank to keep current key" : "Paste key"}
-                                autoComplete="off"
-                            />
-                        </label>
-                    </>
+                {providerNeedsBaseUrl(provider) && (
+                    <label>
+                        <span>Base URL</span>
+                        <input
+                            value={baseUrl}
+                            onChange={(e) => setBaseUrl(e.target.value)}
+                            placeholder={
+                                provider === "local"
+                                    ? "http://localhost:11434/v1"
+                                    : provider === "openai-compatible"
+                                        ? "https://your-endpoint/v1"
+                                        : "https://api.openai.com/v1"
+                            }
+                        />
+                    </label>
+                )}
+                <label>
+                    <span>Model</span>
+                    <select
+                        value={selectMode === "other" ? OTHER_VALUE : model}
+                        onChange={(e) => {
+                            const v = e.target.value;
+                            if (v === OTHER_VALUE) {
+                                setSelectMode("other");
+                                return;
+                            }
+                            setSelectMode("preset");
+                            setModel(v);
+                        }}
+                    >
+                        {suggestions.map((m) => (
+                            <option key={m.value} value={m.value}>{m.label}</option>
+                        ))}
+                        <option value={OTHER_VALUE}>Other…</option>
+                    </select>
+                </label>
+                {selectMode === "other" && (
+                    <label>
+                        <span>Model id</span>
+                        <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="Type a model id" />
+                    </label>
+                )}
+                {needsKey && (
+                    <label>
+                        <span>API Key {hasKey ? "(set)" : "(required)"}</span>
+                        <input
+                            type="password"
+                            value={apiKey}
+                            onChange={(e) => setApiKey(e.target.value)}
+                            placeholder={hasKey ? "Leave blank to keep current key" : "Paste key"}
+                            autoComplete="off"
+                        />
+                    </label>
                 )}
             </div>
 
@@ -134,10 +156,4 @@ function ProviderButton({ active, label, onClick }: { active: boolean; label: st
             <span>{label}</span>
         </button>
     );
-}
-
-function defaultModel(provider: LlmProvider): string {
-    if (provider === "openai") return "gpt-5";
-    if (provider === "local") return "llama3.1";
-    return "claude-opus-4-7";
 }

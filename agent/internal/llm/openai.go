@@ -13,17 +13,28 @@ import (
 	"github.com/openai/openai-go/shared"
 )
 
+type HeaderPair struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
 type OpenAIConfig struct {
 	APIKey          string
 	BaseURL         string // empty -> SDK default (https://api.openai.com/v1)
 	Model           string
 	ReasoningEffort string // "" | "low" | "medium" | "high"
+	// Advanced options. Zero values mean "use provider defaults".
+	MaxOutputTokens int64
+	ContextWindow   int64
+	CustomHeaders   []HeaderPair
 }
 
 type openaiProvider struct {
-	client openai.Client
-	model  string
-	effort shared.ReasoningEffort
+	client          openai.Client
+	model           string
+	effort          shared.ReasoningEffort
+	maxOutputTokens int64
+	contextWindow   int64
 }
 
 func newOpenAI(cfg OpenAIConfig) (Provider, error) {
@@ -37,6 +48,13 @@ func newOpenAI(cfg OpenAIConfig) (Provider, error) {
 	opts := []option.RequestOption{option.WithAPIKey(cfg.APIKey)}
 	if cfg.BaseURL != "" {
 		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
+	}
+	for _, h := range cfg.CustomHeaders {
+		name := strings.TrimSpace(h.Name)
+		if name == "" {
+			continue
+		}
+		opts = append(opts, option.WithHeader(name, h.Value))
 	}
 
 	var effort shared.ReasoningEffort
@@ -54,9 +72,11 @@ func newOpenAI(cfg OpenAIConfig) (Provider, error) {
 	}
 
 	return &openaiProvider{
-		client: openai.NewClient(opts...),
-		model:  cfg.Model,
-		effort: effort,
+		client:          openai.NewClient(opts...),
+		model:           cfg.Model,
+		effort:          effort,
+		maxOutputTokens: cfg.MaxOutputTokens,
+		contextWindow:   cfg.ContextWindow,
 	}, nil
 }
 
@@ -130,6 +150,9 @@ func (p *openaiProvider) Stream(
 	if p.effort != "" {
 		params.ReasoningEffort = p.effort
 	}
+	if p.maxOutputTokens > 0 {
+		params.MaxTokens = openai.Int(p.maxOutputTokens)
+	}
 
 	stream := p.client.Chat.Completions.NewStreaming(ctx, params)
 	acc := openai.ChatCompletionAccumulator{}
@@ -202,6 +225,9 @@ func (p *openaiProvider) Complete(ctx context.Context, systemPrompt string, mess
 	if p.effort != "" {
 		params.ReasoningEffort = p.effort
 	}
+	if p.maxOutputTokens > 0 {
+		params.MaxTokens = openai.Int(p.maxOutputTokens)
+	}
 	resp, err := p.client.Chat.Completions.New(ctx, params)
 	if err != nil {
 		return "", TokenUsage{}, err
@@ -221,5 +247,8 @@ func (p *openaiProvider) Model() string {
 }
 
 func (p *openaiProvider) MaxContextTokens() int64 {
+	if p.contextWindow > 0 {
+		return p.contextWindow
+	}
 	return ModelContextLimit(p.model)
 }

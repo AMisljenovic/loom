@@ -1,44 +1,52 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { LlmConfigView, LlmProvider } from "../../../../src/shared/protocol";
 import * as Ico from "../../brand/icons";
 import { post } from "../../vscode";
+import { defaultModel, modelSuggestions, providerNeedsBaseUrl, providerNeedsKey } from "../../util/provider";
 
 interface ModelPopoverProps {
     config: LlmConfigView | null;
     onClose: () => void;
+    onOpenSettings: () => void;
 }
 
-const MODELS: Record<Exclude<LlmProvider, "local">, { label: string; value: string }[]> = {
-    anthropic: [
-        { label: "Claude Opus 4.7", value: "claude-opus-4-7" },
-        { label: "Claude 3.7 Sonnet", value: "claude-3-7-sonnet-20250219" },
-        { label: "Claude 3.5 Sonnet", value: "claude-3-5-sonnet-20241022" },
-    ],
-    openai: [
-        { label: "GPT-5", value: "gpt-5" },
-        { label: "GPT-4o", value: "gpt-4o" },
-        { label: "GPT-4o Mini", value: "gpt-4o-mini" },
-    ],
-};
+const OTHER_VALUE = "__other__";
 
-export function ModelPopover({ config, onClose }: ModelPopoverProps) {
+export function ModelPopover({ config, onClose, onOpenSettings }: ModelPopoverProps) {
     const [provider, setProvider] = useState<LlmProvider>(config?.provider ?? "anthropic");
     const [model, setModel] = useState(config?.model ?? defaultModel(config?.provider ?? "anthropic"));
     const [apiKey, setApiKey] = useState("");
     const [baseUrl, setBaseUrl] = useState(config?.baseUrl ?? "");
 
+    useEffect(() => {
+        setProvider(config?.provider ?? "anthropic");
+        setModel(config?.model ?? defaultModel(config?.provider ?? "anthropic"));
+        setBaseUrl(config?.baseUrl ?? "");
+    }, [config?.provider, config?.model, config?.baseUrl]);
+
+    const suggestions = useMemo(() => modelSuggestions(provider), [provider]);
+    const inSuggestions = suggestions.some((m) => m.value === model);
+    const [selectMode, setSelectMode] = useState<"preset" | "other">(inSuggestions ? "preset" : "other");
+
+    useEffect(() => {
+        setSelectMode(inSuggestions ? "preset" : "other");
+    }, [inSuggestions]);
+
     const apply = () => {
-        if (provider !== "local" && apiKey.trim()) {
+        if (providerNeedsKey(provider) && apiKey.trim()) {
             post({ type: "setSecret", provider, apiKey: apiKey.trim() });
         }
         post({
             type: "setLlmConfig",
-            config: { provider, model: model || defaultModel(provider), baseUrl: baseUrl || undefined },
+            config: {
+                provider,
+                model: model || defaultModel(provider),
+                baseUrl: providerNeedsBaseUrl(provider) ? (baseUrl || undefined) : undefined,
+                advanced: config?.advanced,
+            },
         });
         onClose();
     };
-
-    const providerModels = provider === "local" ? [] : MODELS[provider];
 
     return (
         <div className="popover model-pop">
@@ -61,36 +69,50 @@ export function ModelPopover({ config, onClose }: ModelPopoverProps) {
                             setBaseUrl("http://localhost:11434/v1");
                         } else if (next === "anthropic") {
                             setBaseUrl("");
+                        } else if (next === "openai") {
+                            setBaseUrl("");
+                        } else if (next === "openai-compatible") {
+                            setBaseUrl(config?.baseUrl ?? "");
                         }
                     }}
                 >
                     <option value="anthropic">Anthropic</option>
                     <option value="openai">OpenAI</option>
+                    <option value="openai-compatible">OpenAI-Compatible</option>
                     <option value="local">Local</option>
                 </select>
 
                 <label className="pop-label">Model</label>
-                {provider === "local" ? (
+                <select
+                    className="pop-select"
+                    value={selectMode === "other" ? OTHER_VALUE : model}
+                    onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === OTHER_VALUE) {
+                            setSelectMode("other");
+                            return;
+                        }
+                        setSelectMode("preset");
+                        setModel(v);
+                    }}
+                >
+                    {suggestions.map((m) => (
+                        <option key={m.value} value={m.value}>{m.label}</option>
+                    ))}
+                    <option value={OTHER_VALUE}>Other…</option>
+                </select>
+                {selectMode === "other" && (
                     <input
                         className="pop-input"
                         type="text"
                         value={model}
                         onChange={(e) => setModel(e.target.value)}
-                        placeholder="llama3.1"
+                        placeholder="Type a model id"
+                        autoComplete="off"
                     />
-                ) : (
-                    <select
-                        className="pop-select"
-                        value={model}
-                        onChange={(e) => setModel(e.target.value)}
-                    >
-                        {providerModels.map((m) => (
-                            <option key={m.value} value={m.value}>{m.label}</option>
-                        ))}
-                    </select>
                 )}
 
-                {(provider === "openai" || provider === "local") && (
+                {providerNeedsBaseUrl(provider) && (
                     <>
                         <label className="pop-label">Base URL</label>
                         <input
@@ -98,33 +120,44 @@ export function ModelPopover({ config, onClose }: ModelPopoverProps) {
                             type="text"
                             value={baseUrl}
                             onChange={(e) => setBaseUrl(e.target.value)}
-                            placeholder={provider === "local" ? "http://localhost:11434/v1" : "https://api.openai.com/v1"}
+                            placeholder={
+                                provider === "local"
+                                    ? "http://localhost:11434/v1"
+                                    : provider === "openai-compatible"
+                                        ? "https://your-endpoint/v1"
+                                        : "https://api.openai.com/v1"
+                            }
                         />
                     </>
                 )}
 
-                {provider !== "local" && (
+                {providerNeedsKey(provider) && (
                     <>
-                        <label className="pop-label">API Key {config?.apiKeys?.[provider] ? "(set)" : "(not set)"}</label>
+                        <label className="pop-label">
+                            API Key {config?.apiKeys?.[provider] ? "(set)" : "(not set)"}
+                        </label>
                         <input
                             className="pop-input"
                             type="password"
                             value={apiKey}
                             onChange={(e) => setApiKey(e.target.value)}
-                            placeholder={config?.apiKeys?.[provider] ? "Update key..." : "Enter key..."}
+                            placeholder={config?.apiKeys?.[provider] ? "Update key…" : "Enter key…"}
                             autoComplete="off"
                         />
                     </>
                 )}
 
                 <button className="pop-apply" onClick={apply}>Apply</button>
+                <button
+                    className="pop-link"
+                    onClick={() => {
+                        onClose();
+                        onOpenSettings();
+                    }}
+                >
+                    Advanced settings…
+                </button>
             </div>
         </div>
     );
-}
-
-function defaultModel(provider: LlmProvider): string {
-    if (provider === "openai") return "gpt-5";
-    if (provider === "local") return "llama3.1";
-    return "claude-opus-4-7";
 }

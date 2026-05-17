@@ -31,10 +31,18 @@ Open the Loom view from the activity bar. The first-run panel lets you choose:
 
 - Anthropic with an Anthropic API key
 - OpenAI with an OpenAI API key
+- OpenAI-Compatible endpoint with its own Base URL and API key (Azure OpenAI,
+  OpenRouter, Groq, vLLM, LM Studio, etc.)
 - Local OpenAI-compatible endpoint, such as Ollama
 
 API keys are stored in VS Code SecretStorage. Loom also supports `.env` and
 environment variables for development.
+
+The model field is editable everywhere — pick from a curated list or choose
+`Other…` to type any model id. Open the full Settings view from the model
+popover's **Advanced settings…** link to configure max output tokens, a
+context-window override, reasoning effort (OpenAI / OpenAI-Compatible only),
+and custom HTTP headers sent with every LLM request.
 
 ## Build
 
