@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/openai/openai-go"
@@ -45,17 +46,7 @@ func newOpenAI(cfg OpenAIConfig) (Provider, error) {
 		return nil, errors.New("OPENAI_MODEL is required")
 	}
 
-	opts := []option.RequestOption{option.WithAPIKey(cfg.APIKey)}
-	if cfg.BaseURL != "" {
-		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
-	}
-	for _, h := range cfg.CustomHeaders {
-		name := strings.TrimSpace(h.Name)
-		if name == "" {
-			continue
-		}
-		opts = append(opts, option.WithHeader(name, h.Value))
-	}
+	opts := openAIRequestOptions(cfg)
 
 	var effort shared.ReasoningEffort
 	switch strings.ToLower(strings.TrimSpace(cfg.ReasoningEffort)) {
@@ -78,6 +69,39 @@ func newOpenAI(cfg OpenAIConfig) (Provider, error) {
 		maxOutputTokens: cfg.MaxOutputTokens,
 		contextWindow:   cfg.ContextWindow,
 	}, nil
+}
+
+func openAIRequestOptions(cfg OpenAIConfig) []option.RequestOption {
+	opts := []option.RequestOption{option.WithAPIKey(cfg.APIKey)}
+	if cfg.BaseURL != "" {
+		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
+		if isAzureOpenAIBaseURL(cfg.BaseURL) {
+			opts = append(
+				opts,
+				option.WithHeaderDel("authorization"),
+				option.WithHeader("api-key", cfg.APIKey),
+			)
+		}
+	}
+	for _, h := range cfg.CustomHeaders {
+		name := strings.TrimSpace(h.Name)
+		if name == "" {
+			continue
+		}
+		opts = append(opts, option.WithHeader(name, h.Value))
+	}
+	return opts
+}
+
+func isAzureOpenAIBaseURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return strings.HasSuffix(host, ".openai.azure.com") ||
+		strings.HasSuffix(host, ".services.ai.azure.com") ||
+		strings.HasSuffix(host, ".cognitiveservices.azure.com")
 }
 
 func (p *openaiProvider) Family() string { return "openai" }

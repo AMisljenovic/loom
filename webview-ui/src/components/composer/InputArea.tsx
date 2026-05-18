@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import type { ReferenceAttachment } from "../../../../src/shared/protocol";
+import type { ReferenceAttachment, ReferencePacksIndex } from "../../../../src/shared/protocol";
 import * as Ico from "../../brand/icons";
 import { parseAtQuery, replaceAtQuery } from "../../util/atMention";
 import { post } from "../../vscode";
@@ -19,9 +19,14 @@ interface InputAreaProps {
     disabled?: boolean;
     hint?: string;
     references?: ReferenceAttachment[];
+    packs?: ReferencePacksIndex;
     onAddReference?: () => void;
     onRemoveReference?: (id: string) => void;
     onDirectReference?: (ref: ReferenceAttachment) => void;
+    onSavePack?: (name: string) => void;
+    onApplyPack?: (id: string, mode?: "merge" | "replace") => void;
+    onDeletePack?: (id: string) => void;
+    onRenamePack?: (id: string, name: string) => void;
 }
 
 export function InputArea({
@@ -33,9 +38,14 @@ export function InputArea({
     disabled,
     hint,
     references = [],
+    packs,
     onAddReference,
     onRemoveReference,
     onDirectReference,
+    onSavePack,
+    onApplyPack,
+    onDeletePack,
+    onRenamePack,
 }: InputAreaProps) {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const requestIdRef = useRef(0);
@@ -43,6 +53,18 @@ export function InputArea({
     const [suggestions, setSuggestions] = useState<ReferenceAttachment[]>([]);
     const [atQuery, setAtQuery] = useState<{ query: string; start: number; end: number } | null>(null);
     const [selectedIdx, setSelectedIdx] = useState(0);
+    const [showPacks, setShowPacks] = useState(false);
+    const [savePromptOpen, setSavePromptOpen] = useState(false);
+    const [packDraft, setPackDraft] = useState("");
+    const [packRenameId, setPackRenameId] = useState<string | null>(null);
+    const [packRenameDraft, setPackRenameDraft] = useState("");
+
+    const orderedPacks = packs
+        ? packs.order.map((id) => packs.packs[id]).filter((p): p is NonNullable<typeof p> => !!p)
+        : [];
+    const packMatches = atQuery
+        ? orderedPacks.filter((p) => p.name.toLowerCase().includes(atQuery.query.toLowerCase()))
+        : [];
 
     // Auto-resize textarea
     useEffect(() => {
@@ -100,13 +122,50 @@ export function InputArea({
         setTimeout(() => textareaRef.current?.focus(), 0);
     }
 
+    function selectPack(packId: string) {
+        if (atQuery) {
+            onInput(replaceAtQuery(input, atQuery.start, atQuery.end));
+        }
+        onApplyPack?.(packId, "merge");
+        closeSuggestions();
+        setTimeout(() => textareaRef.current?.focus(), 0);
+    }
+
+    function commitSavePack() {
+        const name = packDraft.trim();
+        if (name) {
+            onSavePack?.(name);
+        }
+        setPackDraft("");
+        setSavePromptOpen(false);
+    }
+
+    function commitRenamePack(id: string) {
+        const name = packRenameDraft.trim();
+        if (name) {
+            onRenamePack?.(id, name);
+        }
+        setPackRenameId(null);
+        setPackRenameDraft("");
+    }
+
+    const totalSuggestions = suggestions.length + packMatches.length;
+
     const canSubmit = input.trim().length > 0 || references.length > 0;
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-        if (suggestions.length > 0 && atQuery) {
-            if (e.key === "ArrowDown") { e.preventDefault(); setSelectedIdx((i) => Math.min(i + 1, suggestions.length - 1)); return; }
+        if (totalSuggestions > 0 && atQuery) {
+            if (e.key === "ArrowDown") { e.preventDefault(); setSelectedIdx((i) => Math.min(i + 1, totalSuggestions - 1)); return; }
             if (e.key === "ArrowUp") { e.preventDefault(); setSelectedIdx((i) => Math.max(i - 1, 0)); return; }
-            if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); selectSuggestion(suggestions[selectedIdx]); return; }
+            if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                if (selectedIdx < packMatches.length) {
+                    selectPack(packMatches[selectedIdx].id);
+                } else {
+                    selectSuggestion(suggestions[selectedIdx - packMatches.length]);
+                }
+                return;
+            }
             if (e.key === "Escape") { e.preventDefault(); closeSuggestions(); return; }
         }
         if (atQuery && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
@@ -121,24 +180,80 @@ export function InputArea({
     return (
         <div className="input-area">
             {busy && status && <TaskStatus status={status} />}
+            {showPacks && (
+                <div className="packs-panel" role="region" aria-label="Saved reference packs">
+                    <div className="packs-head">
+                        <span>Reference packs</span>
+                        <button className="btn btn-sm" onClick={() => setShowPacks(false)}>Close</button>
+                    </div>
+                    {orderedPacks.length === 0 ? (
+                        <div className="packs-empty">No saved packs yet. Add references and click "Save as pack".</div>
+                    ) : (
+                        orderedPacks.map((pack) => (
+                            <div className="pack-row" key={pack.id}>
+                                <div className="pack-main">
+                                    {packRenameId === pack.id ? (
+                                        <input
+                                            className="pack-rename-input"
+                                            autoFocus
+                                            value={packRenameDraft}
+                                            onChange={(e) => setPackRenameDraft(e.target.value)}
+                                            onBlur={() => commitRenamePack(pack.id)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === "Enter") commitRenamePack(pack.id);
+                                                else if (e.key === "Escape") { setPackRenameId(null); setPackRenameDraft(""); }
+                                            }}
+                                        />
+                                    ) : (
+                                        <span className="pack-name">{pack.name}</span>
+                                    )}
+                                    <span className="pack-meta">{pack.refs.length} item{pack.refs.length === 1 ? "" : "s"}</span>
+                                </div>
+                                <div className="pack-actions">
+                                    <button className="btn btn-sm" onClick={() => { onApplyPack?.(pack.id, "merge"); setShowPacks(false); }}>Apply</button>
+                                    <button className="btn btn-sm" onClick={() => { onApplyPack?.(pack.id, "replace"); setShowPacks(false); }} title="Replace current references">Replace</button>
+                                    <button className="btn btn-sm" onClick={() => { setPackRenameId(pack.id); setPackRenameDraft(pack.name); }}>Rename</button>
+                                    <button className="btn btn-sm danger" onClick={() => onDeletePack?.(pack.id)}>Delete</button>
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
+            )}
             <div className="composer">
-                {suggestions.length > 0 && atQuery && (
-                    <div className="sug-popover" role="listbox" aria-label="File suggestions">
-                        {suggestions.map((ref, i) => (
+                {totalSuggestions > 0 && atQuery && (
+                    <div className="sug-popover" role="listbox" aria-label="Reference suggestions">
+                        {packMatches.map((pack, i) => (
                             <div
-                                key={ref.id}
+                                key={`pack-${pack.id}`}
                                 className={`sug-item${i === selectedIdx ? " active" : ""}`}
                                 role="option"
                                 aria-selected={i === selectedIdx}
-                                onMouseDown={(e) => { e.preventDefault(); selectSuggestion(ref); }}
+                                onMouseDown={(e) => { e.preventDefault(); selectPack(pack.id); }}
                             >
-                                <span className="sug-icon">
-                                    {ref.kind === "folder" ? <Ico.Folder size={13} /> : <Ico.File size={13} />}
-                                </span>
-                                <span className="sug-label">{ref.label ?? ref.path.split("/").pop()}</span>
-                                <span className="sug-path">{ref.path}</span>
+                                <span className="sug-icon"><Ico.Folder size={13} /></span>
+                                <span className="sug-label">pack: {pack.name}</span>
+                                <span className="sug-path">{pack.refs.length} refs</span>
                             </div>
                         ))}
+                        {suggestions.map((ref, i) => {
+                            const idx = i + packMatches.length;
+                            return (
+                                <div
+                                    key={ref.id}
+                                    className={`sug-item${idx === selectedIdx ? " active" : ""}`}
+                                    role="option"
+                                    aria-selected={idx === selectedIdx}
+                                    onMouseDown={(e) => { e.preventDefault(); selectSuggestion(ref); }}
+                                >
+                                    <span className="sug-icon">
+                                        {ref.kind === "folder" ? <Ico.Folder size={13} /> : <Ico.File size={13} />}
+                                    </span>
+                                    <span className="sug-label">{ref.label ?? ref.path.split("/").pop()}</span>
+                                    <span className="sug-path">{ref.path}</span>
+                                </div>
+                            );
+                        })}
                     </div>
                 )}
                 {references.length > 0 && (
@@ -157,6 +272,31 @@ export function InputArea({
                                 </button>
                             </span>
                         ))}
+                        {savePromptOpen ? (
+                            <span className="pack-save-prompt">
+                                <input
+                                    className="pack-save-input"
+                                    autoFocus
+                                    value={packDraft}
+                                    onChange={(e) => setPackDraft(e.target.value)}
+                                    onBlur={commitSavePack}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter") commitSavePack();
+                                        else if (e.key === "Escape") { setPackDraft(""); setSavePromptOpen(false); }
+                                    }}
+                                    placeholder="Pack name…"
+                                />
+                            </span>
+                        ) : (
+                            <button
+                                type="button"
+                                className="pack-save-btn"
+                                onClick={() => { setSavePromptOpen(true); setPackDraft(""); }}
+                                title="Save current references as a reusable pack"
+                            >
+                                Save as pack
+                            </button>
+                        )}
                     </div>
                 )}
                 <textarea
@@ -202,6 +342,17 @@ export function InputArea({
                         >
                             <Ico.Plus size={13} />
                         </button>
+                        {orderedPacks.length > 0 && (
+                            <button
+                                className="attach-btn"
+                                onClick={() => setShowPacks((v) => !v)}
+                                disabled={disabled}
+                                title="Manage reference packs"
+                                aria-label="Manage reference packs"
+                            >
+                                <Ico.Folder size={13} />
+                            </button>
+                        )}
                         <button
                             className="send-btn"
                             onClick={onSubmit}

@@ -32,6 +32,19 @@ func Scenarios() []Scenario {
 			},
 		},
 		{
+			Name: "code-diff-recovery-guidance",
+			Mode: "code",
+			Files: map[string]string{
+				"src/stale.ts": "export const label = 'alpha';\n",
+			},
+			Prompt: "Change src/stale.ts so label is 'gamma'. If an apply_diff exact-match edit fails, recover by reading the current file and replacing the whole file once.",
+			Assertions: []Assertion{
+				{Type: "called_tool", Tool: "read_file"},
+				{Type: "called_tool", Tool: "apply_diff"},
+				{Type: "touched_file", Path: "src/stale.ts"},
+			},
+		},
+		{
 			Name: "code-go-error-handling-skill",
 			Mode: "code",
 			Files: map[string]string{

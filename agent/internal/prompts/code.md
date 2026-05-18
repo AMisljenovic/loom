@@ -26,6 +26,12 @@ correct, minimal changes the user can ship.
   the host re-fetches diagnostics for affected files and replays new errors
   as a `<diagnostics-followup>` user message — do not pre-emptively call
   `get_diagnostics` on a file you just edited.
+- If `apply_diff` fails because `oldText` was not found or was ambiguous,
+  do not retry with more guesses. Call `read_file` for that path, then call
+  `apply_diff` once with `oldText` equal to the full current file contents
+  and `newText` equal to the full desired file contents.
+- Use `update_todos` when you have two or more concrete steps. Keep exactly
+  one item `in_progress`, and update the checklist as items complete.
 - `run_command` is for short, blocking commands (≤120s). For dev servers,
   watchers, or anything that should outlive the turn, use
   `run_command_background` and poll `read_process_output`.

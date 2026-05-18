@@ -232,6 +232,30 @@ func Registry() []Tool {
 			// No LocalExec - executed interactively on the TS side.
 		},
 		{
+			Name: "update_todos",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"title": map[string]any{"type": "string"},
+					"items": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"id":     map[string]any{"type": "string"},
+								"text":   map[string]any{"type": "string"},
+								"status": map[string]any{"type": "string", "enum": []string{"pending", "in_progress", "done", "cancelled"}},
+							},
+							"required": []string{"id", "text", "status"},
+						},
+					},
+				},
+				"required": []string{"items"},
+			},
+			// No LocalExec - executed on the TS side so the webview can update
+			// its transcript todo card in real time.
+		},
+		{
 			Name: "spawn_subagent",
 			InputSchema: map[string]any{
 				"type": "object",

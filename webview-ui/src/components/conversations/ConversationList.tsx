@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { SessionMeta, SessionsIndex } from "../../../../src/shared/protocol";
+import type { SessionMeta, SessionSearchHit, SessionsIndex } from "../../../../src/shared/protocol";
 import * as Ico from "../../brand/icons";
 import { formatAge } from "../../util/format";
 import { post } from "../../vscode";
@@ -14,6 +14,8 @@ interface ConversationListProps {
     onEndRename: () => void;
     onNewConversation: () => void;
     onSessionPicked: () => void;
+    searchResults: SessionSearchHit[];
+    onSearch: (query: string) => void;
 }
 
 export function ConversationList({
@@ -25,16 +27,37 @@ export function ConversationList({
     onEndRename,
     onNewConversation,
     onSessionPicked,
+    searchResults,
+    onSearch,
 }: ConversationListProps) {
-    if (!index || Object.keys(index.sessions).length === 0) {
+    const [query, setQuery] = useState("");
+    const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const updateQuery = (value: string) => {
+        setQuery(value);
+        if (searchTimerRef.current !== null) clearTimeout(searchTimerRef.current);
+        searchTimerRef.current = setTimeout(() => {
+            searchTimerRef.current = null;
+            onSearch(value);
+        }, 180);
+    };
+
+    const hasIndex = !!index && Object.keys(index.sessions).length > 0;
+    if (!hasIndex) {
         return (
             <div className="convo-list">
                 <div className="convo-list-head">
                     <span>Sessions</span>
-                    <button className="convo-new" onClick={onNewConversation}>
-                        <Ico.Plus size={11} />
-                        New
-                    </button>
+                    <div className="convo-head-actions">
+                        <button className="convo-new" onClick={() => post({ type: "sessionImport" })} title="Import a session">
+                            <Ico.Folder size={11} />
+                            Import
+                        </button>
+                        <button className="convo-new" onClick={onNewConversation}>
+                            <Ico.Plus size={11} />
+                            New
+                        </button>
+                    </div>
                 </div>
             </div>
         );
@@ -57,18 +80,66 @@ export function ConversationList({
             onBeginRename={() => onBeginRename(meta.conversationId)}
             onEndRename={onEndRename}
             onSessionPicked={onSessionPicked}
+            matchCount={hitsById.get(meta.conversationId)?.matches.length}
         />
     );
+
+    const trimmed = query.trim();
+    const hitsById = new Map(searchResults.map((h) => [h.conversationId, h]));
 
     return (
         <div className="convo-list">
             <div className="convo-list-head">
                 <span>Sessions</span>
-                <button className="convo-new" onClick={onNewConversation}>
-                    <Ico.Plus size={11} />
-                    New
-                </button>
+                <div className="convo-head-actions">
+                    <button className="convo-new" onClick={() => post({ type: "sessionImport" })} title="Import a session">
+                        <Ico.Folder size={11} />
+                        Import
+                    </button>
+                    <button className="convo-new" onClick={onNewConversation}>
+                        <Ico.Plus size={11} />
+                        New
+                    </button>
+                </div>
             </div>
+            <div className="convo-search">
+                <input
+                    type="search"
+                    value={query}
+                    onChange={(e) => updateQuery(e.target.value)}
+                    placeholder="Search sessions and transcripts…"
+                    aria-label="Search sessions"
+                />
+                {trimmed && searchResults.length > 0 && (
+                    <span className="convo-search-count">{searchResults.length} match{searchResults.length === 1 ? "" : "es"}</span>
+                )}
+            </div>
+            {trimmed && searchResults.length > 0 && (
+                <div className="convo-search-results">
+                    {searchResults.map((hit) => {
+                        const meta = index!.sessions[hit.conversationId];
+                        return (
+                            <div className="convo-search-hit" key={hit.conversationId}>
+                                <button
+                                    className="convo-search-title"
+                                    onClick={() => {
+                                        post({ type: "switchSession", conversationId: hit.conversationId });
+                                        onSessionPicked();
+                                    }}
+                                >
+                                    {meta?.title || hit.title}
+                                </button>
+                                {hit.matches.map((m, i) => (
+                                    <div className="convo-search-snippet" key={i}>{m.snippet}</div>
+                                ))}
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+            {trimmed && searchResults.length === 0 && (
+                <div className="convo-search-empty">No transcript matches for "{trimmed}".</div>
+            )}
             {pinned.length > 0 && (
                 <>
                     <div className="section-head">Pinned</div>
@@ -104,9 +175,10 @@ interface ConversationRowProps {
     onBeginRename: () => void;
     onEndRename: () => void;
     onSessionPicked: () => void;
+    matchCount?: number;
 }
 
-function ConversationRow({ meta, isActive, isRenaming, onBeginRename, onEndRename, onSessionPicked }: ConversationRowProps) {
+function ConversationRow({ meta, isActive, isRenaming, onBeginRename, onEndRename, onSessionPicked, matchCount }: ConversationRowProps) {
     const [draft, setDraft] = useState(meta.title);
     const [menuOpen, setMenuOpen] = useState(false);
     const [menuPos, setMenuPos] = useState({ top: 0, right: 0 });
@@ -177,6 +249,9 @@ function ConversationRow({ meta, isActive, isRenaming, onBeginRename, onEndRenam
                 </button>
             )}
 
+            {typeof matchCount === "number" && matchCount > 0 && (
+                <span className="convo-match-count" title={`${matchCount} match${matchCount === 1 ? "" : "es"}`}>{matchCount}</span>
+            )}
             <span className="convo-age">{formatAge(meta.updatedAt)}</span>
 
             <div ref={menuRef} style={{ flexShrink: 0 }}>
@@ -206,6 +281,12 @@ function ConversationRow({ meta, isActive, isRenaming, onBeginRename, onEndRenam
                         </button>
                         <button className="ctx-item" onClick={() => { setMenuOpen(false); post({ type: "togglePinSession", conversationId: meta.conversationId }); }}>
                             <Ico.Pin size={12} /> {meta.pinned ? "Unpin" : "Pin"}
+                        </button>
+                        <button className="ctx-item" onClick={() => { setMenuOpen(false); post({ type: "sessionExport", conversationId: meta.conversationId, format: "markdown" }); }}>
+                            <Ico.File size={12} /> Export as Markdown
+                        </button>
+                        <button className="ctx-item" onClick={() => { setMenuOpen(false); post({ type: "sessionExport", conversationId: meta.conversationId, format: "json" }); }}>
+                            <Ico.File size={12} /> Export as JSON
                         </button>
                         <div className="ctx-sep" />
                         {meta.state === "archived" ? (

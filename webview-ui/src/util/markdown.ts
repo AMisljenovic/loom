@@ -18,10 +18,12 @@ const STRUCTURAL_TAGS = [
   "proposed_plan",
   "references",
   "diagnostics-followup",
+  "affected-files",
+  "diagnostics",
 ];
 
 const STRUCTURAL_TAG_RE = new RegExp(
-  `</?(?:${STRUCTURAL_TAGS.join("|")})\\s*/?>`,
+  `<\\s*/?\\s*(?:${STRUCTURAL_TAGS.join("|")})\\s*/?\\s*>`,
   "gi",
 );
 

@@ -46,4 +46,26 @@ describe("component layout CSS invariants", () => {
         expectDeclaration(rule(".input-area"), "grid-row", "6");
         expectDeclaration(rule(".toolbar-shell"), "grid-row", "7");
     });
+
+    it("keeps settings provider selection compact in narrow sidebars", () => {
+        const segmented = rule(".provider-segmented");
+        expectDeclaration(segmented, "grid-template-columns", "repeat(4, minmax(0, 1fr))");
+
+        const segment = rule(".provider-segment");
+        expectDeclaration(segment, "white-space", "nowrap");
+        expectDeclaration(segment, "overflow", "hidden");
+        expectDeclaration(segment, "text-overflow", "ellipsis");
+    });
+
+    it("renders todo cards as non-shrinking transcript entries", () => {
+        const card = rule(".todo-card");
+        expectDeclaration(card, "flex-shrink", "0");
+        expectDeclaration(card, "background", "transparent");
+    });
+
+    it("renders stop cards as non-shrinking transcript entries", () => {
+        const card = rule(".stop-card");
+        expectDeclaration(card, "flex-shrink", "0");
+        expectDeclaration(card, "border-left", "3px solid var(--warn)");
+    });
 });

@@ -28,6 +28,33 @@ and trust inside their editor.
 
 ## Features
 
+## What's New in 0.4.0
+
+Loom 0.4.0 focuses on making long agent work easier to follow and easier to
+recover when something goes sideways.
+
+- **Live task todos**: Code and Debug tasks can now show an in-place todo list
+  that updates as the agent works, including plan handoff from Architect mode.
+- **Recoverable edits**: when an exact `apply_diff` edit no longer matches the
+  file, Loom tells the model to read the current file and retry with a full-file
+  replacement through the same approval/diff flow.
+- **Cleaner transcripts**: internal tags such as affected files and diagnostics
+  are stripped from rendered messages while their useful contents stay visible.
+- **Better stop handling**: if a task is cancelled, errors, or reaches the
+  model/tool turn limit, Loom shows a stop card with the reason, elapsed time
+  when available, and a Continue button.
+- **Settings refresh**: model settings now use a denser provider selector and
+  full-width fields that behave better in VS Code's narrow side panel.
+- **OpenAI-compatible reliability**: provider settings refresh before each task,
+  and Azure/OpenAI-compatible endpoints use the expected API-key header behavior.
+- **Workflow polish**: grouped approvals, process controls, reference packs,
+  session search/branch/export/import, MCP status, and semantic search panels
+  are easier to reach from the UI.
+
+For release packaging, bump `package.json` and `package-lock.json`, update this
+section or `CHANGELOG.md`, build/package the VSIX files, then publish the GitHub
+release or Marketplace package.
+
 **Agent modes**
 
 Switch between Code, Architect, Ask, and Debug modes. Modes define the active

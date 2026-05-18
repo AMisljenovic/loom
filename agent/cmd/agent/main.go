@@ -164,6 +164,7 @@ func main() {
 				conn.Notify("task.done", map[string]any{
 					"taskId": p.TaskID,
 					"reason": "error",
+					"error":  err.Error(),
 				})
 				taskRegistry.Complete(p.TaskID, loop.TaskError)
 				log.Printf("task error: %v", err)

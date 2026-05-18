@@ -11,6 +11,7 @@ export function toolActivityLabel(msg: Extract<Msg, { role: "tool" }>): string {
         case "find_references": return `Found references${suffix}`;
         case "semantic_search": return `Searched semantically${suffix}`;
         case "get_diagnostics": return `Checked diagnostics${suffix}`;
+        case "update_todos": return `Updated todos${suffix}`;
         case "load_skill": return `Loaded skill${suffix}`;
         case "apply_diff": return msg.status === "pending" ? `Approve changes${suffix}` : `Changed${suffix}`;
         case "run_command": return msg.status === "pending" ? `Approve command${suffix}` : `Ran${suffix}`;
@@ -52,6 +53,8 @@ export function summarizeToolInput(name: string, input: unknown): string | undef
         }
         case "get_diagnostics":
             return pick("path") ?? pick("severity") ?? "workspace";
+        case "update_todos":
+            return pick("title");
         case "spawn_subagent":
             return pick("task") ?? pick("type");
         default:
@@ -107,6 +110,8 @@ export function toolLabel(name: string): string {
             return "Semantic";
         case "get_diagnostics":
             return "Diagnostics";
+        case "update_todos":
+            return "Todos";
         case "spawn_subagent":
             return "Research";
         case "load_skill":

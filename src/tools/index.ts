@@ -3,6 +3,7 @@ import * as childProcess from "node:child_process";
 import * as nodePath from "node:path";
 import * as vscode from "vscode";
 import type { ToolCall, ToolFollowup, ToolFollowupDiagRow, ToolResult } from "../shared/protocol";
+import { recoverableApplyDiffError } from "./applyDiffRecovery";
 import { killProcess, readProcessOutput, runCommandBackground } from "./processes";
 
 export type ApprovalFn = (call: ToolCall) => Promise<boolean>;
@@ -114,10 +115,10 @@ export async function prepareApplyDiff(
     }
     const occurrences = countOccurrences(after, edit.oldText);
     if (occurrences === 0) {
-      throw new Error(`edit ${index + 1}: oldText not found`);
+      throw new Error(recoverableApplyDiffError(input.path, index + 1, "oldText not found"));
     }
     if (occurrences > 1) {
-      throw new Error(`edit ${index + 1}: oldText found ${occurrences} times - disambiguate with more context`);
+      throw new Error(recoverableApplyDiffError(input.path, index + 1, `oldText found ${occurrences} times`));
     }
     after = after.replace(edit.oldText, edit.newText);
   });

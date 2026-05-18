@@ -28,6 +28,10 @@ Modify or create a file relative to the workspace root using one or more edits.
   including whitespace and indentation. Match is literal, not regex.
 - If `oldText` matches multiple places, the call fails — provide more
   surrounding context to make it unique.
+- If a call fails because `oldText` is not found or is ambiguous, recover by
+  calling `read_file` for the same path, then call `apply_diff` once with
+  `oldText` equal to the full current file contents and `newText` equal to the
+  full desired file contents. Do not repeatedly retry guessed partial edits.
 - After a successful apply, the host re-fetches diagnostics for the affected
   files (~750ms settle) and replays new errors as a `<diagnostics-followup>`
   user message on the next turn. Do not pre-emptively call `get_diagnostics`

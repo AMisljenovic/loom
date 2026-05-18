@@ -11,8 +11,13 @@ import type {
   McpServerStatus,
   ModeDefinition,
   Msg,
+  ProcessSnapshot,
   ReferenceAttachment,
+  ReferencePacksIndex,
+  SessionSearchHit,
   SessionsIndex,
+  ToolApprovalItem,
+  TodoItem,
   ToolStatus,
 } from "../../src/shared/protocol";
 import { mergeReferenceAttachments, normalizeReferenceAttachments } from "../../src/shared/references";
@@ -25,6 +30,9 @@ import { InputArea, type LiveTaskStatus } from "./components/composer/InputArea"
 import { ConversationList } from "./components/conversations/ConversationList";
 import { AllowlistPopover } from "./components/popovers/AllowlistPopover";
 import { ModelPopover } from "./components/popovers/ModelPopover";
+import { McpPanel } from "./components/McpPanel";
+import { PlanHandoff } from "./components/PlanHandoff";
+import { SearchPanel } from "./components/SearchPanel";
 import { Thread } from "./components/thread/Thread";
 import { Toolbar } from "./components/toolbar/Toolbar";
 import { post } from "./vscode";
@@ -100,6 +108,105 @@ export function toggleToolExpanded(msgs: Msg[], callId: string): Msg[] {
   });
 
   return changed ? next : msgs;
+}
+
+export function upsertTodoMessage(
+  msgs: Msg[],
+  taskId: string,
+  title: string | undefined,
+  items: TodoItem[],
+): Msg[] {
+  const normalized = normalizeTodoItems(items);
+  if (normalized.length === 0) return msgs;
+  const idx = msgs.findIndex((m) => m.role === "todo" && m.taskId === taskId);
+  const todoMsg: Extract<Msg, { role: "todo" }> = {
+    role: "todo",
+    taskId,
+    title,
+    items: normalized,
+  };
+  if (idx < 0) return [...msgs, todoMsg];
+  const next = [...msgs];
+  const existing = next[idx] as Extract<Msg, { role: "todo" }>;
+  next[idx] = { ...todoMsg, title: title || existing.title };
+  return next;
+}
+
+export function upsertStopMessage(msgs: Msg[], stop: Extract<Msg, { role: "stop" }>): Msg[] {
+  if (!stop.taskId) return [...msgs, stop];
+  const idx = msgs.findIndex((m) => m.role === "stop" && m.taskId === stop.taskId);
+  if (idx < 0) return [...msgs, stop];
+  const next = [...msgs];
+  next[idx] = stop;
+  return next;
+}
+
+export function taskStopMessage(input: {
+  taskId?: string;
+  reason: Extract<Msg, { role: "stop" }>["reason"];
+  error?: string;
+  durationMs?: number;
+  maxTurns?: number;
+}): Extract<Msg, { role: "stop" }> {
+  const elapsed = formatDuration(input.durationMs);
+  const suffix = elapsed ? ` after ${elapsed}` : "";
+  const baseContinue = "Continue from where you stopped. Keep using the existing context, plan, and todos.";
+  if (input.reason === "turn_limit") {
+    const limit = input.maxTurns ? `${input.maxTurns} model/tool turns` : "the model/tool turn limit";
+    return {
+      role: "stop",
+      taskId: input.taskId,
+      title: "Stopped at turn limit",
+      text: input.error || `Loom reached ${limit}${suffix}. Continue to keep working from this conversation state.`,
+      reason: input.reason,
+      durationMs: input.durationMs,
+      canContinue: true,
+      continuePrompt: baseContinue,
+    };
+  }
+  if (input.reason === "cancelled") {
+    return {
+      role: "stop",
+      taskId: input.taskId,
+      title: "Task cancelled",
+      text: `This task was cancelled${suffix}. Continue when you want Loom to resume from the current conversation state.`,
+      reason: input.reason,
+      durationMs: input.durationMs,
+      canContinue: true,
+      continuePrompt: baseContinue,
+    };
+  }
+  return {
+    role: "stop",
+    taskId: input.taskId,
+    title: "Task stopped",
+    text: input.error || "Loom stopped this turn unexpectedly. Check the extension Output channel for details.",
+    reason: input.reason,
+    durationMs: input.durationMs,
+    canContinue: true,
+    continuePrompt: baseContinue,
+  };
+}
+
+function formatDuration(ms: number | undefined): string {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "";
+  const totalSeconds = Math.max(1, Math.round(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes <= 0) return `${seconds}s`;
+  return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`;
+}
+
+function normalizeTodoItems(items: TodoItem[]): TodoItem[] {
+  return items
+    .map((item, index) => ({
+      id: item.id?.trim() || `todo-${index + 1}`,
+      text: item.text.trim(),
+      status: item.status === "in_progress" || item.status === "done" || item.status === "cancelled"
+        ? item.status
+        : "pending",
+    }))
+    .filter((item) => item.text);
 }
 
 function mergeToolOutput(existing: string | undefined, summary: string): string {
@@ -211,6 +318,46 @@ function trimDetail(value: string): string {
   return value.length > 90 ? `${value.slice(0, 87)}...` : value;
 }
 
+export function removeApprovalBatchItem(
+  batch: { batchId: string; items: ToolApprovalItem[] } | null,
+  callId: string,
+): { batchId: string; items: ToolApprovalItem[] } | null {
+  if (!batch) return null;
+  const items = batch.items.filter((item) => item.callId !== callId);
+  return items.length > 0 ? { ...batch, items } : null;
+}
+
+export function buildApprovalBatchDecisions(
+  items: ToolApprovalItem[],
+  decision: "approved" | "rejected",
+): Record<string, "approved" | "rejected"> {
+  return Object.fromEntries(items.map((item) => [item.callId, decision] as const));
+}
+
+function prettyToolInput(input: unknown): string {
+  if (input == null) return "(no args)";
+  try {
+    return JSON.stringify(input, null, 2);
+  } catch {
+    return String(input);
+  }
+}
+
+function formatProcessBytes(totalBytes: number): string {
+  if (totalBytes < 1024) return `${totalBytes} B`;
+  if (totalBytes < 1024 * 1024) return `${(totalBytes / 1024).toFixed(1)} KB`;
+  return `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatProcessAge(startedAt: number): string {
+  const seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ago`;
+}
+
 export function App() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -224,6 +371,8 @@ export function App() {
   }));
   const [showAutoApprove, setShowAutoApprove] = useState(false);
   const [alwaysAllowRules, setAlwaysAllowRules] = useState<AlwaysAllowRule[]>([]);
+  const [processes, setProcesses] = useState<ProcessSnapshot[]>([]);
+  const [approvalBatch, setApprovalBatch] = useState<{ batchId: string; items: ToolApprovalItem[] } | null>(null);
   const [pendingDiffs, setPendingDiffs] = useState<Map<string, string>>(() => new Map());
   const [pendingOutputs, setPendingOutputs] = useState<Map<string, string>>(() => new Map());
   const [mcpStatuses, setMcpStatuses] = useState<McpServerStatus[]>([]);
@@ -235,11 +384,20 @@ export function App() {
   const [showAllowlist, setShowAllowlist] = useState(false);
   const [showModel, setShowModel] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showProcesses, setShowProcesses] = useState(false);
+  const [showApprovalCenter, setShowApprovalCenter] = useState(false);
+  const [showMcp, setShowMcp] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
   const [modes, setModes] = useState<ModeDefinition[]>([]);
   const [currentModeId, setCurrentModeId] = useState<string>("code");
   const [notice, setNotice] = useState<string | null>(null);
   const [planHandoffArmed, setPlanHandoffArmed] = useState(false);
+  const [planHandoffMarkdown, setPlanHandoffMarkdown] = useState<string>("");
   const [references, setReferences] = useState<ReferenceAttachment[]>([]);
+  const [referencePacks, setReferencePacks] = useState<ReferencePacksIndex>({ version: 1, order: [], packs: {} });
+  const [sessionSearchHits, setSessionSearchHits] = useState<SessionSearchHit[]>([]);
+  const [workspaceFolders, setWorkspaceFolders] = useState<Array<{ uri: string; name: string }>>([]);
+  const [activeWorkspaceFolderUri, setActiveWorkspaceFolderUri] = useState<string>("");
 
   const rootRef = useRef<HTMLDivElement>(null);
   const assistantRef = useRef<number | null>(null);
@@ -265,7 +423,7 @@ export function App() {
       deltaBufferRef.current = "";
       deltaFrameRef.current = null;
       setMessages((prev) => {
-        const next = [...prev];
+        let next = [...prev];
         if (assistantRef.current === null) {
           next.push({ role: "assistant", text });
           assistantRef.current = next.length - 1;
@@ -331,6 +489,7 @@ export function App() {
         setPendingDiffs(new Map());
         setPendingOutputs(new Map());
         setMcpStatuses([]);
+        setApprovalBatch(null);
         setBusy(false);
         assistantRef.current = null;
         interruptQueuedRef.current = false;
@@ -373,7 +532,20 @@ export function App() {
         return;
       }
       if (m.type === "indexStatus") { setIndexStatus(m.status); return; }
+      if (m.type === "processesSnapshot") { setProcesses(Array.isArray(m.processes) ? m.processes : []); return; }
+      if (m.type === "approvalBatchRequest") {
+        setApprovalBatch({ batchId: m.batchId, items: Array.isArray(m.items) ? m.items : [] });
+        setShowApprovalCenter(true);
+        return;
+      }
       if (m.type === "sessions") { setSessions(m.index); return; }
+      if (m.type === "referencePacks") { setReferencePacks(m.index); return; }
+      if (m.type === "sessionSearchResults") { setSessionSearchHits(Array.isArray(m.hits) ? m.hits : []); return; }
+      if (m.type === "workspaceFolders") {
+        setWorkspaceFolders(Array.isArray(m.folders) ? m.folders : []);
+        setActiveWorkspaceFolderUri(typeof m.activeUri === "string" ? m.activeUri : "");
+        return;
+      }
       if (m.type === "referencesPicked") { setReferences(normalizeReferenceAttachments(m.references)); return; }
       if (m.type === "referencePickError") { announce(m.error || "Could not add references."); return; }
       if (m.type === "toolProgress") {
@@ -405,6 +577,7 @@ export function App() {
       // intent line instead of being appended to the previous chunk.
       if (
         m.type === "toolCall" ||
+        m.type === "todoUpdate" ||
         m.type === "subagentSpawn" ||
         m.type === "questionRequest" ||
         m.type === "progress"
@@ -412,11 +585,13 @@ export function App() {
         assistantRef.current = null;
       }
       setMessages((prev) => {
-        const next = [...prev];
+        let next = [...prev];
         if (m.type === "progress") {
           next.push({ role: "progress", phase: m.phase, text: m.text, createdAt: m.createdAt });
         } else if (m.type === "toolCall") {
           next.push({ role: "tool", name: m.call.name, status: m.call.requiresApproval ? "pending" : "approved", callId: m.call.callId, input: m.call.input, expanded: m.call.requiresApproval });
+        } else if (m.type === "todoUpdate") {
+          return upsertTodoMessage(next, m.taskId, m.title, m.items ?? []);
         } else if (m.type === "questionRequest") {
           next.push({ role: "question", callId: m.callId, title: m.request?.title, questions: m.request?.questions ?? [], status: "pending" });
         } else if (m.type === "questionAnswered") {
@@ -508,6 +683,14 @@ export function App() {
                 kind: "error",
               });
             }
+          } else {
+            next = upsertStopMessage(next, taskStopMessage({
+              taskId: typeof m.taskId === "string" ? m.taskId : undefined,
+              reason: m.reason,
+              error: typeof m.error === "string" ? m.error : undefined,
+              durationMs: typeof m.durationMs === "number" ? m.durationMs : undefined,
+              maxTurns: typeof m.maxTurns === "number" ? m.maxTurns : undefined,
+            }));
           }
           const keepBusy = m.reason === "cancelled" && interruptQueuedRef.current;
           interruptQueuedRef.current = false;
@@ -515,6 +698,7 @@ export function App() {
           assistantRef.current = null;
         } else if (m.type === "planReady") {
           setPlanHandoffArmed(true);
+          setPlanHandoffMarkdown(typeof m.markdown === "string" ? m.markdown : "");
         } else if (m.type === "summarized") {
           next.push({ role: "assistant", text: `Context summarized (${m.droppedCount} older messages compacted).` });
         } else if (m.type === "error") {
@@ -584,15 +768,44 @@ export function App() {
     setReferences([]);
   };
 
-  const implementPlan = () => {
+  const implementPlan = (prompt: string, todos?: TodoItem[]) => {
     setPlanHandoffArmed(false);
     setCurrentModeId("code");
     post({ type: "setMode", modeId: "code" });
-    const prompt = "Implement the plan above.";
     setMessages((m) => [...m, { role: "user", text: prompt }]);
     setShowSessions(false);
-    post({ type: "submit", prompt, modeId: "code" });
+    post({
+      type: "submit",
+      prompt,
+      modeId: "code",
+      seedTodos: todos && todos.length > 0 ? { title: "Implementation Todos", items: todos } : undefined,
+    });
     setBusy(true);
+  };
+
+  const continueStoppedTask = (prompt: string) => {
+    if (busy) return;
+    const nextPrompt = prompt.trim() || "Continue from where you stopped.";
+    setMessages((m) => [...m, { role: "user", text: nextPrompt }]);
+    setShowSessions(false);
+    setPlanHandoffArmed(false);
+    post({ type: "submit", prompt: nextPrompt, modeId: currentModeId });
+    setBusy(true);
+  };
+
+  const handleSingleBatchDecision = (callId: string, decision: "approved" | "rejected") => {
+    post({ type: "approve", callId, approved: decision === "approved" });
+    setApprovalBatch((prev) => removeApprovalBatchItem(prev, callId));
+  };
+
+  const handleBatchDecision = (decision: "approved" | "rejected") => {
+    if (!approvalBatch) return;
+    post({
+      type: "approveBatch",
+      batchId: approvalBatch.batchId,
+      decisions: buildApprovalBatchDecisions(approvalBatch.items, decision),
+    });
+    setApprovalBatch(null);
   };
 
   const toggleToolExpandedForCall = (callId: string) => {
@@ -604,20 +817,42 @@ export function App() {
   const showFirstRun = isEmpty && firstRun && (!firstRun.completed || firstRun.needsSetup);
   const liveStatus = deriveLiveTaskStatus(messages, busy);
   const hasPendingQuestion = !busy && messages.some((m) => m.role === "question" && m.status === "pending");
+  const processCount = processes.length;
+  const approvalCount = approvalBatch?.items.length ?? 0;
 
   return (
     <div className="panel" ref={rootRef}>
       <PanelHeader
         busy={busy}
         sessionsOpen={showSessions}
+        processCount={processCount}
+        approvalCount={approvalCount}
         onToggleSessions={() => {
           setShowModel(false);
           setShowAllowlist(false);
+          setShowProcesses(false);
+          setShowApprovalCenter(false);
           setShowSessions((v) => !v);
+        }}
+        onToggleProcesses={() => {
+          setShowSessions(false);
+          setShowModel(false);
+          setShowAllowlist(false);
+          setShowApprovalCenter(false);
+          setShowProcesses((v) => !v);
+        }}
+        onToggleApprovals={() => {
+          setShowSessions(false);
+          setShowModel(false);
+          setShowAllowlist(false);
+          setShowProcesses(false);
+          setShowApprovalCenter((v) => !v);
         }}
         onSetup={() => {
           setShowAllowlist(false);
           setShowSessions(false);
+          setShowProcesses(false);
+          setShowApprovalCenter(false);
           setShowModel((v) => !v);
         }}
       />
@@ -639,7 +874,70 @@ export function App() {
             setShowSessions(false);
             setRenamingId(null);
           }}
+          searchResults={sessionSearchHits}
+          onSearch={(q) => post({ type: "sessionSearch", query: q })}
         />
+      )}
+      {showProcesses && (
+        <div className="convo-list workflow-panel">
+          <div className="convo-list-head">
+            <span>Processes</span>
+          </div>
+          {processes.length === 0 ? (
+            <div className="workflow-empty">No background processes yet.</div>
+          ) : processes.map((proc) => (
+            <div className="workflow-row" key={proc.processId}>
+              <div className="workflow-main">
+                <div className="workflow-title">{proc.command}</div>
+                <div className="workflow-meta">
+                  <span>{proc.running ? "running" : `exit ${proc.exitCode ?? "?"}`}</span>
+                  <span>{formatProcessBytes(proc.totalBytes)}</span>
+                  <span>{formatProcessAge(proc.startedAt)}</span>
+                </div>
+                {proc.tailOutput && <pre className="workflow-preview">{proc.tailOutput}</pre>}
+              </div>
+              <div className="workflow-actions">
+                <button className="btn btn-sm" onClick={() => post({ type: "processOpenOutput", processId: proc.processId })}>Open</button>
+                <button className="btn btn-sm" onClick={() => post({ type: "processKill", processId: proc.processId })} disabled={!proc.running}>Stop</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {showMcp && (
+        <McpPanel statuses={mcpStatuses} onClose={() => setShowMcp(false)} />
+      )}
+      {showSearch && (
+        <SearchPanel onClose={() => setShowSearch(false)} />
+      )}
+      {showApprovalCenter && (
+        <div className="convo-list workflow-panel">
+          <div className="convo-list-head">
+            <span>Approval center</span>
+          </div>
+          {!approvalBatch || approvalBatch.items.length === 0 ? (
+            <div className="workflow-empty">No grouped approvals waiting.</div>
+          ) : (
+            <>
+              {approvalBatch.items.map((item) => (
+                <div className="workflow-row" key={item.callId}>
+                  <div className="workflow-main">
+                    <div className="workflow-title">{item.name}</div>
+                    <pre className="workflow-preview">{prettyToolInput(item.input)}</pre>
+                  </div>
+                  <div className="workflow-actions">
+                    <button className="btn btn-sm" onClick={() => handleSingleBatchDecision(item.callId, "approved")}>Approve</button>
+                    <button className="btn btn-sm" onClick={() => handleSingleBatchDecision(item.callId, "rejected")}>Reject</button>
+                  </div>
+                </div>
+              ))}
+              <div className="workflow-actions bulk-actions">
+                <button className="btn btn-primary btn-sm" onClick={() => handleBatchDecision("approved")}>Approve all</button>
+                <button className="btn btn-sm" onClick={() => handleBatchDecision("rejected")}>Reject all</button>
+              </div>
+            </>
+          )}
+        </div>
       )}
       {notice && <div className="notice-toast" role="status">{notice}</div>}
       {showSettings ? (
@@ -655,15 +953,16 @@ export function App() {
           pendingOutputs={pendingOutputs}
           busy={busy}
           onToggleToolExpanded={toggleToolExpandedForCall}
+          onContinue={continueStoppedTask}
+          conversationId={sessions?.activeId}
         />
       )}
       {planHandoffArmed && !busy && (
-        <div className="plan-handoff">
-          <span className="plan-handoff-label">Plan ready.</span>
-          <button className="btn btn-primary" onClick={implementPlan}>
-            Implement plan
-          </button>
-        </div>
+        <PlanHandoff
+          markdown={planHandoffMarkdown}
+          onImplement={implementPlan}
+          onDismiss={() => setPlanHandoffArmed(false)}
+        />
       )}
       <InputArea
         busy={busy}
@@ -672,9 +971,14 @@ export function App() {
         onSubmit={submit}
         status={liveStatus}
         references={references}
+        packs={referencePacks}
         onAddReference={() => post({ type: "pickReferences", existing: references })}
         onRemoveReference={(id) => setReferences((prev) => prev.filter((ref) => ref.id !== id))}
         onDirectReference={(ref) => setReferences((prev) => mergeReferenceAttachments(normalizeReferenceAttachments(prev), [ref]))}
+        onSavePack={(name) => post({ type: "packSave", name, refs: references })}
+        onApplyPack={(id, mode) => post({ type: "packApply", id, mode })}
+        onDeletePack={(id) => post({ type: "packDelete", id })}
+        onRenamePack={(id, name) => post({ type: "packRename", id, name })}
         disabled={hasPendingQuestion}
         hint={hasPendingQuestion ? "Answer the question above to continue" : undefined}
       />
@@ -688,9 +992,25 @@ export function App() {
           currentModeId={currentModeId}
           alwaysAllowRules={alwaysAllowRules}
           autoApprove={autoApprove}
+          workspaceFolders={workspaceFolders}
+          activeWorkspaceFolderUri={activeWorkspaceFolderUri}
           onShowAllowlist={() => { post({ type: "requestAlwaysAllowList" }); setShowAllowlist(true); }}
           onShowModel={() => setShowModel((v) => !v)}
           onShowAutoApprove={() => setShowAutoApprove((v) => !v)}
+          onShowMcp={() => {
+            setShowSearch(false);
+            setShowProcesses(false);
+            setShowApprovalCenter(false);
+            setShowSessions(false);
+            setShowMcp((v) => !v);
+          }}
+          onShowSearch={() => {
+            setShowMcp(false);
+            setShowProcesses(false);
+            setShowApprovalCenter(false);
+            setShowSessions(false);
+            setShowSearch((v) => !v);
+          }}
         />
         {showAllowlist && <AllowlistPopover rules={alwaysAllowRules} onClose={() => setShowAllowlist(false)} />}
         {showModel && (

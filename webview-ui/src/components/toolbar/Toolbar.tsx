@@ -14,6 +14,11 @@ import { formatTokens } from "../../util/format";
 import { post } from "../../vscode";
 import { estimateCost } from "../../../../src/shared/pricing";
 
+interface WorkspaceFolderInfo {
+    uri: string;
+    name: string;
+}
+
 interface ToolbarProps {
     llmConfig: LlmConfigView | null;
     usage: ConversationUsage | null;
@@ -23,9 +28,13 @@ interface ToolbarProps {
     currentModeId: string;
     alwaysAllowRules: AlwaysAllowRule[];
     autoApprove: AutoApproveConfig;
+    workspaceFolders: WorkspaceFolderInfo[];
+    activeWorkspaceFolderUri: string;
     onShowAllowlist: () => void;
     onShowModel: () => void;
     onShowAutoApprove: () => void;
+    onShowMcp: () => void;
+    onShowSearch: () => void;
 }
 
 export function Toolbar({
@@ -37,15 +46,22 @@ export function Toolbar({
     currentModeId,
     alwaysAllowRules,
     autoApprove,
+    workspaceFolders,
+    activeWorkspaceFolderUri,
     onShowAllowlist,
     onShowModel,
     onShowAutoApprove,
+    onShowMcp,
+    onShowSearch,
 }: ToolbarProps) {
     const pill = autoApprovePillLabel(autoApprove);
     const [modeOpen, setModeOpen] = useState(false);
+    const [folderOpen, setFolderOpen] = useState(false);
     const modeRef = useRef<HTMLDivElement>(null);
+    const folderRef = useRef<HTMLDivElement>(null);
 
     const currentMode = modes.find((m) => m.id === currentModeId);
+    const activeFolder = workspaceFolders.find((f) => f.uri === activeWorkspaceFolderUri) ?? workspaceFolders[0];
 
     return (
         <div className="toolbar">
@@ -74,23 +90,64 @@ export function Toolbar({
                 )}
             </div>
 
+            {/* Workspace folder selector */}
+            {workspaceFolders.length > 1 && activeFolder && (
+                <div className="toolbar-section" ref={folderRef} style={{ position: "relative" }}>
+                    <button
+                        className="mode-select-btn"
+                        onClick={() => setFolderOpen((v) => !v)}
+                        title={`Active workspace folder: ${activeFolder.name}`}
+                    >
+                        <Ico.Folder size={11} />
+                        <span>{activeFolder.name}</span>
+                        <Ico.ChevDn size={9} />
+                    </button>
+                    {folderOpen && (
+                        <div className="mode-picker">
+                            {workspaceFolders.map((f) => (
+                                <button
+                                    key={f.uri}
+                                    className={`mode-item${f.uri === activeFolder.uri ? " active" : ""}`}
+                                    onClick={() => {
+                                        post({ type: "setWorkspaceFolder", uri: f.uri });
+                                        setFolderOpen(false);
+                                    }}
+                                >
+                                    <span className="mode-glyph"><Ico.Folder size={12} /></span>
+                                    <span className="mode-label">{f.name}</span>
+                                    {f.uri === activeFolder.uri && <Ico.Check size={11} className="mode-check" />}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
             <div className="toolbar-spacer" />
 
             {/* Index status */}
             {indexStatus && indexStatus.state !== "disabled" && (
-                <div className="index-status" title={`Index: ${indexStatus.state} — ${indexStatus.filesScanned} files, ${indexStatus.symbolsCount} symbols`}>
+                <button
+                    className="index-status"
+                    title={`Index: ${indexStatus.state} — ${indexStatus.filesScanned} files, ${indexStatus.symbolsCount} symbols. Click to search.`}
+                    onClick={onShowSearch}
+                >
                     <span className={`status-dot ${indexStatus.state}`} />
-                </div>
+                </button>
             )}
 
             {/* MCP status */}
             {mcpStatuses.length > 0 && (
-                <div className="mcp-status" title={`MCP: ${mcpStatuses.map((s) => `${s.server}:${s.state}`).join(", ")}`}>
+                <button
+                    className="mcp-status"
+                    onClick={onShowMcp}
+                    title={`MCP: ${mcpStatuses.map((s) => `${s.server}:${s.state}`).join(", ")}. Click to manage.`}
+                >
                     <Ico.Spark size={11} />
                     <span className="mcp-count">
                         {mcpStatuses.filter((s) => s.state === "ready").length}/{mcpStatuses.length}
                     </span>
-                </div>
+                </button>
             )}
 
             {/* Token meter */}

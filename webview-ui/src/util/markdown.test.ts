@@ -26,8 +26,18 @@ describe("stripStructuralTags", () => {
     expect(stripStructuralTags("<diagnostics-followup>err</diagnostics-followup>")).toBe("err");
   });
 
+  it("removes affected-files and diagnostics wrappers from assistant-visible text", () => {
+    const input = "<affected-files> tests/test_cache.py </affected-files>\n<diagnostics> gui.py:321 error </diagnostics>";
+    const stripped = stripStructuralTags(input);
+    expect(stripped).toContain("tests/test_cache.py");
+    expect(stripped).toContain("gui.py:321 error");
+    expect(stripped).not.toContain("affected-files");
+    expect(stripped).not.toContain("diagnostics");
+  });
+
   it("is case-insensitive and tolerates whitespace", () => {
     expect(stripStructuralTags("</Proposed_Plan>")).toBe("");
+    expect(stripStructuralTags("< diagnostics >err</ diagnostics >")).toBe("err");
     expect(stripStructuralTags("<proposed_plan >body</proposed_plan >")).toBe("body");
   });
 

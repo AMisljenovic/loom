@@ -3,7 +3,7 @@ import * as childProcess from "node:child_process";
 import { randomUUID } from "node:crypto";
 import * as nodePath from "node:path";
 import * as vscode from "vscode";
-import type { ToolCall, ToolResult } from "../shared/protocol";
+import type { ProcessSnapshot, ToolCall, ToolResult } from "../shared/protocol";
 
 // Ring-buffer capacity per process. Captures the most-recent N bytes of
 // interleaved stdout+stderr; older bytes are dropped silently. The cursor
@@ -29,6 +29,8 @@ interface Process {
 }
 
 const processes = new Map<string, Process>();
+const listeners = new Set<() => void>();
+let notifyTimer: NodeJS.Timeout | undefined;
 
 export function runCommandBackground(call: ToolCall, workspaceRoot: string): ToolResult {
   const input = call.input as { command?: string; cwd?: string };
@@ -61,10 +63,12 @@ export function runCommandBackground(call: ToolCall, workspaceRoot: string): Too
     channel,
   };
   processes.set(id, proc);
+  scheduleNotify();
 
   const onChunk = (data: Buffer) => {
     appendToRing(proc, data);
     channel.append(data.toString());
+    scheduleNotify();
   };
   child.stdout?.on("data", onChunk);
   child.stderr?.on("data", onChunk);
@@ -76,6 +80,7 @@ export function runCommandBackground(call: ToolCall, workspaceRoot: string): Too
     appendToRing(proc, Buffer.from(line));
     channel.append(line);
     proc.reapTimer = setTimeout(() => disposeProcess(proc.id), RETAIN_AFTER_EXIT_MS);
+    scheduleNotify();
   });
   child.on("error", (err) => {
     proc.running = false;
@@ -83,6 +88,7 @@ export function runCommandBackground(call: ToolCall, workspaceRoot: string): Too
     const line = `\n[spawn error: ${err.message}]\n`;
     appendToRing(proc, Buffer.from(line));
     channel.append(line);
+    scheduleNotify();
   });
 
   return {
@@ -138,6 +144,7 @@ export function killProcess(call: ToolCall): ToolResult {
     return { callId: call.callId, ok: true, content: `process already exited (code ${proc.exitCode ?? "?"})` };
   }
   proc.child.kill();
+  scheduleNotify();
   // Force-kill if it doesn't die in 2s.
   const killTimer = setTimeout(() => {
     if (proc.running) {
@@ -160,12 +167,66 @@ function appendToRing(proc: Process, chunk: Buffer) {
   proc.bufStart += overflow;
 }
 
+export function listProcessSnapshots(): ProcessSnapshot[] {
+  return Array.from(processes.values())
+    .sort((a, b) => b.startedAt - a.startedAt)
+    .map((proc) => ({
+      processId: proc.id,
+      command: proc.command,
+      cwd: proc.cwd,
+      startedAt: proc.startedAt,
+      running: proc.running,
+      exitCode: proc.exitCode,
+      totalBytes: proc.totalBytes,
+      tailOutput: tailOutput(proc),
+    }));
+}
+
+export function onProcessesChanged(listener: () => void): vscode.Disposable {
+  listeners.add(listener);
+  return new vscode.Disposable(() => {
+    listeners.delete(listener);
+  });
+}
+
+export function showProcessOutput(processId: string): boolean {
+  const proc = processes.get(processId);
+  if (!proc) {
+    return false;
+  }
+  proc.channel.show(true);
+  return true;
+}
+
+function scheduleNotify() {
+  if (notifyTimer) {
+    return;
+  }
+  notifyTimer = setTimeout(() => {
+    notifyTimer = undefined;
+    for (const listener of listeners) {
+      try {
+        listener();
+      } catch {
+        // ignore listener errors
+      }
+    }
+  }, 120);
+}
+
+function tailOutput(proc: Process): string {
+  const maxBytes = 4096;
+  const start = Math.max(0, proc.buf.length - maxBytes);
+  return proc.buf.subarray(start).toString();
+}
+
 function disposeProcess(id: string) {
   const proc = processes.get(id);
   if (!proc) return;
   if (proc.reapTimer) clearTimeout(proc.reapTimer);
   proc.channel.dispose();
   processes.delete(id);
+  scheduleNotify();
 }
 
 export function disposeAllProcesses() {
@@ -176,4 +237,9 @@ export function disposeAllProcesses() {
     }
     disposeProcess(id);
   }
+  if (notifyTimer) {
+    clearTimeout(notifyTimer);
+    notifyTimer = undefined;
+  }
+  listeners.clear();
 }

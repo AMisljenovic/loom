@@ -116,6 +116,7 @@ export class AgentClient {
 
   async start(cfg: LlmConfig) {
     const binary = this.binaryPath();
+    const agentCfg = toAgentConfig(cfg);
     if (!fs.existsSync(binary)) {
       throw new Error(`Agent binary not found at ${binary}. Run \`npm run build:agent\`.`);
     }
@@ -124,6 +125,7 @@ export class AgentClient {
     }
 
     this.disposed = false;
+    this.events.onLog?.(`[agent] spawning ${binary} provider=${agentCfg.provider} model=${agentCfg.model} baseUrl=${agentCfg.baseUrl || "<default>"}`);
     this.proc = spawn(binary, [], {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...buildSpawnEnv(cfg), ...buildExtrasEnv(this.extras) },
@@ -288,12 +290,21 @@ function buildSpawnEnv(cfg: LlmConfig): Record<string, string> {
   const agentCfg = toAgentConfig(cfg);
   const env: Record<string, string> = {
     MY_AGENT_PROVIDER: agentCfg.provider,
+    ANTHROPIC_API_KEY: "",
+    MY_AGENT_MODEL: "",
+    OPENAI_API_KEY: "",
+    OPENAI_MODEL: "",
+    OPENAI_BASE_URL: "",
+    OPENAI_REASONING_EFFORT: "",
+    OPENAI_MAX_OUTPUT_TOKENS: "",
+    OPENAI_CONTEXT_WINDOW: "",
+    OPENAI_CUSTOM_HEADERS: "",
   };
   if (agentCfg.provider === "openai") {
     env.OPENAI_API_KEY = agentCfg.apiKey;
     env.OPENAI_MODEL = agentCfg.model;
-    if (agentCfg.baseUrl) env.OPENAI_BASE_URL = agentCfg.baseUrl;
-    if (agentCfg.reasoningEffort) env.OPENAI_REASONING_EFFORT = agentCfg.reasoningEffort;
+    env.OPENAI_BASE_URL = agentCfg.baseUrl ?? "";
+    env.OPENAI_REASONING_EFFORT = agentCfg.reasoningEffort ?? "";
     if (typeof agentCfg.maxOutputTokens === "number" && agentCfg.maxOutputTokens > 0) {
       env.OPENAI_MAX_OUTPUT_TOKENS = String(agentCfg.maxOutputTokens);
     }

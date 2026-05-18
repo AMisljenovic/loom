@@ -33,7 +33,12 @@ import type {
   QuestionAnswer,
   ReasoningEffort,
   ReferenceAttachment,
+  ReferencePack,
+  ReferencePacksIndex,
+  SessionExportPayload,
   SessionMeta,
+  SessionSearchHit,
+  SessionSearchMatch,
   SessionsIndex,
   SubAgentDone,
   SubAgentSpawn,
@@ -42,8 +47,9 @@ import type {
   ToolApproveBatchParams,
   ToolApproveBatchResult,
   ToolCall,
+  TodoItem,
   ToolResult,
-  WebviewToHost,
+  WebviewToHost
 } from "../shared/protocol";
 import {
   formatQuestionToolResult,
@@ -56,6 +62,12 @@ import {
   referenceId,
   referenceLabel,
 } from "../shared/references";
+import {
+  messageSearchText,
+  renderSessionAsMarkdown,
+  sanitizeFileBase,
+  sliceLlmMessagesByUserTurns,
+} from "../shared/sessionExport";
 import { legacySessionBodyIds, normalizeStoredConversationState, sessionBodyFileName } from "../shared/sessionStorage";
 import {
   cachePreparedApplyDiff,
@@ -70,6 +82,7 @@ import {
   setDiffPreview,
 } from "../tools/diffPreview";
 import { openVirtualDoc } from "../tools/openInEditor";
+import { listProcessSnapshots, onProcessesChanged, showProcessOutput } from "../tools/processes";
 import { createUnifiedDiff } from "../tools/unifiedDiff";
 
 const LEGACY_STATE_KEY = "loom.conversation";
@@ -80,7 +93,10 @@ const ALWAYS_ALLOW_KEY = "loom.alwaysAllow";
 const MODE_KEY = "loom.currentMode";
 const FIRST_RUN_KEY = "loom.firstRun.completed";
 const ADVANCED_OPTS_KEY = "loom.llm.advanced";
+const REFERENCE_PACKS_KEY = "loom.referencePacks";
+const ACTIVE_WORKSPACE_FOLDER_KEY = "loom.activeWorkspaceFolder";
 const MAX_TITLE_LEN = 60;
+const MAX_PACK_NAME_LEN = 40;
 const LOCAL_BASE_URL = "http://localhost:11434/v1";
 const LOCAL_MODEL = "llama3.1";
 const ANTHROPIC_MODEL = "claude-opus-4-7";
@@ -110,6 +126,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private queuedModeId?: string;
   private queuedReferences?: ReferenceAttachment[];
   private assistantIndex: number | null = null;
+  private activeTaskStartedAt?: number;
   private hydratedConversationId?: string;
   private webviewMessageQueue: Promise<void> = Promise.resolve();
   private readonly output: vscode.OutputChannel;
@@ -125,6 +142,13 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private activeProgressKeys = new Set<string>();
   private activeTaskSawDelta = false;
   private refIndex?: { files: string[]; folders: string[]; stamp: number };
+  private referencePacks: ReferencePacksIndex = { version: 1, order: [], packs: {} };
+  private readonly processChangeDisposable;
+  private pendingApprovalBatches = new Map<string, {
+    calls: Map<string, ToolCall>;
+    decisions: Record<string, "approved" | "rejected">;
+    resolve: (decisions: Record<string, "approved" | "rejected">) => void;
+  }>();
 
   constructor(private readonly ctx: vscode.ExtensionContext) {
     this.output = vscode.window.createOutputChannel("Loom");
@@ -134,6 +158,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.autoApprove = migrateAutoApprove(this.ctx.workspaceState.get<unknown>(AUTO_APPROVE_KEY));
     this.alwaysAllow = this.loadAlwaysAllow();
     this.currentModeId = this.ctx.workspaceState.get<string>(MODE_KEY) ?? "code";
+    this.referencePacks = this.loadReferencePacks();
     void this.migrateLegacyWorkspaceToGlobal();
     this.ctx.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("loom.mcp")) {
@@ -142,8 +167,25 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       if (e.affectsConfiguration("loom.ui")) {
         this.postThemeConfig();
       }
+      if (
+        e.affectsConfiguration("loom.provider") ||
+        e.affectsConfiguration("loom.openai") ||
+        e.affectsConfiguration("loom.openaiCompatible") ||
+        e.affectsConfiguration("loom.anthropicApiKey") ||
+        e.affectsConfiguration("loom.model") ||
+        e.affectsConfiguration("loom.local")
+      ) {
+        this.refreshLlmConfigSoon();
+      }
+    }));
+    this.ctx.subscriptions.push(this.ctx.secrets.onDidChange((e) => {
+      if (e.key.startsWith("loom.secret.")) {
+        this.refreshLlmConfigSoon();
+      }
     }));
     this.ctx.subscriptions.push(vscode.window.onDidChangeActiveColorTheme(() => this.postThemeConfig()));
+    this.processChangeDisposable = onProcessesChanged(() => this.postProcessesSnapshot());
+    this.ctx.subscriptions.push(this.processChangeDisposable);
     const watcher = vscode.workspace.createFileSystemWatcher("**/.vscode/mcp.json");
     watcher.onDidCreate(() => this.configureMcpSoon(), this, this.ctx.subscriptions);
     watcher.onDidChange(() => this.configureMcpSoon(), this, this.ctx.subscriptions);
@@ -153,6 +195,10 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       vscode.workspace.onDidCreateFiles(() => { this.refIndex = undefined; }),
       vscode.workspace.onDidDeleteFiles(() => { this.refIndex = undefined; }),
       vscode.workspace.onDidRenameFiles(() => { this.refIndex = undefined; }),
+      vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        this.refIndex = undefined;
+        this.postWorkspaceFolders();
+      }),
     );
   }
 
@@ -361,11 +407,11 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         this.queuedModeId = undefined;
         this.queuedReferences = undefined;
         if (next) {
-          await this.runTask(next, nextModeId, nextReferences);
+          await this.runTask(next, nextModeId, nextReferences, m.seedTodos);
         }
         return;
       }
-      await this.runTask(m.prompt, m.modeId, m.references);
+      await this.runTask(m.prompt, m.modeId, m.references, m.seedTodos);
     } else if (m.type === "cancel") {
       this.cancelActiveTask();
     } else if (m.type === "newConversation") {
@@ -420,9 +466,14 @@ export class ChatPanel implements vscode.WebviewViewProvider {
           this.sessionBulkCounters.set(call.name, Math.floor(m.sessionCount));
         }
       }
-      this.pendingApprovals.get(m.callId)?.(m.approved);
-      this.pendingApprovals.delete(m.callId);
-      this.pendingApprovalCalls.delete(m.callId);
+      const pendingApproval = this.pendingApprovals.get(m.callId);
+      if (pendingApproval) {
+        pendingApproval(m.approved);
+        this.pendingApprovals.delete(m.callId);
+        this.pendingApprovalCalls.delete(m.callId);
+      } else {
+        this.recordBatchApprovalDecision(m.callId, m.approved ? "approved" : "rejected");
+      }
     } else if (m.type === "answerQuestions") {
       this.answerQuestions(m.callId, m.answers);
     } else if (m.type === "setAutoApprove") {
@@ -441,10 +492,69 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       this.currentModeId = m.modeId;
       this.schedulePersist();
       this.postModes();
+    } else if (m.type === "approveBatch") {
+      for (const [callId, decision] of Object.entries(m.decisions)) {
+        this.recordBatchApprovalDecision(callId, decision);
+      }
+    } else if (m.type === "processKill") {
+      const proc = listProcessSnapshots().find((item) => item.processId === m.processId);
+      if (!proc) {
+        this.post({ type: "error", error: `Unknown process ${m.processId}` });
+        return;
+      }
+      const call: ToolCall = {
+        callId: randomUUID(),
+        taskId: this.activeTaskId ?? "dashboard",
+        name: "kill_process",
+        input: { processId: m.processId },
+        requiresApproval: true,
+      };
+      const approved = await this.approveLocalTool(call);
+      if (approved.approved) {
+        this.routeToolResult(await executeTool(call, async () => true, {
+          workspaceRoot: this.workspaceRoot(),
+          onProgress: (chunk) => this.routeToolProgress(call.callId, chunk),
+        }));
+      }
+    } else if (m.type === "processOpenOutput") {
+      if (!showProcessOutput(m.processId)) {
+        this.post({ type: "error", error: `Unknown process ${m.processId}` });
+      }
+    } else if (m.type === "packSave") {
+      this.savePack(m.name, m.refs);
+    } else if (m.type === "packDelete") {
+      this.deletePack(m.id);
+    } else if (m.type === "packRename") {
+      this.renamePack(m.id, m.name);
+    } else if (m.type === "packApply") {
+      this.applyPack(m.id, m.mode);
+    } else if (m.type === "sessionBranch") {
+      await this.branchSession(m.conversationId, m.messageIndex, m.title);
+    } else if (m.type === "sessionExport") {
+      await this.exportSession(m.conversationId, m.format);
+    } else if (m.type === "sessionImport") {
+      await this.importSession();
+    } else if (m.type === "sessionSearch") {
+      this.runSessionSearch(m.query);
+    } else if (m.type === "setWorkspaceFolder") {
+      await this.setActiveWorkspaceFolder(m.uri);
+    } else if (m.type === "mcpReload") {
+      this.configureMcpSoon();
+    } else if (m.type === "semanticQuerySubmit") {
+      const q = m.query.trim();
+      if (!q) return;
+      const topK = typeof m.topK === "number" && m.topK > 0 ? Math.floor(m.topK) : 8;
+      const prompt = `Run a semantic_search for the query "${q}" with topK=${topK} and summarize the top matches with file paths and line ranges.`;
+      await this.runTask(prompt, this.currentModeId, []);
     }
   }
 
-  private async runTask(prompt: string, requestedModeId?: string, references?: ReferenceAttachment[]) {
+  private async runTask(
+    prompt: string,
+    requestedModeId?: string,
+    references?: ReferenceAttachment[],
+    seedTodos?: { title?: string; items: TodoItem[] },
+  ) {
     this.ensureStateShape();
     const taskReferences = normalizeReferenceAttachments(references);
     if (this.validModeId(requestedModeId)) {
@@ -456,7 +566,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     if (preparedPrompt === undefined) {
       return;
     }
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+    const workspaceRoot = this.workspaceRoot();
     if (!(await this.ensureAgent(workspaceRoot))) {
       return;
     }
@@ -464,12 +574,22 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     const taskId = randomUUID();
     this.activeTaskId = taskId;
     this.activeTaskModeId = this.currentModeId;
+    this.activeTaskStartedAt = Date.now();
     this.activeProgressKeys.clear();
     this.activeTaskSawDelta = false;
     this.busy = true;
     this.state.messages.push({ role: "user", text: preparedPrompt, references: taskReferences });
     this.assistantIndex = null;
     this.schedulePersist();
+    const normalizedSeedTodos = seedTodos ? normalizeTodoItems(seedTodos.items) : [];
+    if (normalizedSeedTodos.length > 0) {
+      this.post({
+        type: "todoUpdate",
+        taskId,
+        title: seedTodos?.title || "Implementation Todos",
+        items: normalizedSeedTodos,
+      });
+    }
     this.emitProgress("started", `Started ${activeModeLabel(this.currentModeId, this.getModes())} task.`);
 
     try {
@@ -487,20 +607,39 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     } catch (e: unknown) {
       this.activeTaskId = undefined;
       this.activeTaskModeId = undefined;
+      this.activeTaskStartedAt = undefined;
       this.busy = false;
       this.post({ type: "error", error: e instanceof Error ? e.message : String(e) });
     }
   }
 
+  private lastAppliedConfigHash?: string;
+  private hashLlmConfig(cfg: LlmConfig): string {
+    return createHash("sha256").update(JSON.stringify(cfg)).digest("hex");
+  }
+
   private async ensureAgent(workspaceRoot: string): Promise<boolean> {
+    const cfg = await this.resolveLlmConfig(workspaceRoot, this.ctx.extensionPath);
+    if ("error" in cfg) {
+      this.post({ type: "error", error: cfg.error });
+      return false;
+    }
+    const cfgHash = this.hashLlmConfig(cfg);
     if (!this.agent) {
-      const cfg = await this.resolveLlmConfig(workspaceRoot, this.ctx.extensionPath);
-      if ("error" in cfg) {
-        this.post({ type: "error", error: cfg.error });
-        return false;
-      }
       this.agent = this.createAgent(workspaceRoot);
       await this.agent.start(cfg);
+      this.lastAppliedConfigHash = cfgHash;
+    } else if (this.lastAppliedConfigHash !== cfgHash) {
+      // Config changed since the agent was spawned (e.g. user cleared
+      // SecretStorage, edited .env, or changed model). Push it now so the
+      // next request uses the latest credentials.
+      try {
+        await this.agent.updateConfig(cfg);
+        this.lastAppliedConfigHash = cfgHash;
+        this.log("[loom] applied refreshed LLM config before task");
+      } catch (e: unknown) {
+        this.log(`[loom] updateConfig before task failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
     await this.configureMcp();
 
@@ -565,6 +704,9 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         this.routeToolResult(result);
       },
       onToolCall: async (call: ToolCall) => {
+        if (call.name === "update_todos") {
+          return this.handleUpdateTodos(call);
+        }
         if (call.name === "ask_questions") {
           return this.handleAskQuestions(call);
         }
@@ -685,6 +827,26 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     });
     this.activeSubAgents.delete(done.subTaskId);
     this.emitProgress("researching", `Research ${done.status}: ${trimProgressDetail(done.summary || done.subTaskId)}`);
+  }
+
+  private handleUpdateTodos(call: ToolCall): ToolResult {
+    const input = call.input as { title?: unknown; items?: unknown };
+    const items = normalizeTodoItems(input.items);
+    if (items.length === 0) {
+      return { callId: call.callId, ok: false, error: "update_todos requires at least one todo item" };
+    }
+    this.post({
+      type: "todoUpdate",
+      taskId: call.taskId,
+      title: typeof input.title === "string" ? input.title : "Update Todos",
+      items,
+    });
+    const done = items.filter((item) => item.status === "done").length;
+    return {
+      callId: call.callId,
+      ok: true,
+      content: `updated todos (${done}/${items.length} done)`,
+    };
   }
 
   private routeToolCall(call: ToolCall) {
@@ -823,6 +985,33 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       this.pendingApprovals.delete(callId);
       this.pendingApprovalCalls.delete(callId);
     }
+    for (const [batchId, pending] of this.pendingApprovalBatches) {
+      const decisions: Record<string, "approved" | "rejected"> = {};
+      for (const callId of pending.calls.keys()) {
+        decisions[callId] = "rejected";
+        this.pendingApprovalCalls.delete(callId);
+      }
+      pending.resolve(decisions);
+      this.pendingApprovalBatches.delete(batchId);
+    }
+  }
+
+  private recordBatchApprovalDecision(callId: string, decision: "approved" | "rejected") {
+    for (const [batchId, pending] of this.pendingApprovalBatches) {
+      if (!pending.calls.has(callId) || pending.decisions[callId]) {
+        continue;
+      }
+      pending.decisions[callId] = decision;
+      this.pendingApprovalCalls.delete(callId);
+      const complete = Array.from(pending.calls.keys()).every((id) => pending.decisions[id]);
+      if (!complete) {
+        return;
+      }
+      const resolved = { ...pending.decisions };
+      this.pendingApprovalBatches.delete(batchId);
+      pending.resolve(resolved);
+      return;
+    }
   }
 
   private cancelActiveTask() {
@@ -833,17 +1022,19 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       return;
     }
     this.cancelledTaskIds.add(taskId);
+    const durationMs = this.activeTaskStartedAt ? Date.now() - this.activeTaskStartedAt : undefined;
     this.activeTaskId = undefined;
     this.activeTaskModeId = undefined;
+    this.activeTaskStartedAt = undefined;
     this.busy = false;
-    this.post({ type: "done", reason: "cancelled" });
+    this.post({ type: "done", taskId, reason: "cancelled", durationMs });
     this.emitProgress("completed", "Task cancelled.");
     void this.agent?.cancel(taskId).catch((e: unknown) => {
       this.log(`cancel failed for ${taskId}: ${e instanceof Error ? e.message : String(e)}`);
     });
   }
 
-  private async handleDone({ taskId, reason }: TaskDone) {
+  private async handleDone({ taskId, reason, error, maxTurns }: TaskDone) {
     if (this.activeSubAgents.has(taskId)) {
       return;
     }
@@ -859,17 +1050,21 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       if (assistant?.role === "assistant") {
         const plan = extractProposedPlan(assistant.text);
         if (plan) {
-          this.post({ type: "planReady" }, false);
+          this.post({ type: "planReady", markdown: plan.markdown }, false);
           void this.openPlanPreview(plan.markdown);
         }
       }
     }
-    this.post({ type: "done", reason });
+    const durationMs = this.activeTaskId === taskId && this.activeTaskStartedAt
+      ? Date.now() - this.activeTaskStartedAt
+      : undefined;
+    this.post({ type: "done", taskId, reason, error, durationMs, maxTurns });
     this.emitProgress("completed", reason === "completed" ? "Task completed." : `Task ${reason}.`);
     if (this.activeTaskId === taskId) {
       this.activeTaskId = undefined;
     }
     this.activeTaskModeId = undefined;
+    this.activeTaskStartedAt = undefined;
     this.busy = false;
 
     const next = this.queuedPrompt;
@@ -1036,6 +1231,160 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.postSessions();
   }
 
+  private async branchSession(sourceId: string, messageIndex: number, title?: string) {
+    if (this.busy) {
+      this.post({ type: "error", error: "Finish or cancel the current task before branching." });
+      return;
+    }
+    const sourceMeta = this.sessions.sessions[sourceId];
+    if (!sourceMeta) {
+      this.post({ type: "error", error: "Cannot branch: source session not found." });
+      return;
+    }
+    this.persistNow();
+    const sourceBody = sourceId === this.state.conversationId ? this.state : this.loadSessionBody(sourceId);
+    const safeIndex = Math.max(0, Math.min(messageIndex, sourceBody.messages.length));
+    const messagesSlice = sourceBody.messages.slice(0, safeIndex);
+    const userTurns = messagesSlice.reduce((n, m) => n + (m.role === "user" ? 1 : 0), 0);
+    const llmSlice = sliceLlmMessagesByUserTurns(sourceBody.llmMessages, userTurns);
+    const newId = randomUUID();
+    const branchTitle = (title?.trim() || sourceMeta.title || "Untitled").slice(0, MAX_TITLE_LEN);
+    const now = Date.now();
+    const newMeta: SessionMeta = {
+      conversationId: newId,
+      title: branchTitle,
+      createdAt: now,
+      updatedAt: now,
+      messageCount: messagesSlice.length,
+      state: "active",
+      pinned: false,
+      parent: { conversationId: sourceId, messageIndex: safeIndex },
+    };
+    const newBody: ConversationState = {
+      conversationId: newId,
+      messages: messagesSlice,
+      llmMessages: llmSlice,
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+    this.sessions.sessions[newId] = newMeta;
+    this.sessions.order = [newId, ...this.sessions.order.filter((x) => x !== newId)];
+    if (!this.writeSessionBodyFile(newId, newBody)) {
+      this.post({ type: "error", error: "Failed to write branched session body." });
+      delete this.sessions.sessions[newId];
+      this.sessions.order = this.sessions.order.filter((x) => x !== newId);
+      return;
+    }
+    this.persistNow();
+    await this.switchSession(newId);
+  }
+
+  private async exportSession(id: string, format: "json" | "markdown") {
+    const meta = this.sessions.sessions[id];
+    if (!meta) {
+      this.post({ type: "error", error: "Cannot export: session not found." });
+      return;
+    }
+    const body = id === this.state.conversationId ? this.state : this.loadSessionBody(id);
+    const filterName = format === "json" ? "Loom session" : "Markdown";
+    const ext = format === "json" ? "json" : "md";
+    const defaultName = `${sanitizeFileBase(meta.title || meta.conversationId)}.${ext}`;
+    const dest = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(path.join(this.workspaceRoot() || process.cwd(), defaultName)),
+      filters: { [filterName]: [ext] },
+      title: "Export session",
+    });
+    if (!dest) return;
+    try {
+      const text = format === "json"
+        ? JSON.stringify({ meta, body } satisfies SessionExportPayload, null, 2)
+        : renderSessionAsMarkdown(meta, body);
+      await vscode.workspace.fs.writeFile(dest, Buffer.from(text, "utf8"));
+      void vscode.window.showInformationMessage(`Exported session to ${dest.fsPath}`);
+    } catch (e: unknown) {
+      this.post({ type: "error", error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  private async importSession() {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      filters: { "Loom session": ["json"], JSON: ["json"] },
+      title: "Import Loom session",
+    });
+    if (!picked || picked.length === 0) return;
+    try {
+      const raw = await vscode.workspace.fs.readFile(picked[0]);
+      const parsed = JSON.parse(Buffer.from(raw).toString("utf8")) as Partial<SessionExportPayload>;
+      if (!parsed.meta || !parsed.body || !Array.isArray(parsed.body.messages)) {
+        this.post({ type: "error", error: "Import failed: not a Loom session export." });
+        return;
+      }
+      const id = randomUUID();
+      const now = Date.now();
+      const meta: SessionMeta = {
+        conversationId: id,
+        title: ((parsed.meta.title?.trim()) || "Imported session").slice(0, MAX_TITLE_LEN),
+        createdAt: now,
+        updatedAt: now,
+        messageCount: parsed.body.messages.length,
+        state: "active",
+        pinned: false,
+      };
+      const body: ConversationState = {
+        conversationId: id,
+        messages: parsed.body.messages,
+        llmMessages: Array.isArray(parsed.body.llmMessages) ? parsed.body.llmMessages : [],
+        usage: { inputTokens: 0, outputTokens: 0 },
+      };
+      if (!this.writeSessionBodyFile(id, body)) {
+        this.post({ type: "error", error: "Failed to write imported session body." });
+        return;
+      }
+      this.sessions.sessions[id] = meta;
+      this.sessions.order = [id, ...this.sessions.order];
+      this.persistNow();
+      await this.switchSession(id);
+    } catch (e: unknown) {
+      this.post({ type: "error", error: `Import failed: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  }
+
+  private runSessionSearch(query: string) {
+    const q = query.trim().toLowerCase();
+    if (!q) {
+      this.post({ type: "sessionSearchResults", query, hits: [] }, false);
+      return;
+    }
+    const hits: SessionSearchHit[] = [];
+    for (const id of this.sessions.order) {
+      const meta = this.sessions.sessions[id];
+      if (!meta) continue;
+      const body = id === this.state.conversationId ? this.state : this.loadSessionBody(id);
+      const matches: SessionSearchMatch[] = [];
+      const titleMatch = meta.title?.toLowerCase().includes(q);
+      if (titleMatch) {
+        matches.push({ messageIndex: -1, snippet: meta.title });
+      }
+      for (let i = 0; i < body.messages.length && matches.length < 5; i++) {
+        const msg = body.messages[i];
+        const text = messageSearchText(msg);
+        if (!text) continue;
+        const idx = text.toLowerCase().indexOf(q);
+        if (idx === -1) continue;
+        const start = Math.max(0, idx - 60);
+        const end = Math.min(text.length, idx + q.length + 60);
+        matches.push({
+          messageIndex: i,
+          snippet: (start > 0 ? "…" : "") + text.slice(start, end).replace(/\s+/g, " ").trim() + (end < text.length ? "…" : ""),
+        });
+      }
+      if (matches.length > 0) {
+        hits.push({ conversationId: id, title: meta.title || "(untitled)", matches });
+      }
+    }
+    this.post({ type: "sessionSearchResults", query, hits }, false);
+  }
+
   private async deleteSession(id: string) {
     if (!this.sessions.sessions[id]) return;
     delete this.sessions.sessions[id];
@@ -1059,6 +1408,98 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.post({ type: "sessions", index: this.sessions }, false);
   }
 
+  private postReferencePacks() {
+    this.post({ type: "referencePacks", index: this.referencePacks }, false);
+  }
+
+  private loadReferencePacks(): ReferencePacksIndex {
+    const raw = this.ctx.workspaceState.get<unknown>(REFERENCE_PACKS_KEY);
+    const empty: ReferencePacksIndex = { version: 1, order: [], packs: {} };
+    if (!raw || typeof raw !== "object") return empty;
+    const candidate = raw as Partial<ReferencePacksIndex>;
+    if (!Array.isArray(candidate.order) || !candidate.packs || typeof candidate.packs !== "object") {
+      return empty;
+    }
+    const packs: Record<string, ReferencePack> = {};
+    for (const [id, pack] of Object.entries(candidate.packs as Record<string, unknown>)) {
+      if (!pack || typeof pack !== "object") continue;
+      const p = pack as Partial<ReferencePack>;
+      if (typeof p.id !== "string" || typeof p.name !== "string" || !Array.isArray(p.refs)) continue;
+      packs[id] = {
+        id: p.id,
+        name: p.name,
+        refs: normalizeReferenceAttachments(p.refs),
+        createdAt: typeof p.createdAt === "number" ? p.createdAt : Date.now(),
+        updatedAt: typeof p.updatedAt === "number" ? p.updatedAt : Date.now(),
+      };
+    }
+    const order = candidate.order.filter((id): id is string => typeof id === "string" && !!packs[id]);
+    return { version: 1, order, packs };
+  }
+
+  private persistReferencePacks() {
+    void this.ctx.workspaceState.update(REFERENCE_PACKS_KEY, this.referencePacks);
+  }
+
+  private savePack(name: string, refs: ReferenceAttachment[]) {
+    const trimmed = name.trim().slice(0, MAX_PACK_NAME_LEN);
+    if (!trimmed) return;
+    const normalized = normalizeReferenceAttachments(refs);
+    if (normalized.length === 0) return;
+    const now = Date.now();
+    const existing = Object.values(this.referencePacks.packs).find(
+      (p) => p.name.toLowerCase() === trimmed.toLowerCase(),
+    );
+    if (existing) {
+      existing.refs = normalized;
+      existing.updatedAt = now;
+    } else {
+      const id = randomUUID();
+      this.referencePacks.packs[id] = {
+        id,
+        name: trimmed,
+        refs: normalized,
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.referencePacks.order = [id, ...this.referencePacks.order];
+    }
+    this.persistReferencePacks();
+    this.postReferencePacks();
+  }
+
+  private deletePack(id: string) {
+    if (!this.referencePacks.packs[id]) return;
+    delete this.referencePacks.packs[id];
+    this.referencePacks.order = this.referencePacks.order.filter((x) => x !== id);
+    this.persistReferencePacks();
+    this.postReferencePacks();
+  }
+
+  private renamePack(id: string, name: string) {
+    const pack = this.referencePacks.packs[id];
+    if (!pack) return;
+    const trimmed = name.trim().slice(0, MAX_PACK_NAME_LEN);
+    if (!trimmed) return;
+    pack.name = trimmed;
+    pack.updatedAt = Date.now();
+    this.persistReferencePacks();
+    this.postReferencePacks();
+  }
+
+  private applyPack(id: string, mode: "merge" | "replace" = "merge", existing: ReferenceAttachment[] = []) {
+    const pack = this.referencePacks.packs[id];
+    if (!pack) return;
+    const next = mode === "replace"
+      ? normalizeReferenceAttachments(pack.refs)
+      : mergeReferenceAttachments(normalizeReferenceAttachments(existing), pack.refs);
+    this.post({ type: "referencesPicked", references: next }, false);
+  }
+
+  private postProcessesSnapshot() {
+    this.post({ type: "processesSnapshot", processes: listProcessSnapshots() }, false);
+  }
+
   private async restoreWebview() {
     this.ensureStateShape();
     this.post({
@@ -1069,6 +1510,9 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       llmConfig: await this.currentLlmConfigView(),
     }, false);
     this.postSessions();
+    this.postReferencePacks();
+    this.postProcessesSnapshot();
+    this.postWorkspaceFolders();
     this.postAutoApprove();
     this.postAlwaysAllowList();
     this.postModes();
@@ -1134,6 +1578,9 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         text: msg.text,
         createdAt: msg.createdAt,
       });
+      this.schedulePersist();
+    } else if (msg.type === "todoUpdate") {
+      this.state.messages = upsertTodoMessage(this.state.messages, msg.taskId, msg.title, msg.items);
       this.schedulePersist();
     } else if (msg.type === "toolCall") {
       this.state.messages.push({
@@ -1264,6 +1711,17 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         const cur = this.state.messages[this.assistantIndex];
         if (cur?.role === "assistant" && cur.text && !cur.text.endsWith(" [interrupted]")) {
           this.state.messages[this.assistantIndex] = { ...cur, text: `${cur.text} [interrupted]` };
+        }
+      }
+      if (msg.reason !== "completed") {
+        const stop = this.stopMessageFromDone(msg);
+        const idx = stop.taskId
+          ? this.state.messages.findIndex((m) => m.role === "stop" && m.taskId === stop.taskId)
+          : -1;
+        if (idx >= 0) {
+          this.state.messages[idx] = stop;
+        } else {
+          this.state.messages.push(stop);
         }
       }
       this.assistantIndex = null;
@@ -1694,23 +2152,22 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private async applyLlmConfig(config: Omit<LlmConfigView, "hasApiKey">) {
     const provider = this.validProvider(config.provider) ? config.provider : "anthropic";
     const settings = vscode.workspace.getConfiguration("loom");
-    const target = this.configurationTarget();
-    await settings.update("provider", provider, target);
+    await this.updateLlmSetting(settings, "provider", provider);
     if (provider === "anthropic") {
-      await settings.update("model", config.model || ANTHROPIC_MODEL, target);
+      await this.updateLlmSetting(settings, "model", config.model || ANTHROPIC_MODEL);
     } else if (provider === "openai") {
-      await settings.update("openai.model", config.model || OPENAI_MODEL, target);
-      await settings.update("openai.baseUrl", config.baseUrl ?? "", target);
+      await this.updateLlmSetting(settings, "openai.model", config.model || OPENAI_MODEL);
+      await this.updateLlmSetting(settings, "openai.baseUrl", config.baseUrl ?? "");
       const effort = this.validReasoningEffort(config.advanced?.reasoningEffort ?? config.reasoningEffort);
-      await settings.update("openai.reasoningEffort", effort, target);
+      await this.updateLlmSetting(settings, "openai.reasoningEffort", effort);
     } else if (provider === "openai-compatible") {
-      await settings.update("openaiCompatible.model", config.model || OAI_COMPATIBLE_MODEL, target);
-      await settings.update("openaiCompatible.baseUrl", config.baseUrl ?? "", target);
+      await this.updateLlmSetting(settings, "openaiCompatible.model", config.model || OAI_COMPATIBLE_MODEL);
+      await this.updateLlmSetting(settings, "openaiCompatible.baseUrl", config.baseUrl ?? "");
       const effort = this.validReasoningEffort(config.advanced?.reasoningEffort ?? config.reasoningEffort);
-      await settings.update("openaiCompatible.reasoningEffort", effort, target);
+      await this.updateLlmSetting(settings, "openaiCompatible.reasoningEffort", effort);
     } else {
-      await settings.update("local.model", config.model || LOCAL_MODEL, target);
-      await settings.update("local.baseUrl", config.baseUrl || LOCAL_BASE_URL, target);
+      await this.updateLlmSetting(settings, "local.model", config.model || LOCAL_MODEL);
+      await this.updateLlmSetting(settings, "local.baseUrl", config.baseUrl || LOCAL_BASE_URL);
     }
 
     const normalizedAdvanced = this.normalizeAdvanced(config.advanced);
@@ -1725,6 +2182,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     }
     try {
       await this.agent?.updateConfig(cfg);
+      this.lastAppliedConfigHash = this.hashLlmConfig(cfg);
       await this.postLlmConfig();
       await this.postFirstRunState();
     } catch (e: unknown) {
@@ -1738,6 +2196,33 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     }
     const cfg = this.resolveMcpConfig();
     await this.agent.configureMcp(cfg);
+  }
+
+  private llmRefreshTimer?: ReturnType<typeof setTimeout>;
+  private refreshLlmConfigSoon() {
+    if (this.llmRefreshTimer) clearTimeout(this.llmRefreshTimer);
+    this.llmRefreshTimer = setTimeout(() => {
+      this.llmRefreshTimer = undefined;
+      void this.refreshLlmConfig();
+    }, 150);
+  }
+
+  private async refreshLlmConfig() {
+    if (!this.agent) return;
+    const cfg = await this.resolveLlmConfig(this.workspaceRoot(), this.ctx.extensionPath);
+    if ("error" in cfg) {
+      this.log(`[loom] refreshLlmConfig skipped: ${cfg.error}`);
+      return;
+    }
+    try {
+      await this.agent.updateConfig(cfg);
+      this.lastAppliedConfigHash = this.hashLlmConfig(cfg);
+      this.log("[loom] pushed updated LLM config to agent");
+      await this.postLlmConfig();
+      await this.postFirstRunState();
+    } catch (e: unknown) {
+      this.log(`[loom] refreshLlmConfig failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   private configureMcpSoon() {
@@ -1774,14 +2259,17 @@ export class ChatPanel implements vscode.WebviewViewProvider {
 
   public async dispose() {
     if (this.activeTaskId) {
+      const taskId = this.activeTaskId;
+      const durationMs = this.activeTaskStartedAt ? Date.now() - this.activeTaskStartedAt : undefined;
       try {
-        await this.agent?.cancel(this.activeTaskId);
+        await this.agent?.cancel(taskId);
       } catch {
         // Best-effort cancellation during extension shutdown/update.
       }
-      this.post({ type: "done", reason: "cancelled" });
+      this.post({ type: "done", taskId, reason: "cancelled", durationMs });
       this.activeTaskId = undefined;
       this.activeTaskModeId = undefined;
+      this.activeTaskStartedAt = undefined;
       this.busy = false;
     }
     this.pendingApprovals.clear();
@@ -1805,29 +2293,51 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   ): Promise<ToolApproveBatchResult> {
     const taskId = params.taskId;
     const decisions: Record<string, "approved" | "rejected"> = {};
-    // Fan each item through the existing single-call approval flow. Items
-    // covered by host policy (autoApprove / alwaysAllow / session counters)
-    // resolve immediately; others show the existing per-tool approval card.
-    // The host-policy and UI dialog logic is shared with single-call flow,
-    // so behavior is consistent regardless of how the loop dispatches.
+    const pendingCalls = new Map<string, ToolCall>();
     void workspaceRoot;
-    await Promise.all(
-      params.items.map(async (item) => {
-        const call: ToolCall = {
-          callId: item.callId,
-          taskId,
-          name: item.name,
-          input: item.input,
-          requiresApproval: true,
-        };
-        try {
-          const { approved } = await this.approveLocalTool(call);
-          decisions[item.callId] = approved ? "approved" : "rejected";
-        } catch {
-          decisions[item.callId] = "rejected";
+    for (const item of params.items) {
+      const call: ToolCall = {
+        callId: item.callId,
+        taskId,
+        name: item.name,
+        input: item.input,
+        requiresApproval: true,
+      };
+      if (this.isApprovedByHostPolicy(call)) {
+        this.routeToolCall({ ...call, requiresApproval: false });
+        decisions[item.callId] = "approved";
+        continue;
+      }
+      pendingCalls.set(item.callId, call);
+      this.pendingApprovalCalls.set(item.callId, call);
+      this.routeToolCall(call);
+    }
+    if (pendingCalls.size === 0) {
+      return { decisions };
+    }
+    this.post({
+      type: "approvalBatchRequest",
+      batchId: params.batchId,
+      items: Array.from(pendingCalls.values()).map((call) => ({ callId: call.callId, name: call.name, input: call.input })),
+    }, false);
+    const batchDecisions = await new Promise<Record<string, "approved" | "rejected">>((resolve) => {
+      this.pendingApprovalBatches.set(params.batchId, { calls: pendingCalls, decisions: {}, resolve });
+    });
+    for (const [callId, decision] of Object.entries(batchDecisions)) {
+      decisions[callId] = decision;
+      const call = pendingCalls.get(callId);
+      if (!call) continue;
+      if (decision === "approved") {
+        if (call.name === "apply_diff") {
+          void this.cleanupApplyDiff(call.callId);
         }
-      }),
-    );
+      } else {
+        if (call.name === "apply_diff") {
+          void this.cleanupApplyDiff(call.callId);
+        }
+        this.routeToolResult({ callId, ok: false, error: "rejected" });
+      }
+    }
     return { decisions };
   }
 
@@ -1924,25 +2434,54 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     workspaceRoot: string,
     extensionPath: string,
   ): Promise<LlmConfig | { error: string }> {
-    const { pick, dotenv, dotenvSource } = this.configPickers(workspaceRoot, extensionPath);
+    const { pick, pickWithSource, dotenv, dotenvSource } = this.configPickers(workspaceRoot, extensionPath);
+    const lastApiKeySource: { source: string } = { source: "none" };
     const pickApiKey = async (
       providerName: "anthropic" | "openai" | "openai-compatible",
       settingKey?: string,
       envKey?: string,
     ): Promise<string> => {
       const secret = await this.ctx.secrets.get(secretKeyFor(providerName));
-      if (secret) return secret;
-      if (!settingKey || !envKey) return "";
-      return pick(settingKey, envKey);
+      if (secret) {
+        lastApiKeySource.source = "SecretStorage";
+        return secret;
+      }
+      if (!settingKey || !envKey) {
+        lastApiKeySource.source = "none";
+        return "";
+      }
+      const settings = vscode.workspace.getConfiguration("loom");
+      const ins = settings.inspect<string>(settingKey);
+      const fromSetting = ins?.workspaceFolderValue ?? ins?.workspaceValue ?? ins?.globalValue;
+      if (fromSetting) {
+        lastApiKeySource.source = "VS Code setting";
+        return fromSetting;
+      }
+      if (dotenv[envKey]) {
+        lastApiKeySource.source = `.env (${dotenvSource})`;
+        return dotenv[envKey];
+      }
+      const fromEnv = process.env[envKey];
+      if (fromEnv) {
+        lastApiKeySource.source = "process.env";
+        return fromEnv;
+      }
+      lastApiKeySource.source = "none";
+      return "";
     };
 
-    const provider = (pick("provider", "MY_AGENT_PROVIDER") || "anthropic") as LlmProvider;
+    const providerPick = pickWithSource("provider", "MY_AGENT_PROVIDER");
+    const provider = (providerPick.value || "anthropic") as LlmProvider;
 
     const dotenvFound = Object.keys(dotenv).length > 0;
     this.log(
       `[loom] resolveLlmConfig: workspaceRoot=${workspaceRoot || "<none>"} ` +
-      `.env=${dotenvFound ? `loaded from ${dotenvSource}` : "missing"} provider=${provider}`
+      `.env=${dotenvFound ? `loaded from ${dotenvSource}` : "missing"} provider=${provider} ` +
+      `(source=${providerPick.source})`
     );
+    const logKeySource = () => {
+      this.log(`[loom] api key source: ${lastApiKeySource.source}`);
+    };
 
     const advancedOpts = this.readAdvanced(provider);
     const advancedForAgent = advancedOpts ? {
@@ -1953,11 +2492,15 @@ export class ChatPanel implements vscode.WebviewViewProvider {
 
     if (provider === "openai") {
       const apiKey = await pickApiKey("openai", "openai.apiKey", "OPENAI_API_KEY");
+      logKeySource();
       if (!apiKey) {
         return { error: "Run Loom: Set OpenAI API Key, set loom.openai.apiKey, OPENAI_API_KEY in .env, or set it in the environment." };
       }
-      const model = pick("openai.model", "OPENAI_MODEL") || OPENAI_MODEL;
-      const baseUrl = pick("openai.baseUrl", "OPENAI_BASE_URL");
+      const modelPick = pickWithSource("openai.model", "OPENAI_MODEL");
+      const baseUrlPick = pickWithSource("openai.baseUrl", "OPENAI_BASE_URL");
+      const model = modelPick.value || OPENAI_MODEL;
+      const baseUrl = baseUrlPick.value;
+      this.log(`[loom] openai model=${model} (source=${modelPick.source}) baseUrl=${baseUrl || "<default>"} (source=${baseUrlPick.source}) keyPrefix=${apiKey.slice(0, 6)}…${apiKey.slice(-4)}`);
       const validEffort = this.validReasoningEffort(
         advancedOpts?.reasoningEffort ?? pick("openai.reasoningEffort", "OPENAI_REASONING_EFFORT"),
       );
@@ -1969,14 +2512,18 @@ export class ChatPanel implements vscode.WebviewViewProvider {
 
     if (provider === "openai-compatible") {
       const apiKey = await pickApiKey("openai-compatible");
+      logKeySource();
       if (!apiKey) {
         return { error: "Set an API key for the OpenAI-compatible provider in Loom Settings." };
       }
-      const model = pick("openaiCompatible.model", "OPENAI_COMPATIBLE_MODEL") || OAI_COMPATIBLE_MODEL;
-      const baseUrl = pick("openaiCompatible.baseUrl", "OPENAI_COMPATIBLE_BASE_URL");
+      const modelPick = pickWithSource("openaiCompatible.model", "OPENAI_COMPATIBLE_MODEL");
+      const baseUrlPick = pickWithSource("openaiCompatible.baseUrl", "OPENAI_COMPATIBLE_BASE_URL");
+      const model = modelPick.value || OAI_COMPATIBLE_MODEL;
+      const baseUrl = baseUrlPick.value;
       if (!baseUrl) {
         return { error: "Set a Base URL for the OpenAI-compatible provider in Loom Settings." };
       }
+      this.log(`[loom] openai-compatible model=${model} (source=${modelPick.source}) baseUrl=${baseUrl} (source=${baseUrlPick.source}) keyPrefix=${apiKey.slice(0, 6)}…${apiKey.slice(-4)}`);
       const validEffort = this.validReasoningEffort(advancedOpts?.reasoningEffort);
       return {
         provider: "openai-compatible",
@@ -1986,10 +2533,12 @@ export class ChatPanel implements vscode.WebviewViewProvider {
 
     if (provider === "anthropic") {
       const apiKey = await pickApiKey("anthropic", "anthropicApiKey", "ANTHROPIC_API_KEY");
+      logKeySource();
       if (!apiKey) {
         return { error: "Run Loom: Set Anthropic API Key, set loom.anthropicApiKey, ANTHROPIC_API_KEY in .env, or set it in the environment." };
       }
       const model = pick("model", "MY_AGENT_MODEL") || ANTHROPIC_MODEL;
+      this.log(`[loom] anthropic model=${model} keyPrefix=${apiKey.slice(0, 6)}…${apiKey.slice(-4)}`);
       return { provider: "anthropic", anthropic: { apiKey, model } };
     }
 
@@ -2022,25 +2571,150 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       dotenv = loadDotEnv(extensionPath);
       dotenvSource = extensionPath;
     }
-    const pick = (settingKey: string, envKey: string): string => {
+    const pickWithSource = (settingKey: string, envKey: string): { value: string; source: string } => {
       const ins = settings.inspect<string>(settingKey);
-      const explicit =
-        ins?.workspaceFolderValue ??
-        ins?.workspaceValue ??
-        ins?.globalValue;
-      if (explicit) return explicit;
-      if (dotenv[envKey]) return dotenv[envKey];
-      return process.env[envKey] ?? "";
+      if (ins?.workspaceFolderValue) {
+        return { value: ins.workspaceFolderValue, source: "VS Code workspace-folder setting" };
+      }
+      if (ins?.workspaceValue) {
+        return { value: ins.workspaceValue, source: "VS Code workspace setting" };
+      }
+      if (ins?.globalValue) {
+        return { value: ins.globalValue, source: "VS Code global setting" };
+      }
+      if (dotenv[envKey]) {
+        return { value: dotenv[envKey], source: `.env (${dotenvSource})` };
+      }
+      if (process.env[envKey]) {
+        return { value: process.env[envKey] ?? "", source: "process.env" };
+      }
+      return { value: "", source: "none" };
     };
-    return { pick, dotenv, dotenvSource };
+    const pick = (settingKey: string, envKey: string): string => pickWithSource(settingKey, envKey).value;
+    return { pick, pickWithSource, dotenv, dotenvSource };
+  }
+
+  private stopMessageFromDone(msg: Extract<HostToWebview, { type: "done" }>): Extract<Msg, { role: "stop" }> {
+    const elapsed = formatDuration(msg.durationMs);
+    const suffix = elapsed ? ` after ${elapsed}` : "";
+    const continuePrompt = "Continue from where you stopped. Keep using the existing context, plan, and todos.";
+    if (msg.reason === "turn_limit") {
+      const limit = msg.maxTurns ? `${msg.maxTurns} model/tool turns` : "the model/tool turn limit";
+      return {
+        role: "stop",
+        taskId: msg.taskId,
+        title: "Stopped at turn limit",
+        text: msg.error || `Loom reached ${limit}${suffix}. Continue to keep working from this conversation state.`,
+        reason: msg.reason,
+        durationMs: msg.durationMs,
+        canContinue: true,
+        continuePrompt,
+      };
+    }
+    if (msg.reason === "cancelled") {
+      return {
+        role: "stop",
+        taskId: msg.taskId,
+        title: "Task cancelled",
+        text: `This task was cancelled${suffix}. Continue when you want Loom to resume from the current conversation state.`,
+        reason: msg.reason,
+        durationMs: msg.durationMs,
+        canContinue: true,
+        continuePrompt,
+      };
+    }
+    return {
+      role: "stop",
+      taskId: msg.taskId,
+      title: "Task stopped",
+      text: msg.error || "Loom stopped this turn unexpectedly. Check the extension Output channel for details.",
+      reason: msg.reason,
+      durationMs: msg.durationMs,
+      canContinue: true,
+      continuePrompt,
+    };
   }
 
   private workspaceRoot(): string {
-    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+    return this.activeWorkspaceFolder()?.uri.fsPath ?? "";
+  }
+
+  private activeWorkspaceFolder(): vscode.WorkspaceFolder | undefined {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) return undefined;
+    const storedUri = this.ctx.workspaceState.get<string>(ACTIVE_WORKSPACE_FOLDER_KEY);
+    if (storedUri) {
+      const match = folders.find((f) => f.uri.toString() === storedUri);
+      if (match) return match;
+    }
+    return folders[0];
+  }
+
+  private postWorkspaceFolders() {
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    const active = this.activeWorkspaceFolder();
+    this.post({
+      type: "workspaceFolders",
+      folders: folders.map((f) => ({ uri: f.uri.toString(), name: f.name })),
+      activeUri: active?.uri.toString() ?? "",
+    }, false);
+  }
+
+  private async setActiveWorkspaceFolder(uri: string) {
+    if (this.busy) {
+      this.post({ type: "error", error: "Finish or cancel the current task before switching workspace folders." });
+      return;
+    }
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    if (!folders.some((f) => f.uri.toString() === uri)) {
+      this.post({ type: "error", error: "Unknown workspace folder." });
+      return;
+    }
+    await this.ctx.workspaceState.update(ACTIVE_WORKSPACE_FOLDER_KEY, uri);
+    this.postWorkspaceFolders();
+    // Force the agent to rehydrate against the new root on the next task.
+    this.hydratedConversationId = undefined;
   }
 
   private configurationTarget(): vscode.ConfigurationTarget {
     return vscode.ConfigurationTarget.Global;
+  }
+
+  private async updateLlmSetting<T>(
+    settings: vscode.WorkspaceConfiguration,
+    key: string,
+    value: T,
+  ): Promise<void> {
+    const target = this.configurationTargetForSetting(settings, key);
+    this.log(`[loom] setting ${key} at ${this.configurationTargetName(target)}`);
+    await settings.update(key, value, target);
+  }
+
+  private configurationTargetForSetting(
+    settings: vscode.WorkspaceConfiguration,
+    key: string,
+  ): vscode.ConfigurationTarget {
+    const inspect = settings.inspect<unknown>(key);
+    if (inspect?.workspaceFolderValue !== undefined) {
+      return vscode.ConfigurationTarget.WorkspaceFolder;
+    }
+    if (inspect?.workspaceValue !== undefined) {
+      return vscode.ConfigurationTarget.Workspace;
+    }
+    return this.configurationTarget();
+  }
+
+  private configurationTargetName(target: vscode.ConfigurationTarget): string {
+    switch (target) {
+      case vscode.ConfigurationTarget.Global:
+        return "global settings";
+      case vscode.ConfigurationTarget.Workspace:
+        return "workspace settings";
+      case vscode.ConfigurationTarget.WorkspaceFolder:
+        return "workspace-folder settings";
+      default:
+        return `settings target ${target}`;
+    }
   }
 
   private validProvider(provider: string): provider is LlmProvider {
@@ -2174,6 +2848,50 @@ function mergeToolOutput(current: string | undefined, summary: string): string {
   return `${current.trimEnd()}\n\n${summary}`;
 }
 
+function normalizeTodoItems(input: unknown): TodoItem[] {
+  if (!Array.isArray(input)) return [];
+  return input.flatMap((item, index) => {
+    const candidate = item as Partial<TodoItem>;
+    const text = typeof candidate.text === "string" ? candidate.text.trim() : "";
+    if (!text) return [];
+    const id = typeof candidate.id === "string" && candidate.id.trim()
+      ? candidate.id.trim()
+      : `todo-${index + 1}`;
+    return [{ id, text, status: normalizeTodoStatus(candidate.status) }];
+  });
+}
+
+function normalizeTodoStatus(status: unknown): TodoItem["status"] {
+  switch (status) {
+    case "in_progress":
+    case "done":
+    case "cancelled":
+      return status;
+    default:
+      return "pending";
+  }
+}
+
+function upsertTodoMessage(messages: Msg[], taskId: string, title: string | undefined, items: TodoItem[]): Msg[] {
+  const normalized = normalizeTodoItems(items);
+  if (normalized.length === 0) return messages;
+  const next = [...messages];
+  const idx = next.findIndex((msg) => msg.role === "todo" && msg.taskId === taskId);
+  const todoMsg: Extract<Msg, { role: "todo" }> = {
+    role: "todo",
+    taskId,
+    title,
+    items: normalized,
+  };
+  if (idx >= 0) {
+    const existing = next[idx] as Extract<Msg, { role: "todo" }>;
+    next[idx] = { ...todoMsg, title: title || existing.title };
+    return next;
+  }
+  next.push(todoMsg);
+  return next;
+}
+
 function activeModeLabel(modeId: string, modes: ModeDefinition[]): string {
   return modes.find((mode) => mode.id === modeId)?.label ?? modeId;
 }
@@ -2251,6 +2969,15 @@ function firstToolString(input: Record<string, unknown>, keys: string[]): string
 function trimProgressDetail(text: string): string {
   const cleaned = text.trim().replace(/\s+/g, " ");
   return cleaned.length > 80 ? `${cleaned.slice(0, 77)}...` : cleaned;
+}
+
+function formatDuration(ms: number | undefined): string {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "";
+  const totalSeconds = Math.max(1, Math.round(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes <= 0) return `${seconds}s`;
+  return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`;
 }
 
 function deriveTitleFromMessages(messages: Msg[]): string {

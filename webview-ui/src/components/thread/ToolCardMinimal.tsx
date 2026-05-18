@@ -36,6 +36,8 @@ function ToolIcon({ name }: { name: string }) {
             return <Ico.Compass size={size} />;
         case "get_diagnostics":
             return <Ico.Bug size={size} />;
+        case "update_todos":
+            return <Ico.Check size={size} />;
         default:
             return <Ico.Spark size={size} />;
     }

@@ -2,6 +2,19 @@
 
 Reverse-chronological notes for meaningful Loom prompt-layer changes.
 
+## 2026-05-18 - Diff recovery and live todos
+
+- Affected files: `agent/internal/prompts/code.md`,
+  `agent/internal/prompts/debug.md`,
+  `agent/internal/tools/descriptions/apply_diff.md`,
+  `agent/internal/tools/descriptions/update_todos.md`.
+- Rationale: failed exact-match edits should recover by reading the current
+  file and replacing the full contents once, rather than repeatedly guessing
+  partial `oldText` snippets. Code and Debug can also maintain a visible
+  task checklist through `update_todos`.
+- Eval impact: tool catalogue gains `update_todos`; Code/Debug prompt
+  snapshots change. Run `npm run eval` with provider credentials.
+
 ## 2026-05-17 - Universal convention-file fallback in rules bundle
 
 - Affected files: `agent/internal/rules/rules.go`,

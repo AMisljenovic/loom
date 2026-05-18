@@ -20,6 +20,13 @@ function render(provider: LlmProvider, baseUrl?: string, model = ""): string {
 }
 
 describe("SettingsView preset UI", () => {
+    it("uses a dense provider segmented control", () => {
+        const html = render("openai");
+        expect(html).toContain("provider-segmented");
+        expect(html).toContain('role="tablist"');
+        expect(html).toContain("provider-segment active");
+    });
+
     it("hides the preset dropdown for non-compatible providers", () => {
         const html = render("anthropic");
         expect(html).not.toContain(">Preset<");

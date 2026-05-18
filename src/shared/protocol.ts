@@ -151,6 +151,20 @@ export interface ReferenceAttachment {
   label?: string;
 }
 
+export interface ReferencePack {
+  id: string;
+  name: string;
+  refs: ReferenceAttachment[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ReferencePacksIndex {
+  version: 1;
+  order: string[];
+  packs: Record<string, ReferencePack>;
+}
+
 export type ProgressPhase =
   | "started"
   | "thinking"
@@ -246,13 +260,26 @@ export interface IndexStatusNotify {
   workspaceRoot?: string;
 }
 
+export interface ProcessSnapshot {
+  processId: string;
+  command: string;
+  cwd: string;
+  startedAt: number;
+  running: boolean;
+  exitCode?: number;
+  totalBytes: number;
+  tailOutput?: string;
+}
+
 export interface IndexInvalidateParams {
   paths: string[];
 }
 
 export interface TaskDone {
   taskId: TaskId;
-  reason: "completed" | "cancelled" | "error";
+  reason: "completed" | "cancelled" | "error" | "turn_limit";
+  error?: string;
+  maxTurns?: number;
 }
 
 export interface TokenUsage {
@@ -355,11 +382,29 @@ export interface TaskSummarized {
 // ---- Webview <-> Extension ----
 
 export type ToolStatus = "pending" | "approved" | "rejected" | "running" | "done" | "error";
+export type TodoStatus = "pending" | "in_progress" | "done" | "cancelled";
+
+export interface TodoItem {
+  id: string;
+  text: string;
+  status: TodoStatus;
+}
 
 export type Msg =
   | { role: "user"; text: string; references?: ReferenceAttachment[] }
   | { role: "assistant"; text: string; kind?: "intent" | "summary" | "error" }
   | { role: "progress"; text: string; phase: ProgressPhase; createdAt: number }
+  | { role: "todo"; taskId: string; title?: string; items: TodoItem[] }
+  | {
+    role: "stop";
+    taskId?: string;
+    title: string;
+    text: string;
+    reason: Exclude<TaskDone["reason"], "completed">;
+    durationMs?: number;
+    canContinue: boolean;
+    continuePrompt?: string;
+  }
   | {
     role: "tool";
     name: string;
@@ -403,6 +448,23 @@ export interface SessionMeta {
   messageCount: number;
   state: "active" | "archived";
   pinned: boolean;
+  parent?: { conversationId: string; messageIndex: number };
+}
+
+export interface SessionSearchMatch {
+  messageIndex: number;
+  snippet: string;
+}
+
+export interface SessionSearchHit {
+  conversationId: string;
+  title: string;
+  matches: SessionSearchMatch[];
+}
+
+export interface SessionExportPayload {
+  meta: SessionMeta;
+  body: ConversationState;
 }
 
 export interface SessionsIndex {
@@ -414,7 +476,7 @@ export interface SessionsIndex {
 
 export type WebviewToHost =
   | { type: "ready" }
-  | { type: "submit"; prompt: string; modeId?: string; references?: ReferenceAttachment[] }
+  | { type: "submit"; prompt: string; modeId?: string; references?: ReferenceAttachment[]; seedTodos?: { title?: string; items: TodoItem[] } }
   | { type: "cancel" }
   | { type: "pickReferences"; existing?: ReferenceAttachment[] }
   | { type: "referenceSearch"; requestId: string; query: string; existing?: ReferenceAttachment[] }
@@ -435,12 +497,27 @@ export type WebviewToHost =
   | { type: "requestAlwaysAllowList" }
   | { type: "subagentCancel"; subTaskId: string }
   | { type: "setMode"; modeId: string }
+  | { type: "approveBatch"; batchId: string; decisions: Record<string, "approved" | "rejected"> }
+  | { type: "processKill"; processId: string }
+  | { type: "processOpenOutput"; processId: string }
+  | { type: "setWorkspaceFolder"; uri: string }
+  | { type: "mcpReload" }
+  | { type: "semanticQuerySubmit"; query: string; topK?: number }
+  | { type: "sessionBranch"; conversationId: string; messageIndex: number; title?: string }
+  | { type: "sessionExport"; conversationId: string; format: "json" | "markdown" }
+  | { type: "sessionImport" }
+  | { type: "sessionSearch"; query: string }
+  | { type: "packSave"; name: string; refs: ReferenceAttachment[] }
+  | { type: "packDelete"; id: string }
+  | { type: "packRename"; id: string; name: string }
+  | { type: "packApply"; id: string; mode?: "merge" | "replace" }
   | { type: "openInEditor"; id: string; title: string; content: string; language?: string };
 
 export type HostToWebview =
   | { type: "delta"; text: string }
   | { type: "progress"; text: string; phase: ProgressPhase; createdAt: number }
   | { type: "toolCall"; call: ToolCall }
+  | { type: "todoUpdate"; taskId: string; title?: string; items: TodoItem[] }
   | { type: "diffPreview"; callId: CallId; relPath: string; unified: string }
   | { type: "toolProgress"; callId: CallId; chunk: string }
   | { type: "toolResult"; callId: CallId; ok: boolean; summary: string; durationMs: number }
@@ -462,7 +539,7 @@ export type HostToWebview =
     outputTokens: number;
     truncated?: boolean;
   }
-  | { type: "done"; reason: TaskDone["reason"] }
+  | { type: "done"; taskId?: string; reason: TaskDone["reason"]; error?: string; durationMs?: number; maxTurns?: number }
   | { type: "restore"; messages: Msg[]; conversationId: string; usage: ConversationUsage; llmConfig: LlmConfigView }
   | { type: "llmConfig"; llmConfig: LlmConfigView }
   | { type: "firstRunState"; state: FirstRunState }
@@ -471,9 +548,14 @@ export type HostToWebview =
   | { type: "usage"; usage: ConversationUsage }
   | { type: "mcpStatus"; status: McpServerStatus }
   | { type: "indexStatus"; status: IndexStatusNotify }
+  | { type: "approvalBatchRequest"; batchId: string; items: ToolApprovalItem[] }
+  | { type: "processesSnapshot"; processes: ProcessSnapshot[] }
+  | { type: "referencePacks"; index: ReferencePacksIndex }
   | { type: "sessions"; index: SessionsIndex }
+  | { type: "sessionSearchResults"; query: string; hits: SessionSearchHit[] }
+  | { type: "workspaceFolders"; folders: Array<{ uri: string; name: string }>; activeUri: string }
   | { type: "summarized"; droppedCount: number }
-  | { type: "planReady" }
+  | { type: "planReady"; markdown?: string }
   | { type: "referencesPicked"; references: ReferenceAttachment[] }
   | { type: "referenceSuggestions"; requestId: string; query: string; suggestions: ReferenceAttachment[] }
   | { type: "referencePickError"; error: string }

@@ -189,6 +189,8 @@ func executeTool(state *runState, call llm.ToolCall) string {
 		return "error: command not scripted for eval: " + in.Command
 	case "get_diagnostics":
 		return "[]"
+	case "update_todos":
+		return "updated todos"
 	case "read_process_output":
 		return "process exited; no buffered output"
 	case "kill_process":
@@ -289,7 +291,7 @@ func applyEvalDiff(state *runState, raw json.RawMessage) string {
 			return fmt.Sprintf("error: edit %d oldText must not be empty for existing files", i+1)
 		}
 		if count := strings.Count(after, edit.OldText); count != 1 {
-			return fmt.Sprintf("error: edit %d oldText matched %d times", i+1, count)
+			return fmt.Sprintf("error: edit %d oldText matched %d times\nRecovery: call read_file for the same path, then call apply_diff once with oldText set to the full current file contents and newText set to the full desired file contents.\nPath: %s", i+1, count, in.Path)
 		}
 		after = strings.Replace(after, edit.OldText, edit.NewText, 1)
 	}

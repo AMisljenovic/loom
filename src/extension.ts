@@ -39,6 +39,29 @@ export async function activate(context: vscode.ExtensionContext) {
       await promptAndStoreSecret(context, "openai", "OpenAI");
     })
   );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("loom.clearApiKeys", async () => {
+      const picked = await vscode.window.showQuickPick(
+        [
+          { label: "Anthropic", provider: "anthropic" as SecretProvider },
+          { label: "OpenAI", provider: "openai" as SecretProvider },
+          { label: "OpenAI-compatible", provider: "openai-compatible" as SecretProvider },
+          { label: "All", provider: undefined },
+        ],
+        { title: "Loom: Clear which API key from SecretStorage?", ignoreFocusOut: true },
+      );
+      if (!picked) return;
+      const targets: SecretProvider[] = picked.provider
+        ? [picked.provider]
+        : ["anthropic", "openai", "openai-compatible"];
+      for (const p of targets) {
+        await context.secrets.delete(secretKeyFor(p));
+      }
+      void vscode.window.showInformationMessage(
+        `Cleared ${picked.label} API key${targets.length > 1 ? "s" : ""} from SecretStorage. .env / settings will now apply.`,
+      );
+    })
+  );
 }
 
 export async function deactivate() {

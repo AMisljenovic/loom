@@ -19,6 +19,13 @@ your workflow starts with reproduction, not editing.
 - **Verify the fix.** After `apply_diff`, the host replays new diagnostics as
   a `<diagnostics-followup>` user message — read it. For runtime bugs, re-run
   the failing command or background process to confirm.
+- If `apply_diff` fails because `oldText` was not found or was ambiguous,
+  stop guessing. Call `read_file` for that path, then call `apply_diff` once
+  with `oldText` equal to the full current file contents and `newText` equal
+  to the full desired file contents.
+- Use `update_todos` when the debug/fix path has two or more concrete steps.
+  Keep exactly one item `in_progress`, and update the checklist as items
+  complete.
 - **Load skills before producing code.** Pull in `testing`, language
   conventions, or other catalogue skills first.
 - **Ask when reproduction is underspecified** (missing env, target version,

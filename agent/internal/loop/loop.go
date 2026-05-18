@@ -125,11 +125,17 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 
 	stableSystem := BuildStableSystem(p.Mode, registry, skillsCatalogue, Presets())
 
-	done := func(reason string) {
-		d.Conn.Notify("task.done", map[string]any{
+	done := func(reason string, fields ...map[string]any) {
+		payload := map[string]any{
 			"taskId": p.TaskID,
 			"reason": reason,
-		})
+		}
+		for _, extra := range fields {
+			for k, v := range extra {
+				payload[k] = v
+			}
+		}
+		d.Conn.Notify("task.done", payload)
 	}
 
 	maxTurns := opts.MaxTurns
@@ -173,7 +179,7 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 				done("cancelled")
 				return nil
 			}
-			return fmt.Errorf("llm stream: %w", err)
+			return fmt.Errorf("llm request failed: %w (model=%s, provider=%s)", err, d.LLM.Model(), d.LLM.Family())
 		}
 
 		entry.AddUsage(result.Usage)
@@ -181,7 +187,7 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 		d.notifyUsage(p.TaskID, entry, result.Usage)
 		if opts.MaxInputTokens > 0 && entry.CumulativeInput > opts.MaxInputTokens {
 			d.notifyConversationUpdated(p.ConversationID, entry)
-			done("error")
+			done("error", map[string]any{"error": "input token budget exceeded"})
 			return fmt.Errorf("input token budget exceeded")
 		}
 
@@ -250,10 +256,12 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 		}
 	}
 
+	msg := fmt.Sprintf("Stopped after %d model/tool turns (turn limit reached). Continue the task to keep working from this conversation state.", maxTurns)
+	done("turn_limit", map[string]any{"error": msg, "maxTurns": maxTurns})
 	if opts.IsSubAgent {
-		done("error")
+		return fmt.Errorf("turn limit exceeded")
 	}
-	return fmt.Errorf("turn limit exceeded")
+	return nil
 }
 
 func (d *Driver) maybeSummarize(ctx context.Context, taskID, conversationID, systemPrompt string, entry *conversation.Entry) error {

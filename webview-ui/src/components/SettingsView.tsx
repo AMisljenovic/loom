@@ -166,18 +166,18 @@ export function SettingsView({ config, onClose }: SettingsViewProps) {
             <section className="settings-section">
                 <h3>Provider & Model</h3>
 
-                <div className="provider-grid">
+                <div className="provider-segmented" role="tablist" aria-label="Provider">
                     {PROVIDERS.map((p) => (
                         <button
                             key={p}
-                            className={`provider-btn${provider === p ? " active" : ""}`}
+                            type="button"
+                            role="tab"
+                            aria-selected={provider === p}
+                            className={`provider-segment${provider === p ? " active" : ""}`}
                             onClick={() => pickProvider(p)}
+                            title={providerSubtitle(p)}
                         >
-                            <span className="provider-btn-title">
-                                <span className="provider-dot" />
-                                <span>{providerLabel(p)}</span>
-                            </span>
-                            <span className="provider-btn-sub">{providerSubtitle(p)}</span>
+                            {providerLabel(p)}
                         </button>
                     ))}
                 </div>
