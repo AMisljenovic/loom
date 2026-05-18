@@ -50,6 +50,9 @@ mode).
   bounded survey of an area rather than a single fact. Brief it with one
   concrete question, the parent goal, the exact files or symbols to start from,
   and a stopping condition.
+- `scratchpad` is the right place for working plan drafts and accumulated
+  findings before you finalize the `<proposed_plan>` — it persists across
+  turns so a long investigation does not lose state.
 
 # Safety
 

@@ -279,6 +279,28 @@ func Registry() []Tool {
 			// its transcript todo card in real time.
 		},
 		{
+			Name: "scratchpad",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"action": map[string]any{
+						"type":        "string",
+						"enum":        []string{"read", "write", "append", "clear"},
+						"description": "What to do with the scratchpad note.",
+					},
+					"content": map[string]any{
+						"type":        "string",
+						"description": "Body for write/append. Ignored for read/clear.",
+					},
+				},
+				"required": []string{"action"},
+			},
+			// LocalExec is intentionally nil — the loop intercepts this tool
+			// (see execScratchpad) so it can mutate the conversation Entry's
+			// in-memory copy alongside the on-disk file without expanding the
+			// generic LocalExec signature with state-mutating dependencies.
+		},
+		{
 			Name: "spawn_subagent",
 			InputSchema: map[string]any{
 				"type": "object",

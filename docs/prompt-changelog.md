@@ -2,6 +2,29 @@
 
 Reverse-chronological notes for meaningful Loom prompt-layer changes.
 
+## 2026-05-18 - Scratchpad tool for cross-turn working memory
+
+- Affected files: `agent/internal/tools/tools.go`,
+  `agent/internal/tools/descriptions/scratchpad.md` (new),
+  `agent/internal/scratchpad/scratchpad.go` (new),
+  `agent/internal/conversation/store.go`,
+  `agent/internal/loop/loop.go`,
+  `agent/internal/loop/scratchpad_exec.go` (new),
+  `agent/internal/prompts/code.md`, `architect.md`, `debug.md`.
+- Rationale: the loop has no agent-private working memory between turns.
+  `update_todos` is user-visible and skills are static; long multi-step
+  tasks lost intermediate plans and findings to summarization. The new
+  `scratchpad` tool stores a per-conversation markdown buffer at
+  `<workspace>/.loom/scratchpad/<conversationId>.md`, supports
+  `read`/`write`/`append`/`clear`, persists across reloads, and is
+  capped at 64 KB. State mutation follows the `load_skill` pattern
+  (LocalExec nil, loop dispatches a helper that takes the Entry).
+- Eval impact: tool catalogue grows by one entry between `update_todos`
+  and `spawn_subagent`. Stable system prefix cache misses once when the
+  new tool is first advertised, then re-stabilizes. Mode prompts (Code,
+  Architect, Debug) each gain a single bullet pointing at `scratchpad`.
+  Run `npm run eval` when provider credentials are available.
+
 ## 2026-05-18 - Sub-agent storm guardrails and external catalogues
 
 - Affected files: `agent/internal/prompts/architect.md`,

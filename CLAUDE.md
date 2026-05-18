@@ -101,6 +101,19 @@ change to a message type must be made on both sides.
   recovery error in [src/tools/applyDiffRecovery.ts](src/tools/applyDiffRecovery.ts)
   steers the model to a range edit — **never** to a whole-file rewrite.
   Keep that recovery contract intact when changing the schema.
+- **Scratchpad is agent-private working memory.** The `scratchpad` tool
+  stores a single per-conversation markdown buffer at
+  `<workspace>/.loom/scratchpad/<conversationId>.md` with
+  `read|write|append|clear` actions and a 64 KB cap. It follows the
+  `load_skill` pattern: `LocalExec: nil` in
+  [agent/internal/tools/tools.go](agent/internal/tools/tools.go), intercepted
+  in the loop's `execOneTool` dispatch ([loop.go](agent/internal/loop/loop.go))
+  by `execScratchpad`, which mutates `Entry.Scratchpad` + the on-disk file
+  via the [scratchpad package](agent/internal/scratchpad/scratchpad.go). The
+  body is lazy-loaded from disk on first call per Entry (the
+  `ScratchpadLoaded` guard on `Entry`) so a resumed conversation picks up
+  prior notes. Distinct from `update_todos` (user-visible progress) and
+  skills (curated static knowledge) — do not collapse them.
 - **Diagnostics feedback loop.** After a successful `apply_diff`, the TS
   side diffs pre/post-edit `vscode.languages.getDiagnostics` for affected
   URIs (750ms settle) and attaches new errors/warnings as a `followups`

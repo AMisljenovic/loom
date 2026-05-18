@@ -69,6 +69,14 @@ return structured Answer / Evidence / Unverified summaries. Workspaces can add
 provider-family presets under `.loom/agents/`, `.claude/agents/`, or
 `.codex/agents/`.
 
+**Per-conversation scratchpad**
+
+Loom exposes a `scratchpad` tool the agent uses as private working memory
+between turns — a single markdown buffer persisted at
+`<workspace>/.loom/scratchpad/<conversationId>.md`. The agent reads,
+writes, appends to, or clears it; the user sees the calls as quiet tool
+cards in the transcript. Survives reload, capped at 64 KB.
+
 **Slash commands**
 
 Workspace slash commands live in `.loom/commands/`, `.claude/commands/`, or

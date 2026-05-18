@@ -111,6 +111,13 @@ newline-delimited JSON-RPC over stdio.
     is for single-directory inspection. Tool descriptions and the
     Code/Architect/Ask mode prompts lead with "search first, read
     narrowly" — preserve that ordering when adding new read-side tools.
+15c. `scratchpad` is the agent's private working memory between turns.
+    Persisted at `<workspace>/.loom/scratchpad/<conversationId>.md`
+    (64 KB cap) with `read|write|append|clear`. LocalExec is nil; the
+    loop intercepts the call and dispatches `execScratchpad`, which
+    mutates `Entry.Scratchpad` and the on-disk file via
+    `agent/internal/scratchpad/`. Distinct from `update_todos`
+    (user-facing progress) and skills (curated static knowledge).
 
 16. v0.1.4 sub-agents run in parallel within a turn. The built-in
     `research` preset is always available, exposed through `spawn_subagent`;

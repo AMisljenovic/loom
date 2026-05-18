@@ -47,7 +47,8 @@
       "Bash(powershell -NoProfile -Command \"Test-Path 'c:\\\\Projects\\\\loom\\\\webview-ui\\\\src\\\\styles\\\\components.test.ts'\")",
       "Bash(echo \"EXIT $?\")",
       "Bash(git log *)",
-      "Bash(npx vitest *)"
+      "Bash(npx vitest *)",
+      "Bash(npm --prefix webview-ui run build)"
     ],
     "deny": [
       "Bash(rm -rf:*)",

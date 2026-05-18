@@ -1192,6 +1192,11 @@
     border: 1px solid var(--border-faint);
     border-radius: var(--r-1);
     padding: 1px 4px;
+    /* Long file paths and qualified identifiers must break mid-token rather
+       than pushing past the card width. `pre code` overrides this back to
+       `normal` so code blocks keep horizontal scroll instead. */
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .markdown-body pre {
@@ -1210,6 +1215,7 @@
     background: transparent;
     white-space: pre;
     overflow-wrap: normal;
+    word-break: normal;
 }
 
 .markdown-body blockquote {

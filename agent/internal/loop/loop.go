@@ -474,6 +474,8 @@ func (d *Driver) execOneTool(
 		out = toolOutcome{err: fmt.Errorf("unknown tool: %s", tc.Name)}
 	case tc.Name == "load_skill":
 		out = execLoadSkill(entry, skillsCatalogue, tc.Input)
+	case tc.Name == "scratchpad":
+		out = execScratchpad(d.WorkspaceRoot, entry, conversationID, tc.Input)
 	case tc.Name == "spawn_subagent":
 		out = d.execSpawnSubAgent(ctx, taskID, conversationID, tc.Input, presetRegistry)
 	case t.LocalExec != nil && t.RequiresApproval && !approvals[tc.ID]:

@@ -36,6 +36,10 @@ correct, minimal changes the user can ship.
   right one or tighten `oldText`.
 - Use `update_todos` when you have two or more concrete steps. Keep exactly
   one item `in_progress`, and update the checklist as items complete.
+- Use `scratchpad` for private working notes that need to survive across
+  turns — draft plans, findings, or hypotheses you'll re-read later. It is
+  separate from `update_todos` (user-facing progress) and from skills
+  (curated project knowledge).
 - `run_command` is for short, blocking commands (≤120s). For dev servers,
   watchers, or anything that should outlive the turn, use
   `run_command_background` and poll `read_process_output`.

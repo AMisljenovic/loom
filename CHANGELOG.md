@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.5.0
+
+Loom 0.5.0 adds a per-conversation scratchpad so the agent can keep
+working notes across turns, repairs sessions that were reloaded
+mid-tool-call, and tightens transcript card wrapping for long file paths.
+
+### Added
+
+- **Scratchpad tool.** A new `scratchpad` tool gives the agent a single
+  per-conversation markdown buffer with `read`, `write`, `append`, and
+  `clear` actions. Notes are persisted at
+  `<workspace>/.loom/scratchpad/<conversationId>.md`, lazy-loaded into
+  `conversation.Entry` on first call, and capped at 64 KB so the buffer
+  stays bounded. The tool follows the existing `load_skill` pattern:
+  `LocalExec: nil` in the registry, intercepted in the loop's tool
+  dispatch (`execScratchpad`) so it can mutate the conversation entry
+  alongside the on-disk file. Distinct from `update_todos` (user-facing
+  progress) and skills (curated static knowledge). Mode prompts for
+  Code, Architect, and Debug each gain a short pointer at the new tool.
+
+### Changed
+
+- Tool catalogue order is now `update_todos`, `scratchpad`,
+  `spawn_subagent`. Stable system prefix cache misses once on first
+  load, then re-stabilizes.
+- Markdown rendering inside transcript cards now breaks long inline
+  `code` spans (file paths, qualified identifiers) instead of pushing
+  past the card width. Fenced code blocks keep their horizontal scroll
+  behavior via an explicit override on `.markdown-body pre code`.
+
+### Fixed
+
+- Reloading the window mid-tool-call no longer wedges the conversation.
+  Previously, the persisted state contained an assistant message with
+  `tool_calls` but no matching tool result messages, and OpenAI's API
+  rejected the next turn with a 400 ("tool_calls must be followed by
+  tool messages responding to each tool_call_id"). `conversation.Hydrate`
+  now runs `healOrphanToolCalls` over the incoming snapshot, injecting a
+  synthetic tool response for every unanswered `tool_call_id` so resumed
+  sessions reach the LLM in a valid state.
+
 ## 0.4.3
 
 Loom 0.4.3 brings slash commands, image attachments, broader external

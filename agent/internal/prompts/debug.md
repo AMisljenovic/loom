@@ -27,6 +27,9 @@ your workflow starts with reproduction, not editing.
 - Use `update_todos` when the debug/fix path has two or more concrete steps.
   Keep exactly one item `in_progress`, and update the checklist as items
   complete.
+- Use `scratchpad` for working notes the user does not need to see —
+  failing repro commands, symbols touched, ruled-out hypotheses. It
+  persists across turns so a long bisect doesn't lose state.
 - **Load skills before producing code.** Pull in `testing`, language
   conventions, or other catalogue skills first.
 - **Ask when reproduction is underspecified** (missing env, target version,

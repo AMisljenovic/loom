@@ -108,6 +108,14 @@ handoff:
     directory) cover the navigation cases. Tool descriptions and the
     Code/Architect/Ask mode prompts lead with "search first, read
     narrowly" — preserve that ordering when adding new read-side tools.
+14c. `scratchpad` is per-conversation agent-private working memory.
+    Persisted at `<workspace>/.loom/scratchpad/<conversationId>.md`
+    with `read|write|append|clear` actions (64 KB cap). LocalExec is
+    nil; the loop intercepts the call in `execOneTool` and dispatches
+    to `execScratchpad`, which mutates `Entry.Scratchpad` alongside
+    the on-disk file in `agent/internal/scratchpad/`. Body is lazy-
+    loaded from disk on first call per Entry. Keep separate from
+    `update_todos` (user-visible) and skills (curated static).
 
 15. v0.1.4 sub-agents run in parallel within a turn. The built-in
     `research` preset is always available, exposed through `spawn_subagent`.
