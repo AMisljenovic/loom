@@ -71,6 +71,15 @@ change to a message type must be made on both sides.
   skills live in `.loom/skills/<id>/SKILL.md`. `load_skill` is intercepted
   in the loop (not a regular `LocalExec`) because it mutates
   `conversation.Entry.LoadedSkills`.
+- **Skills, sub-agents, and commands import external conventions.**
+  Provider family comes from `llm.Provider.Family()` in Go and from the active
+  `loom.provider` in the TS host. Anthropic loads `.claude/<kind>/`; OpenAI,
+  OpenAI-compatible, and local providers load `.codex/<kind>/`. The opposite
+  provider folder is a fallback only when the family-native folder contributes
+  zero entries. Loom-native config wins: `.loom/<kind>/` overrides builtins,
+  builtins override external entries, and external entries are additive only.
+  Imported sub-agent presets trust their `tools:` field as written; write tools
+  still flow through normal approval.
 - **Search-first, read narrowly.** `read_file` accepts optional
   `offset`/`limit` (1-based line window) and soft-caps files over ~256 KB
   to the first 2000 lines when no `limit` is given — the header line
@@ -162,9 +171,10 @@ change to a message type must be made on both sides.
   read-only tool allowlist, streaming into its own webview sub-agent card.
   Limits are enforced atomically inside `TaskRegistry.Register` (depth,
   per-tree count, tree token ceiling) — do not re-introduce pre-checks
-  outside the registry. Per-turn cap stays at `subAgentMaxPerTurn=5`. Do
-  not add custom presets, fire-and-forget orchestration, or sub-agent model
-  routing without updating `SUBAGENTS.md`.
+  outside the registry. Per-turn cap stays at `subAgentMaxPerTurn=3`. Custom
+  presets may be imported from `.loom/agents/`, `.claude/agents/`, or
+  `.codex/agents/`; do not add fire-and-forget orchestration or sub-agent
+  model routing without updating `SUBAGENTS.md`.
 - **First-run setup is host-owned and global.** `ChatPanel.ts` stores
   `globalState["loom.firstRun.completed"]` and
   `globalState["loom.llm.advanced"]`, posts `firstRunState`, and keeps API

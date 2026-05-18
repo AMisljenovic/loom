@@ -101,57 +101,72 @@ output guidance above takes precedence on points it covers explicitly.
   Markdown heading in the final answer.
 
 Available tools:
-- read_file: Read a UTF-8 text file relative to the workspace root.
+- read_file: Read a slice (or all) of a UTF-8 text file relative to the workspace root.
 - list_dir: List entries in a directory relative to the workspace root.
 - search: Search the codebase with a regex query and return `path:line:snippet` matches.
 - get_diagnostics: Get VS Code diagnostics (compiler/linter errors and warnings) for the whole workspace or a specific file.
 - load_skill: Load one or more skills by id. Skill bodies are short topic-specific guides that persist in your system prompt for the rest of the conversation.
 
 ## Tool details
-### read_file — Read a UTF-8 text file relative to the workspace root.
+### read_file — Read a slice (or all) of a UTF-8 text file relative to the workspace root.
+
+## Search first, read narrowly
+This is **not** the right first tool for navigation. Use `search` to locate the
+relevant lines, then `read_file` with `offset` and `limit` to inspect just
+that region. Use `find_files` when you need to know where a file lives.
+Whole-file reads are appropriate only for short files (~200 lines), files you
+are about to fully rewrite via `apply_diff`, or when you genuinely need the
+entire body.
 
 ## When to use
-- You need to inspect a specific file's contents before reasoning about it.
-- You have a file path from a previous tool result and need its body.
+- You have a specific file path and a known line region you need to inspect.
+- You are about to call `apply_diff` and need the current file body.
 
 ## When NOT to use
 - For binary files (images, executables). The result will be unusable.
 - To list a directory — use `list_dir`.
+- To find files by name pattern — use `find_files`.
 - To search across many files — use `search`.
 
 ## Input
 - `path` (string, required) — workspace-relative path. Absolute paths are
   rejected. Forward slashes work cross-platform.
+- `offset` (number, optional) — 1-based starting line. Default 1.
+- `limit` (number, optional) — max lines to return. Default unlimited.
 
 ## Behavior
-- Returns the full file body as a string. There is no offset/limit; if the
-  file is large, the entire content lands in your context window.
-- An error result means the file is missing or unreadable. Do not assume the
-  file exists after an error.
+- Returns the requested slice with a header line of the form
+  `// Lines <start>-<end> of <total> in <path>`. When the slice is truncated
+  the header notes how to read more (raise `offset` or pass `limit`).
+- Files over ~256 KB are soft-capped to the first 2000 lines when no `limit`
+  is supplied. Pass an explicit `offset`/`limit` to walk a large file.
+- An error result means the file is missing, a directory, or unreadable.
 
 ## Examples
 
 ```json
-{"path": "src/extension.ts"}
+{"path": "src/extension.ts", "offset": 120, "limit": 60}
 ```
 
-Read the extension entry point.
+Read 60 lines starting at line 120 — exactly the region `search` pointed at.
 
 ```json
 {"path": "agent/internal/loop/loop.go"}
 ```
 
-Read the Go agent loop.
+Whole-file read. Acceptable here because you intend to follow up with
+`apply_diff`.
 
 ### list_dir — List entries in a directory relative to the workspace root.
 
 ## When to use
-- You need to discover what's in a directory before reading a specific file.
-- You are exploring an unfamiliar area of the workspace.
+- You need to discover what's in a single directory before reading a file.
+- You are exploring an unfamiliar area of the workspace one level at a time.
 
 ## When NOT to use
-- For recursive listings — call `list_dir` per level, or use `search` with a
-  pattern instead.
+- To find files by name pattern across the tree — use `find_files`.
+- For content search — use `search`.
+- For recursive listings — `find_files` with a `**` glob is the right tool.
 - To check whether a single named file exists — just `read_file` it and
   handle the error.
 
@@ -180,12 +195,18 @@ List a subdirectory.
 
 ### search — Search the codebase with a regex query and return `path:line:snippet` matches.
 
+## First tool for most navigation
+Reach for `search` before `read_file` when you don't already know exactly
+which lines you need. Combine `globs` to scope to a language or directory,
+then follow up with a narrow `read_file` slice on the lines that matched.
+
 ## When to use
 - Locating string literals, symbol names, or patterns across many files.
 - Confirming where a function, constant, or import is referenced.
 - Quickly checking whether a feature exists before adding it.
 
 ## When NOT to use
+- To find files by name pattern (no content match) — use `find_files`.
 - For semantic "find me code that does X" queries — use `semantic_search`
   if available, or `find_references` when you have a specific symbol.
 - For inspecting a single known file — `read_file` is direct and faster.
@@ -218,7 +239,7 @@ Find the prompt-build function inside the Go agent.
 {"query": "TODO|FIXME", "globs": ["*.ts", "*.tsx"], "maxResults": 50}
 ```
 
-Find pending markers across the TypeScript source.
+Scoped, capped query — typical first-step navigation before reading.
 
 ### get_diagnostics — Get VS Code diagnostics (compiler/linter errors and warnings) for the whole workspace or a specific file.
 

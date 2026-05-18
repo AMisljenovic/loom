@@ -2,6 +2,7 @@ package loop
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"io/fs"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/your-org/loom/internal/llm"
 )
 
 const (
@@ -16,52 +19,123 @@ const (
 	maxReferenceTotalBytes   = 32 * 1024
 	maxReferenceFolderItems  = 120
 	maxReferenceReadFileSize = 2 * 1024 * 1024
+	maxReferenceImageBytes   = 5 * 1024 * 1024
 )
 
 // Reference mirrors src/shared/protocol.ts ReferenceAttachment.
 type Reference struct {
-	ID    string `json:"id"`
-	Kind  string `json:"kind"`
-	Path  string `json:"path"`
-	Label string `json:"label,omitempty"`
+	ID       string `json:"id"`
+	Kind     string `json:"kind"`
+	Path     string `json:"path,omitempty"`
+	Label    string `json:"label,omitempty"`
+	MIMEType string `json:"mimeType,omitempty"`
+	Data     string `json:"data,omitempty"`
+	Size     int64  `json:"size,omitempty"`
 }
 
-// RenderReferences converts per-turn file/folder references into a bounded
-// prompt block. It validates every path against the workspace root.
-func RenderReferences(workspaceRoot string, refs []Reference) (string, error) {
+// RenderReferences converts per-turn references into a bounded text prompt
+// block plus image payloads. File and folder paths are validated against the
+// workspace root; image references remain conversation-local payloads.
+func RenderReferences(workspaceRoot string, refs []Reference) (string, []llm.Image, error) {
 	if len(refs) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
-	root, err := filepath.Abs(workspaceRoot)
-	if err != nil || root == "" {
-		return "", fmt.Errorf("references: workspace root is required")
+	root := ""
+	needsRoot := false
+	for _, ref := range refs {
+		if ref.Kind == "file" || ref.Kind == "folder" {
+			needsRoot = true
+			break
+		}
+	}
+	if needsRoot {
+		var err error
+		root, err = filepath.Abs(workspaceRoot)
+		if err != nil || root == "" {
+			return "", nil, fmt.Errorf("references: workspace root is required")
+		}
 	}
 	var b strings.Builder
+	var images []llm.Image
 	b.WriteString("<references>\n")
 	remaining := maxReferenceTotalBytes
+	totalCapMarked := false
 	for _, ref := range refs {
-		full, rel, err := resolveReferencePath(root, ref.Path)
-		if err != nil {
-			return "", err
-		}
 		switch ref.Kind {
 		case "file":
+			full, rel, err := resolveReferencePath(root, ref.Path)
+			if err != nil {
+				return "", nil, err
+			}
 			rendered, used := renderFileReference(full, rel, remaining)
 			b.WriteString(rendered)
 			remaining -= used
 		case "folder":
+			full, rel, err := resolveReferencePath(root, ref.Path)
+			if err != nil {
+				return "", nil, err
+			}
 			rendered := renderFolderReference(full, rel)
 			b.WriteString(rendered)
+		case "image":
+			img, rendered, err := renderImageReference(ref)
+			if err != nil {
+				return "", nil, err
+			}
+			images = append(images, img)
+			b.WriteString(rendered)
 		default:
-			return "", fmt.Errorf("references: unsupported kind %q for %s", ref.Kind, ref.Path)
+			return "", nil, fmt.Errorf("references: unsupported kind %q", ref.Kind)
 		}
-		if remaining <= 0 {
+		if remaining <= 0 && !totalCapMarked {
 			b.WriteString("<truncated reason=\"reference total byte cap reached\" />\n")
-			break
+			totalCapMarked = true
 		}
 	}
 	b.WriteString("</references>")
-	return b.String(), nil
+	return b.String(), images, nil
+}
+
+func renderImageReference(ref Reference) (llm.Image, string, error) {
+	if !isSupportedImageMIME(ref.MIMEType) {
+		return llm.Image{}, "", fmt.Errorf("references: unsupported image type %q", ref.MIMEType)
+	}
+	if ref.Data == "" {
+		return llm.Image{}, "", fmt.Errorf("references: image data is required")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(ref.Data)
+	if err != nil {
+		return llm.Image{}, "", fmt.Errorf("references: invalid image data: %w", err)
+	}
+	if len(decoded) == 0 || len(decoded) > maxReferenceImageBytes {
+		return llm.Image{}, "", fmt.Errorf("references: image size %d exceeds limit", len(decoded))
+	}
+	label := strings.TrimSpace(ref.Label)
+	if label == "" {
+		label = "Pasted image"
+	}
+	size := ref.Size
+	if size <= 0 {
+		size = int64(len(decoded))
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "<reference kind=\"image\" label=\"%s\" mime=\"%s\" size=\"%d\" />\n", escapeAttr(label), escapeAttr(ref.MIMEType), size)
+	return llm.Image{
+		ID:       ref.ID,
+		Label:    label,
+		MIMEType: ref.MIMEType,
+		Data:     ref.Data,
+		Size:     size,
+	}, b.String(), nil
+}
+
+func isSupportedImageMIME(mime string) bool {
+	switch mime {
+	case "image/png", "image/jpeg", "image/webp", "image/gif":
+		return true
+	default:
+		return false
+	}
 }
 
 func resolveReferencePath(root, rel string) (string, string, error) {

@@ -23,8 +23,8 @@ and trust inside their editor.
   as OpenRouter, Groq, Cerebras, Vercel AI Gateway, Azure OpenAI, vLLM, or
   local OpenAI-compatible servers such as Ollama and LM Studio.
 - **Repo-native behavior**: Loom loads `.loomrules`, provider-native agent
-  instruction files, and common convention files so the agent follows the
-  rules your repo already carries.
+  instruction files, skills, sub-agent presets, and slash commands so the
+  agent follows the conventions your repo already carries.
 
 ## Features
 
@@ -64,8 +64,16 @@ and optional embeddings add semantic search through Ollama or Voyage.
 **Read-only sub-agents**
 
 The built-in `research` sub-agent preset lets the main agent delegate focused
-read-only investigations in parallel. Sub-agents use isolated conversation
-state and return structured Answer / Evidence / Unverified summaries.
+investigations in parallel. Sub-agents use isolated conversation state and
+return structured Answer / Evidence / Unverified summaries. Workspaces can add
+provider-family presets under `.loom/agents/`, `.claude/agents/`, or
+`.codex/agents/`.
+
+**Slash commands**
+
+Workspace slash commands live in `.loom/commands/`, `.claude/commands/`, or
+`.codex/commands/`. Type `/` in the composer to expand a command into the user
+message before it is sent to the agent.
 
 **First-run setup**
 
@@ -113,6 +121,13 @@ Loom automatically loads `.loomrules` first, then provider-native files such as
 `CLAUDE.md` or `AGENTS.md`. When those are absent, it falls back to common
 workspace conventions such as `.github/copilot-instructions.md`,
 `GEMINI.md`, `.cursor/rules/*.md`, and `.cursorrules`.
+
+Skills, sub-agent presets, and slash commands are imported with the same
+provider-family idea. Anthropic loads `.claude/<kind>/`; OpenAI,
+OpenAI-compatible, and local providers load `.codex/<kind>/`; the opposite
+family is used only when the native folder is empty. Precedence is:
+`.loom/<kind>/` wins over Loom builtins, Loom builtins win over external
+entries, and external entries are additive only.
 
 See [docs/loomrules.md](docs/loomrules.md) for precedence, size limits, and
 examples.

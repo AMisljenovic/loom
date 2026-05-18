@@ -61,14 +61,15 @@ func main() {
 	}
 
 	// Empty workspace, no rules, no loaded skills — true "fresh task" baseline.
-	cat := skills.Load("")
+	cat := skills.Load("", "")
+	presets := loop.LoadPresets("", "")
 	bundle := rules.Bundle{}
 
 	// Mode prompts.
 	for _, m := range modes {
 		mode := m
 		registry := loop.ApplyMode(tools.Registry(), &mode)
-		stable := loop.BuildStableSystem(&mode, registry, cat, loop.Presets())
+		stable := loop.BuildStableSystem(&mode, registry, cat, presets.All())
 		volatile := loop.BuildVolatileSystem("", cat, nil, bundle)
 
 		path := filepath.Join(*outDir, m.ID+"-empty.txt")
@@ -76,7 +77,7 @@ func main() {
 	}
 
 	// Research sub-agent preset.
-	preset, err := loop.PresetFor("research")
+	preset, err := presets.For("research")
 	if err != nil {
 		fail("research preset: %v", err)
 	}

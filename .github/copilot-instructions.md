@@ -112,15 +112,17 @@ newline-delimited JSON-RPC over stdio.
     Code/Architect/Ask mode prompts lead with "search first, read
     narrowly" — preserve that ordering when adding new read-side tools.
 
-16. v0.1.4 sub-agents run in parallel within a turn. Only the built-in
-    `research` preset exists, exposed through `spawn_subagent`. Multiple
+16. v0.1.4 sub-agents run in parallel within a turn. The built-in
+    `research` preset is always available, exposed through `spawn_subagent`;
+    additional presets may be imported from `.loom/agents/`,
+    `.claude/agents/`, or `.codex/agents/`. Multiple
     spawns emitted in one turn run concurrently through the same errgroup
     as other tools; each sub-agent is read-only, has isolated conversation
     state, and streams into its own webview sub-agent card. Depth, per-tree
     count, and tree token ceiling are enforced atomically inside
-    `TaskRegistry.Register`. Per-turn cap is `subAgentMaxPerTurn=5`. Do not
-    add custom presets, fire-and-forget orchestration, or sub-agent model
-    routing without updating `SUBAGENTS.md`.
+    `TaskRegistry.Register`. Per-turn cap is `subAgentMaxPerTurn=3`. Do not
+    add fire-and-forget orchestration or sub-agent model routing without
+    updating `SUBAGENTS.md`.
 17. Tool descriptions live in `agent/internal/tools/descriptions/*.md`, shared
     output conventions live in `agent/internal/prompts/_output_conventions.md`,
     and prompt changes must update `docs/prompt-changelog.md`. Run
@@ -140,6 +142,10 @@ newline-delimited JSON-RPC over stdio.
     `.cursorrules`, so Loom respects whatever convention the workspace
     already uses. The whole bundle is capped at 32 KB, deduped by content
     hash, and lives in the volatile tail of the system prompt.
+20. Skills, sub-agents, and commands are imported by provider family:
+    Anthropic uses `.claude/<kind>/`; OpenAI, OpenAI-compatible, and local use
+    `.codex/<kind>/`; the opposite family is fallback-only. Loom-native
+    entries win (`.loom/<kind>/` over builtins, builtins over external).
 
 ## Pre-commit hook
 

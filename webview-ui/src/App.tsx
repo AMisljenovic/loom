@@ -4,6 +4,8 @@ import { detectModeSwitchIntent } from "../../src/shared/modeIntent";
 import type {
   AlwaysAllowRule,
   AutoApproveConfig,
+  CommandCatalogueEntry,
+  CommandInvocation,
   ConversationUsage,
   FirstRunState,
   IndexStatusNotify,
@@ -21,6 +23,7 @@ import type {
   ToolStatus,
 } from "../../src/shared/protocol";
 import { mergeReferenceAttachments, normalizeReferenceAttachments } from "../../src/shared/references";
+import { expandCommandBody } from "../../src/commands/expand";
 import { AutoApprovePopover } from "./components/AutoApprovePopover";
 import { EmptyState } from "./components/EmptyState";
 import { FirstRun } from "./components/FirstRun";
@@ -348,6 +351,17 @@ function prettyToolInput(input: unknown): string {
   }
 }
 
+function matchImportedCommand(prompt: string, commands: CommandCatalogueEntry[]): { command: CommandCatalogueEntry; args: string } | undefined {
+  if (!prompt.startsWith("/")) return undefined;
+  const withoutSlash = prompt.slice(1);
+  const space = withoutSlash.search(/\s/);
+  const name = space < 0 ? withoutSlash : withoutSlash.slice(0, space);
+  if (!name) return undefined;
+  const command = commands.find((item) => item.name === name);
+  if (!command) return undefined;
+  return { command, args: space < 0 ? "" : withoutSlash.slice(space).trimStart() };
+}
+
 function formatProcessBytes(totalBytes: number): string {
   if (totalBytes < 1024) return `${totalBytes} B`;
   if (totalBytes < 1024 * 1024) return `${(totalBytes / 1024).toFixed(1)} KB`;
@@ -383,6 +397,7 @@ export function App() {
   const [mcpStatuses, setMcpStatuses] = useState<McpServerStatus[]>([]);
   const [indexStatus, setIndexStatus] = useState<IndexStatusNotify | null>(null);
   const [sessions, setSessions] = useState<SessionsIndex | null>(null);
+  const [commands, setCommands] = useState<CommandCatalogueEntry[]>([]);
   const [showSessions, setShowSessions] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -545,6 +560,7 @@ export function App() {
       }
       if (m.type === "sessions") { setSessions(m.index); return; }
       if (m.type === "referencePacks") { setReferencePacks(m.index); return; }
+      if (m.type === "commandsCatalogue") { setCommands(Array.isArray(m.commands) ? m.commands : []); return; }
       if (m.type === "sessionSearchResults") { setSessionSearchHits(Array.isArray(m.hits) ? m.hits : []); return; }
       if (m.type === "workspaceFolders") {
         setWorkspaceFolders(Array.isArray(m.folders) ? m.folders : []);
@@ -735,14 +751,21 @@ export function App() {
     const submitReferences = normalizeReferenceAttachments(references);
     if (!prompt && submitReferences.length === 0) return;
     let submitModeId: string | undefined;
-    for (const [slash, preset] of Object.entries(SLASH_PRESETS)) {
-      if (prompt === slash || prompt.startsWith(slash + " ")) {
-        const modeId = preset.mode;
-        prompt = preset.prefix + prompt.slice(slash.length).trimStart();
-        setCurrentModeId(modeId);
-        post({ type: "setMode", modeId });
-        submitModeId = modeId;
-        break;
+    let command: CommandInvocation | undefined;
+    const importedCommand = matchImportedCommand(prompt, commands);
+    if (importedCommand) {
+      prompt = expandCommandBody(importedCommand.command.body, importedCommand.args).trim();
+      command = { name: importedCommand.command.name, source: importedCommand.command.source };
+    } else {
+      for (const [slash, preset] of Object.entries(SLASH_PRESETS)) {
+        if (prompt === slash || prompt.startsWith(slash + " ")) {
+          const modeId = preset.mode;
+          prompt = preset.prefix + prompt.slice(slash.length).trimStart();
+          setCurrentModeId(modeId);
+          post({ type: "setMode", modeId });
+          submitModeId = modeId;
+          break;
+        }
       }
     }
     const modeIntent = detectModeSwitchIntent(prompt, modes);
@@ -757,16 +780,16 @@ export function App() {
       }
       prompt = modeIntent.prompt;
     }
-    setMessages((m) => [...m, { role: "user", text: prompt, references: submitReferences }]);
+    setMessages((m) => [...m, { role: "user", text: prompt, references: submitReferences, command }]);
     setShowSessions(false);
     // Any new user turn dismisses the previous plan-handoff CTA.
     setPlanHandoffArmed(false);
     if (busy) {
       interruptQueuedRef.current = true;
       post({ type: "cancel" });
-      post({ type: "submit", prompt, modeId: submitModeId, references: submitReferences });
+      post({ type: "submit", prompt, modeId: submitModeId, references: submitReferences, command });
     } else {
-      post({ type: "submit", prompt, modeId: submitModeId, references: submitReferences });
+      post({ type: "submit", prompt, modeId: submitModeId, references: submitReferences, command });
       setBusy(true);
     }
     setInput("");
@@ -977,6 +1000,7 @@ export function App() {
         status={liveStatus}
         references={references}
         packs={referencePacks}
+        commands={commands}
         onAddReference={() => post({ type: "pickReferences", existing: references })}
         onRemoveReference={(id) => setReferences((prev) => prev.filter((ref) => ref.id !== id))}
         onDirectReference={(ref) => setReferences((prev) => mergeReferenceAttachments(normalizeReferenceAttachments(prev), [ref]))}

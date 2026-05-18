@@ -187,7 +187,17 @@ func toAnthropicMessages(messages []Message) ([]anthropic.MessageParam, error) {
 	for _, m := range messages {
 		switch m.Role {
 		case RoleUser:
-			out = append(out, anthropic.NewUserMessage(anthropic.NewTextBlock(m.Content)))
+			blocks := make([]anthropic.ContentBlockParamUnion, 0, 1+len(m.Images))
+			if m.Content != "" {
+				blocks = append(blocks, anthropic.NewTextBlock(m.Content))
+			}
+			for _, img := range m.Images {
+				blocks = append(blocks, anthropic.NewImageBlockBase64(img.MIMEType, img.Data))
+			}
+			if len(blocks) == 0 {
+				continue
+			}
+			out = append(out, anthropic.NewUserMessage(blocks...))
 		case RoleAssistant:
 			blocks := make([]anthropic.ContentBlockParamUnion, 0, len(m.ToolCalls)+1)
 			if m.Content != "" {
@@ -237,6 +247,9 @@ func markAnthropicUserBreakpoints(msgs []anthropic.MessageParam) {
 			marked++
 		case last.OfToolResult != nil:
 			last.OfToolResult.CacheControl = anthropic.NewCacheControlEphemeralParam()
+			marked++
+		case last.OfImage != nil:
+			last.OfImage.CacheControl = anthropic.NewCacheControlEphemeralParam()
 			marked++
 		}
 	}

@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
-import type { ReferenceAttachment, ReferencePacksIndex } from "../../../../src/shared/protocol";
+import type { CommandCatalogueEntry, ReferenceAttachment, ReferencePacksIndex } from "../../../../src/shared/protocol";
 import * as Ico from "../../brand/icons";
 import { parseAtQuery, replaceAtQuery } from "../../util/atMention";
+import { clipboardHasSupportedImage, imageReferencesFromClipboardData } from "../../util/imageReference";
 import { post } from "../../vscode";
+import { CommandPalette } from "../CommandPalette";
 
 export interface LiveTaskStatus {
     phase: "thinking" | "responding" | "reading" | "executing" | "changing" | "researching" | "waiting";
@@ -20,6 +22,7 @@ interface InputAreaProps {
     hint?: string;
     references?: ReferenceAttachment[];
     packs?: ReferencePacksIndex;
+    commands?: CommandCatalogueEntry[];
     onAddReference?: () => void;
     onRemoveReference?: (id: string) => void;
     onDirectReference?: (ref: ReferenceAttachment) => void;
@@ -39,6 +42,7 @@ export function InputArea({
     hint,
     references = [],
     packs,
+    commands = [],
     onAddReference,
     onRemoveReference,
     onDirectReference,
@@ -53,6 +57,7 @@ export function InputArea({
     const [suggestions, setSuggestions] = useState<ReferenceAttachment[]>([]);
     const [atQuery, setAtQuery] = useState<{ query: string; start: number; end: number } | null>(null);
     const [selectedIdx, setSelectedIdx] = useState(0);
+    const [selectedCommandIdx, setSelectedCommandIdx] = useState(0);
     const [showPacks, setShowPacks] = useState(false);
     const [savePromptOpen, setSavePromptOpen] = useState(false);
     const [packDraft, setPackDraft] = useState("");
@@ -65,6 +70,10 @@ export function InputArea({
     const packMatches = atQuery
         ? orderedPacks.filter((p) => p.name.toLowerCase().includes(atQuery.query.toLowerCase()))
         : [];
+    const commandQuery = commandQueryFor(input);
+    const commandMatches = commandQuery === undefined
+        ? []
+        : commands.filter((command) => command.name.toLowerCase().startsWith(commandQuery.toLowerCase()));
 
     // Auto-resize textarea
     useEffect(() => {
@@ -115,6 +124,7 @@ export function InputArea({
     }
 
     function selectSuggestion(ref: ReferenceAttachment) {
+        if (ref.kind === "image") return;
         if (!atQuery) return;
         onInput(replaceAtQuery(input, atQuery.start, atQuery.end));
         onDirectReference?.(ref);
@@ -128,6 +138,12 @@ export function InputArea({
         }
         onApplyPack?.(packId, "merge");
         closeSuggestions();
+        setTimeout(() => textareaRef.current?.focus(), 0);
+    }
+
+    function selectCommand(command: CommandCatalogueEntry) {
+        onInput(`/${command.name} `);
+        setSelectedCommandIdx(0);
         setTimeout(() => textareaRef.current?.focus(), 0);
     }
 
@@ -153,7 +169,25 @@ export function InputArea({
 
     const canSubmit = input.trim().length > 0 || references.length > 0;
 
+    async function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+        if (!clipboardHasSupportedImage(e.clipboardData)) return;
+        e.preventDefault();
+        const existingImages = references.filter((ref) => ref.kind === "image").length;
+        const refs = await imageReferencesFromClipboardData(e.clipboardData, existingImages);
+        for (const ref of refs) onDirectReference?.(ref);
+    }
+
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (commandMatches.length > 0) {
+            if (e.key === "ArrowDown") { e.preventDefault(); setSelectedCommandIdx((i) => Math.min(i + 1, commandMatches.length - 1)); return; }
+            if (e.key === "ArrowUp") { e.preventDefault(); setSelectedCommandIdx((i) => Math.max(i - 1, 0)); return; }
+            if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                selectCommand(commandMatches[Math.min(selectedCommandIdx, commandMatches.length - 1)]);
+                return;
+            }
+            if (e.key === "Escape") { e.preventDefault(); setSelectedCommandIdx(0); return; }
+        }
         if (totalSuggestions > 0 && atQuery) {
             if (e.key === "ArrowDown") { e.preventDefault(); setSelectedIdx((i) => Math.min(i + 1, totalSuggestions - 1)); return; }
             if (e.key === "ArrowUp") { e.preventDefault(); setSelectedIdx((i) => Math.max(i - 1, 0)); return; }
@@ -221,6 +255,13 @@ export function InputArea({
                 </div>
             )}
             <div className="composer">
+                {commandMatches.length > 0 && (
+                    <CommandPalette
+                        commands={commandMatches}
+                        selectedIndex={Math.min(selectedCommandIdx, commandMatches.length - 1)}
+                        onSelect={selectCommand}
+                    />
+                )}
                 {totalSuggestions > 0 && atQuery && (
                     <div className="sug-popover" role="listbox" aria-label="Reference suggestions">
                         {packMatches.map((pack, i) => (
@@ -246,11 +287,15 @@ export function InputArea({
                                     aria-selected={idx === selectedIdx}
                                     onMouseDown={(e) => { e.preventDefault(); selectSuggestion(ref); }}
                                 >
-                                    <span className="sug-icon">
-                                        {ref.kind === "folder" ? <Ico.Folder size={13} /> : <Ico.File size={13} />}
-                                    </span>
-                                    <span className="sug-label">{ref.label ?? ref.path.split("/").pop()}</span>
-                                    <span className="sug-path">{ref.path}</span>
+                                    {ref.kind !== "image" && (
+                                        <>
+                                            <span className="sug-icon">
+                                                {ref.kind === "folder" ? <Ico.Folder size={13} /> : <Ico.File size={13} />}
+                                            </span>
+                                            <span className="sug-label">{ref.label ?? ref.path.split("/").pop()}</span>
+                                            <span className="sug-path">{ref.path}</span>
+                                        </>
+                                    )}
                                 </div>
                             );
                         })}
@@ -259,14 +304,24 @@ export function InputArea({
                 {references.length > 0 && (
                     <div className="reference-chips" aria-label="References">
                         {references.map((ref) => (
-                            <span className={`reference-chip ref-${ref.kind}`} key={ref.id} title={`${ref.kind}: ${ref.path}`}>
-                                <Ico.File size={12} />
-                                <span>{ref.label || ref.path}</span>
+                            <span
+                                className={`reference-chip ref-${ref.kind}`}
+                                key={ref.id}
+                                title={ref.kind === "image" ? `${ref.mimeType}, ${formatBytes(ref.size)}` : `${ref.kind}: ${ref.path}`}
+                            >
+                                {ref.kind === "image" ? (
+                                    <img className="reference-thumb" src={`data:${ref.mimeType};base64,${ref.data}`} alt="" />
+                                ) : ref.kind === "folder" ? (
+                                    <Ico.Folder size={12} />
+                                ) : (
+                                    <Ico.File size={12} />
+                                )}
+                                <span>{ref.kind === "image" ? `${ref.label || "Pasted image"} (${formatBytes(ref.size)})` : ref.label || ref.path}</span>
                                 <button
                                     type="button"
                                     onClick={() => onRemoveReference?.(ref.id)}
-                                    title={`Remove ${ref.path}`}
-                                    aria-label={`Remove ${ref.path}`}
+                                    title={`Remove ${ref.label || ref.id}`}
+                                    aria-label={`Remove ${ref.label || ref.id}`}
                                 >
                                     <Ico.Close size={10} />
                                 </button>
@@ -315,6 +370,7 @@ export function InputArea({
                         }
                     }}
                     onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
                     placeholder={busy ? `${status?.label ?? "Working"}...` : (hint ?? "Message Loom (@ for files, Shift+Enter for newline)")}
                     rows={1}
                     disabled={disabled}
@@ -367,6 +423,20 @@ export function InputArea({
             </div>
         </div>
     );
+}
+
+function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function commandQueryFor(input: string): string | undefined {
+    const trimmed = input.trimStart();
+    if (!trimmed.startsWith("/") || trimmed.includes(" ") || trimmed.includes("\n")) {
+        return undefined;
+    }
+    return trimmed.slice(1);
 }
 
 function TaskStatus({ status }: { status: LiveTaskStatus }) {

@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.4.3
+
+Loom 0.4.3 brings slash commands, image attachments, broader external
+convention imports, and tighter sub-agent guardrails. The composer can now
+expand workspace-defined commands, paste screenshots, and pick references
+from a fast quick-pick index, while sub-agents are scoped narrower so they
+fail less often on broad surveys.
+
+### Added
+
+- **Slash commands.** Type `/` in the composer to expand workspace commands
+  before sending. Commands live in `.loom/commands/`, `.claude/commands/`,
+  or `.codex/commands/` (each `*.md` file is one command, with optional
+  frontmatter `description` and `argumentHint`). Loaded provider-family
+  first; the opposite family is a fallback when the native folder is empty;
+  `.loom/commands/` always wins. Command catalogue is hot-reloaded via a
+  file-system watcher.
+- **Image attachments.** Paste an image into the composer (PNG, JPEG,
+  WebP, or GIF, up to 5 MB, max 4 per turn) and it is forwarded as a
+  base64 image block to Anthropic and OpenAI providers. Per-turn images
+  attach to the live `LlmMessage` and are persisted with the conversation
+  entry.
+- **External skill and sub-agent catalogues.** Skills now load from
+  `.claude/skills/<id>/SKILL.md` (Anthropic) or `.codex/skills/<id>/SKILL.md`
+  (OpenAI, OpenAI-compatible, local) in addition to `.loom/skills/` and
+  builtins. Sub-agent presets imported from `.claude/agents/` or
+  `.codex/agents/` are exposed via `spawn_subagent` alongside the built-in
+  `research` preset. The opposite provider folder is a fallback only when
+  the family-native folder contributes nothing.
+- **Quick-pick reference picker.** The "Add references" action now opens a
+  workspace-indexed quick pick instead of the OS file dialog. Folders are
+  listed before files; existing selections stay checked.
+
+### Changed
+
+- Sub-agent guardrails. Per-turn cap is now **3** (was 5). Architect, Ask,
+  and the `spawn_subagent` tool description now lead with "search first;
+  delegate only for narrow, terminating questions" and explicitly warn
+  about the ~50k-token input budget. After a sub-agent returns truncated,
+  the prompts steer the model to narrow the next task instead of retrying
+  the same broad question.
+- Stable-prefix prompt assembly. Skills, sub-agent presets, and the
+  external-convention envelope are advertised in the cacheable stable
+  prefix when present; the prefix stays byte-identical for workspaces that
+  carry no external entries.
+- Reference rendering. `RenderReferences` now also returns image payloads;
+  workspace paths are validated only when at least one path-style
+  reference is present.
+
+### Fixed
+
+- The OS open dialog blocked the composer for multi-second roundtrips on
+  large workspaces; the new quick-pick avoids that.
+- Anthropic prompt-cache breakpoint is placed on the trailing image block
+  when an image was the last user content; previously cache-control could
+  miss image-tail turns.
+
 ## 0.4.2
 
 Loom 0.4.2 is a navigation, edit-speed, and readability release. The agent

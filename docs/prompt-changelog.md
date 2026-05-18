@@ -2,6 +2,23 @@
 
 Reverse-chronological notes for meaningful Loom prompt-layer changes.
 
+## 2026-05-18 - Sub-agent storm guardrails and external catalogues
+
+- Affected files: `agent/internal/prompts/architect.md`,
+  `agent/internal/prompts/ask.md`,
+  `agent/internal/tools/descriptions/spawn_subagent.md`,
+  `agent/internal/loop/loop.go`, `agent/internal/loop/preset.go`,
+  `agent/internal/skills/skills.go`, and the TS command import path.
+- Rationale: Architect/Ask guidance was over-delegating broad surveys, causing
+  repeated sub-agent truncations. Prompts and tool descriptions now make
+  sub-agent use cost-aware and narrowly scoped, the per-turn cap is 3, and
+  truncation summaries include recovery guidance. Skills and sub-agent
+  catalogues can now include provider-family external entries with explicit
+  precedence envelopes when external entries are present.
+- Eval impact: prompt snapshots change for modes that expose
+  `spawn_subagent`. Stable-prefix output remains byte-identical for the new
+  external catalogue envelopes when no external skills or presets exist.
+
 ## 2026-05-18 - Range edits and no-whole-file fallback for apply_diff
 
 - Affected files: `src/tools/index.ts`, `src/tools/applyDiffEdits.ts` (new

@@ -109,15 +109,17 @@ handoff:
     Code/Architect/Ask mode prompts lead with "search first, read
     narrowly" — preserve that ordering when adding new read-side tools.
 
-15. v0.1.4 sub-agents run in parallel within a turn. Only the built-in
-    `research` preset exists, exposed through `spawn_subagent`. Multiple
+15. v0.1.4 sub-agents run in parallel within a turn. The built-in
+    `research` preset is always available, exposed through `spawn_subagent`.
+    Additional presets may be imported from `.loom/agents/`,
+    `.claude/agents/`, or `.codex/agents/`. Multiple
     spawns emitted in one turn run concurrently through the same errgroup
     as other tools; each sub-agent is read-only, has isolated conversation
     state, and streams into its own webview sub-agent card. Depth, per-tree
     count, and tree token ceiling are enforced atomically inside
-    `TaskRegistry.Register`. Per-turn cap is `subAgentMaxPerTurn=5`. Do not
-    add custom presets, fire-and-forget orchestration, or sub-agent model
-    routing without updating `SUBAGENTS.md`.
+    `TaskRegistry.Register`. Per-turn cap is `subAgentMaxPerTurn=3`. Do not
+    add fire-and-forget orchestration or sub-agent model routing without
+    updating `SUBAGENTS.md`.
 12b. The transcript is uniform-minimal: every tool call renders through one
     `ToolCardMinimal` (header + IN pane + OUT peek; click to expand). Do
     not re-introduce per-tool specialty body components. Assistant deltas
@@ -178,6 +180,13 @@ handoff:
     `.cursorrules`, so Loom respects whichever convention the workspace
     already uses. The bundle is capped at 32 KB, deduped by content hash,
     and lives in the volatile tail of the system prompt.
+19. Skills, sub-agents, and commands are auto-imported with the same
+    provider-family convention. Loom-native config (`builtin` plus
+    `.loom/<kind>/`) wins; `.loom/<kind>/` overrides builtins, builtins
+    override external entries, and external entries are additive only.
+    Anthropic loads `.claude/<kind>/`; OpenAI, OpenAI-compatible, and local
+    providers load `.codex/<kind>/`. The opposite provider folder is consulted
+    only when the family-native folder contributes zero entries.
 
 ## Pre-commit hook
 

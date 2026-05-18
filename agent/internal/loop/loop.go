@@ -89,19 +89,19 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 	if registry == nil {
 		registry = ApplyMode(d.registry(), p.Mode)
 	}
-	toolDefs := buildToolDefs(registry)
-
-	// Skills catalogue is workspace-scoped and frozen at task start so the
-	// stable prompt prefix can advertise the same set across all turns.
-	skillsCatalogue := skills.Load(p.WorkspaceRoot)
-
-	// Provider family decides which rule files to autoload. Captured once
-	// per task; the bundle hash is pinned to the conversation so mid-task
-	// file edits do not invalidate the running cache.
+	// Provider family decides which external conventions to autoload. Captured
+	// once per task; the stable prefix and rules hash are pinned to the task.
 	family := ""
 	if d.LLM != nil {
 		family = d.LLM.Family()
 	}
+	// Skills and sub-agent preset catalogues are workspace-scoped and frozen at
+	// task start so the stable prompt prefix advertises the same set all turn.
+	skillsCatalogue := skills.Load(p.WorkspaceRoot, family)
+	presetRegistry := LoadPresets(p.WorkspaceRoot, family)
+	registry = withSubAgentPresetSchema(registry, presetRegistry.All())
+	toolDefs := buildToolDefs(registry)
+
 	rulesBundle := rules.Load(p.WorkspaceRoot, family)
 
 	entry := d.Conversations.Get(p.ConversationID)
@@ -110,7 +110,7 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 	entry.RulesHash = rulesBundle.Hash
 
 	userPrompt := p.Prompt
-	referenceBlock, err := RenderReferences(p.WorkspaceRoot, p.References)
+	referenceBlock, referenceImages, err := RenderReferences(p.WorkspaceRoot, p.References)
 	if err != nil {
 		return err
 	}
@@ -120,10 +120,10 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 		}
 		userPrompt = strings.TrimSpace(userPrompt) + "\n\n" + referenceBlock
 	}
-	entry.Append(llm.Message{Role: llm.RoleUser, Content: userPrompt})
+	entry.Append(llm.Message{Role: llm.RoleUser, Content: userPrompt, Images: referenceImages})
 	d.notifyConversationUpdated(p.ConversationID, entry)
 
-	stableSystem := BuildStableSystem(p.Mode, registry, skillsCatalogue, Presets())
+	stableSystem := BuildStableSystem(p.Mode, registry, skillsCatalogue, presetRegistry.All())
 
 	done := func(reason string, fields ...map[string]any) {
 		payload := map[string]any{
@@ -210,7 +210,7 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 			return nil
 		}
 
-		toolResults, err := d.execToolsParallel(ctx, p.TaskID, p.ConversationID, toolCalls, registry, entry, skillsCatalogue)
+		toolResults, err := d.execToolsParallel(ctx, p.TaskID, p.ConversationID, toolCalls, registry, entry, skillsCatalogue, presetRegistry)
 		if err != nil {
 			if ctx.Err() != nil {
 				done("cancelled")
@@ -398,6 +398,7 @@ func (d *Driver) execToolsParallel(
 	registry []tools.Tool,
 	entry *conversation.Entry,
 	skillsCatalogue skills.Catalogue,
+	presetRegistry Registry,
 ) (map[string]toolOutcome, error) {
 	if len(calls) == 0 {
 		return nil, nil
@@ -439,7 +440,7 @@ func (d *Driver) execToolsParallel(
 			if gctx.Err() != nil {
 				return gctx.Err()
 			}
-			out := d.execOneTool(gctx, taskID, conversationID, tc, byName, approvals, entry, skillsCatalogue)
+			out := d.execOneTool(gctx, taskID, conversationID, tc, byName, approvals, entry, skillsCatalogue, presetRegistry)
 			mu.Lock()
 			results[tc.ID] = out
 			mu.Unlock()
@@ -464,6 +465,7 @@ func (d *Driver) execOneTool(
 	approvals map[string]bool,
 	entry *conversation.Entry,
 	skillsCatalogue skills.Catalogue,
+	presetRegistry Registry,
 ) toolOutcome {
 	t, ok := byName[tc.Name]
 	var out toolOutcome
@@ -473,7 +475,7 @@ func (d *Driver) execOneTool(
 	case tc.Name == "load_skill":
 		out = execLoadSkill(entry, skillsCatalogue, tc.Input)
 	case tc.Name == "spawn_subagent":
-		out = d.execSpawnSubAgent(ctx, taskID, conversationID, tc.Input)
+		out = d.execSpawnSubAgent(ctx, taskID, conversationID, tc.Input, presetRegistry)
 	case t.LocalExec != nil && t.RequiresApproval && !approvals[tc.ID]:
 		out = toolOutcome{err: fmt.Errorf("user rejected")}
 	default:
@@ -501,14 +503,15 @@ type spawnSubAgentInput struct {
 }
 
 type spawnSubAgentResult struct {
-	Summary      string   `json:"summary"`
-	FilesTouched []string `json:"files_touched"`
-	ToolCalls    int      `json:"tool_calls"`
-	TokensUsed   int64    `json:"tokens_used"`
-	Truncated    bool     `json:"truncated"`
+	Summary          string   `json:"summary"`
+	FilesTouched     []string `json:"files_touched"`
+	ToolCalls        int      `json:"tool_calls"`
+	TokensUsed       int64    `json:"tokens_used"`
+	Truncated        bool     `json:"truncated"`
+	TruncationReason string   `json:"truncation_reason,omitempty"`
 }
 
-func (d *Driver) execSpawnSubAgent(ctx context.Context, parentTaskID, parentConversationID string, input json.RawMessage) toolOutcome {
+func (d *Driver) execSpawnSubAgent(ctx context.Context, parentTaskID, parentConversationID string, input json.RawMessage, presetRegistry Registry) toolOutcome {
 	var in spawnSubAgentInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return toolOutcome{err: fmt.Errorf("spawn_subagent: %w", err)}
@@ -525,7 +528,7 @@ func (d *Driver) execSpawnSubAgent(ctx context.Context, parentTaskID, parentConv
 	if in.Context == "" {
 		return toolOutcome{err: fmt.Errorf("spawn_subagent: context is required")}
 	}
-	preset, err := PresetFor(in.Type)
+	preset, err := presetRegistry.For(in.Type)
 	if err != nil {
 		return toolOutcome{err: err}
 	}
@@ -578,6 +581,7 @@ func (d *Driver) execSpawnSubAgent(ctx context.Context, parentTaskID, parentConv
 	summary := d.lastAssistantMessage(subConversationID)
 	status := "completed"
 	truncated := false
+	truncationReason := ""
 	if subCtx.Err() != nil {
 		status = "cancelled"
 		if summary == "" {
@@ -586,7 +590,8 @@ func (d *Driver) execSpawnSubAgent(ctx context.Context, parentTaskID, parentConv
 		err = fmt.Errorf("sub-agent cancelled by user")
 	} else if err != nil {
 		status = "error"
-		truncated = strings.Contains(err.Error(), "turn limit") || strings.Contains(err.Error(), "token budget")
+		truncationReason = classifySubAgentTruncation(err)
+		truncated = truncationReason != ""
 		if summary == "" {
 			summary = err.Error()
 		}
@@ -620,12 +625,16 @@ func (d *Driver) execSpawnSubAgent(ctx context.Context, parentTaskID, parentConv
 		outputTokens = node.OutputTokens
 		toolCalls = node.ToolCalls
 	}
+	if truncated {
+		summary = subAgentRecoverySummary(truncationReason, toolCalls, summary)
+	}
 	result := spawnSubAgentResult{
-		Summary:      summary,
-		FilesTouched: files,
-		ToolCalls:    toolCalls,
-		TokensUsed:   inputTokens + outputTokens,
-		Truncated:    truncated,
+		Summary:          summary,
+		FilesTouched:     files,
+		ToolCalls:        toolCalls,
+		TokensUsed:       inputTokens + outputTokens,
+		Truncated:        truncated,
+		TruncationReason: truncationReason,
 	}
 	_ = d.Conn.Notify("subagent.done", map[string]any{
 		"subTaskId":    subTaskID,
@@ -637,11 +646,43 @@ func (d *Driver) execSpawnSubAgent(ctx context.Context, parentTaskID, parentConv
 		"outputTokens": outputTokens,
 		"truncated":    truncated,
 	})
-	if err != nil {
+	if err != nil && !truncated {
 		return toolOutcome{content: "error: " + err.Error(), err: err}
 	}
 	b, _ := json.Marshal(result)
 	return toolOutcome{content: string(b)}
+}
+
+func classifySubAgentTruncation(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "token budget"):
+		return "input_tokens"
+	case strings.Contains(msg, "turn limit"):
+		return "turns"
+	default:
+		return ""
+	}
+}
+
+func subAgentRecoverySummary(reason string, toolCalls int, summary string) string {
+	label := reason
+	switch reason {
+	case "input_tokens":
+		label = "input token budget exceeded"
+	case "turns":
+		label = "turn limit reached"
+	case "":
+		label = "truncated"
+	}
+	guidance := fmt.Sprintf("Sub-agent stopped: %s. Tool calls: %d. To recover, narrow the task to a single file/function and re-spawn with stricter scope — do not re-issue the same task.", label, toolCalls)
+	if strings.TrimSpace(summary) == "" {
+		return guidance
+	}
+	return guidance + "\n\n" + summary
 }
 
 func buildSubAgentPrompt(in spawnSubAgentInput) string {
@@ -940,6 +981,49 @@ func buildToolDefs(registry []tools.Tool) []llm.ToolDef {
 	return defs
 }
 
+func withSubAgentPresetSchema(registry []tools.Tool, presets []Preset) []tools.Tool {
+	if len(registry) == 0 {
+		return registry
+	}
+	out := append([]tools.Tool(nil), registry...)
+	for i := range out {
+		if out[i].Name == "spawn_subagent" {
+			out[i].InputSchema = spawnSubAgentInputSchema(presets)
+			break
+		}
+	}
+	return out
+}
+
+func spawnSubAgentInputSchema(presets []Preset) map[string]any {
+	names := make([]string, 0, len(presets))
+	for _, p := range presets {
+		if p.Name != "" {
+			names = append(names, p.Name)
+		}
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		names = []string{"research"}
+	}
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"type": map[string]any{
+				"type": "string",
+				"enum": names,
+			},
+			"task":    map[string]any{"type": "string"},
+			"context": map[string]any{"type": "string"},
+			"files": map[string]any{
+				"type":  "array",
+				"items": map[string]any{"type": "string"},
+			},
+		},
+		"required": []string{"type", "task", "context"},
+	}
+}
+
 // ApplyMode filters the registry according to the mode's allowlist or denylist.
 // A non-nil ToolAllowlist (even if empty) restricts tools to only those listed.
 // A non-empty ToolDenylist removes the named tools.
@@ -1012,19 +1096,57 @@ func BuildStableSystem(mode *ModeDefinition, registry []tools.Tool, cat skills.C
 		b.WriteString("No tools are available in this mode.\n")
 	}
 	if lines := cat.CatalogueLines(); len(lines) > 0 {
-		b.WriteString("\nAvailable skills (load with the load_skill tool):\n")
+		external := cat.HasExternal()
+		if external {
+			b.WriteString("\n<skills precedence=\"builtin,.loom/skills,external\">\n")
+			b.WriteString("On conflict, Loom builtin skills and .loom/skills take precedence over external skills; .loom/skills overrides builtins.\n")
+			b.WriteString("Available skills (load with the load_skill tool):\n")
+		} else {
+			b.WriteString("\nAvailable skills (load with the load_skill tool):\n")
+		}
 		for _, line := range lines {
 			b.WriteString(line)
 			b.WriteString("\n")
 		}
+		if external {
+			b.WriteString("</skills>\n")
+		}
 	}
 	if hasTool(registry, "spawn_subagent") && len(presets) > 0 {
-		b.WriteString("\nAvailable sub-agents (spawn with the spawn_subagent tool):\n")
+		external := presetsHaveExternal(presets)
+		if external {
+			b.WriteString("\n<subagents precedence=\"builtin,.loom/agents,external\">\n")
+			b.WriteString("On conflict, Loom builtin sub-agents and .loom/agents take precedence over external sub-agents; .loom/agents overrides builtins.\n")
+			b.WriteString("Available sub-agents (spawn with the spawn_subagent tool):\n")
+		} else {
+			b.WriteString("\nAvailable sub-agents (spawn with the spawn_subagent tool):\n")
+		}
 		for _, p := range presets {
-			fmt.Fprintf(&b, "- %s: isolated read-only research; pass task, context, and optional files\n", p.Name)
+			desc := strings.ReplaceAll(p.Description, "\n", " ")
+			if desc == "" {
+				desc = "(no description)"
+			}
+			line := fmt.Sprintf("- %s: %s", p.Name, desc)
+			if external && p.Source != "" && p.Source != "builtin" {
+				line += fmt.Sprintf(" [source: %s]", p.Source)
+			}
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+		if external {
+			b.WriteString("</subagents>\n")
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func presetsHaveExternal(presets []Preset) bool {
+	for _, p := range presets {
+		if isExternalPresetSource(p.Source) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasTool(registry []tools.Tool, name string) bool {

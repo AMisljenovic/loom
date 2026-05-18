@@ -5,6 +5,7 @@ import * as vscode from "vscode";
 import { AgentClient, AgentSpawnExtras, LlmConfig } from "../agentClient";
 import { DEFAULT_AUTO_APPROVE_CONFIG, migrateAutoApprove, normalizeAutoApprove } from "../approval/categories";
 import { consumeHostApprovalPolicy } from "../approval/hostPolicy";
+import { providerFamily, scanCommands } from "../commands/loader";
 import { loadDotEnv } from "../env";
 import { resolveMcpConfig } from "../mcpConfig";
 import { BUILTIN_MODES, mergeModes } from "../modes";
@@ -18,6 +19,7 @@ import type {
   AskQuestionsInput,
   AutoApproveCategory,
   AutoApproveConfig,
+  CommandInvocation,
   ConversationState,
   ConversationUpdated,
   CustomHeader,
@@ -59,6 +61,7 @@ import {
 import {
   mergeReferenceAttachments,
   normalizeReferenceAttachments,
+  referencePickerEntries,
   referenceId,
   referenceLabel,
 } from "../shared/references";
@@ -125,6 +128,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private queuedPrompt?: string;
   private queuedModeId?: string;
   private queuedReferences?: ReferenceAttachment[];
+  private queuedCommand?: CommandInvocation;
   private assistantIndex: number | null = null;
   private activeTaskStartedAt?: number;
   private hydratedConversationId?: string;
@@ -191,6 +195,13 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     watcher.onDidChange(() => this.configureMcpSoon(), this, this.ctx.subscriptions);
     watcher.onDidDelete(() => this.configureMcpSoon(), this, this.ctx.subscriptions);
     this.ctx.subscriptions.push(watcher);
+    for (const pattern of ["**/.loom/commands/*.md", "**/.claude/commands/*.md", "**/.codex/commands/*.md"]) {
+      const commandWatcher = vscode.workspace.createFileSystemWatcher(pattern);
+      commandWatcher.onDidCreate(() => void this.postCommandsCatalogue(), this, this.ctx.subscriptions);
+      commandWatcher.onDidChange(() => void this.postCommandsCatalogue(), this, this.ctx.subscriptions);
+      commandWatcher.onDidDelete(() => void this.postCommandsCatalogue(), this, this.ctx.subscriptions);
+      this.ctx.subscriptions.push(commandWatcher);
+    }
     this.ctx.subscriptions.push(
       vscode.workspace.onDidCreateFiles(() => { this.refIndex = undefined; }),
       vscode.workspace.onDidDeleteFiles(() => { this.refIndex = undefined; }),
@@ -198,6 +209,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
         this.refIndex = undefined;
         this.postWorkspaceFolders();
+        void this.postCommandsCatalogue();
       }),
     );
   }
@@ -342,38 +354,28 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       this.post({ type: "referencePickError", error: "Open a workspace before adding references." }, false);
       return;
     }
-    const picked = await vscode.window.showOpenDialog({
-      canSelectFiles: true,
-      canSelectFolders: true,
-      canSelectMany: true,
-      defaultUri: vscode.Uri.file(workspaceRoot),
-      openLabel: "Add references",
+    if (!this.refIndex) {
+      await this.buildRefIndex();
+    }
+    const existingRefs = normalizeReferenceAttachments(existing);
+    const entries = referencePickerEntries(this.refIndex, existingRefs);
+    const items: Array<vscode.QuickPickItem & { ref: ReferenceAttachment }> = entries.map((entry) => ({
+      label: `${entry.description === "folder" ? "$(folder)" : "$(file)"} ${entry.ref.path}`,
+      description: entry.description,
+      picked: entry.picked,
+      ref: entry.ref,
+    }));
+    const picked = await vscode.window.showQuickPick(items, {
+      canPickMany: true,
+      ignoreFocusOut: true,
+      matchOnDescription: true,
+      placeHolder: "Select files and folders to attach as Loom references",
       title: "Add Loom references",
     });
     if (!picked || picked.length === 0) {
       return;
     }
-    const added: ReferenceAttachment[] = [];
-    for (const uri of picked) {
-      const rel = this.workspaceRelativePath(uri.fsPath);
-      if (!rel) {
-        this.post({ type: "referencePickError", error: `${uri.fsPath} is outside the workspace.` }, false);
-        continue;
-      }
-      try {
-        const stat = await vscode.workspace.fs.stat(uri);
-        const kind: ReferenceAttachment["kind"] = stat.type & vscode.FileType.Directory ? "folder" : "file";
-        added.push({
-          id: referenceId(kind, rel),
-          kind,
-          path: rel,
-          label: referenceLabel(rel),
-        });
-      } catch (e: unknown) {
-        this.post({ type: "referencePickError", error: e instanceof Error ? e.message : String(e) }, false);
-      }
-    }
-    const references = mergeReferenceAttachments(normalizeReferenceAttachments(existing), added);
+    const references = mergeReferenceAttachments(existingRefs, picked.map((item) => item.ref));
     this.post({ type: "referencesPicked", references }, false);
   }
 
@@ -399,19 +401,22 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         this.queuedPrompt = m.prompt;
         this.queuedModeId = this.validModeId(m.modeId) ? m.modeId : undefined;
         this.queuedReferences = normalizeReferenceAttachments(m.references);
+        this.queuedCommand = m.command;
         this.cancelActiveTask();
         const next = this.queuedPrompt;
         const nextModeId = this.queuedModeId;
         const nextReferences = this.queuedReferences;
+        const nextCommand = this.queuedCommand;
         this.queuedPrompt = undefined;
         this.queuedModeId = undefined;
         this.queuedReferences = undefined;
+        this.queuedCommand = undefined;
         if (next) {
-          await this.runTask(next, nextModeId, nextReferences, m.seedTodos);
+          await this.runTask(next, nextModeId, nextReferences, m.seedTodos, nextCommand);
         }
         return;
       }
-      await this.runTask(m.prompt, m.modeId, m.references, m.seedTodos);
+      await this.runTask(m.prompt, m.modeId, m.references, m.seedTodos, m.command);
     } else if (m.type === "cancel") {
       this.cancelActiveTask();
     } else if (m.type === "newConversation") {
@@ -554,6 +559,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     requestedModeId?: string,
     references?: ReferenceAttachment[],
     seedTodos?: { title?: string; items: TodoItem[] },
+    command?: CommandInvocation,
   ) {
     this.ensureStateShape();
     const taskReferences = normalizeReferenceAttachments(references);
@@ -578,7 +584,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.activeProgressKeys.clear();
     this.activeTaskSawDelta = false;
     this.busy = true;
-    this.state.messages.push({ role: "user", text: preparedPrompt, references: taskReferences });
+    this.state.messages.push({ role: "user", text: preparedPrompt, references: taskReferences, command });
     this.assistantIndex = null;
     this.schedulePersist();
     const normalizedSeedTodos = seedTodos ? normalizeTodoItems(seedTodos.items) : [];
@@ -1070,11 +1076,13 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     const next = this.queuedPrompt;
     const nextModeId = this.queuedModeId;
     const nextReferences = this.queuedReferences;
+    const nextCommand = this.queuedCommand;
     this.queuedPrompt = undefined;
     this.queuedModeId = undefined;
     this.queuedReferences = undefined;
+    this.queuedCommand = undefined;
     if (next) {
-      await this.runTask(next, nextModeId, nextReferences);
+      await this.runTask(next, nextModeId, nextReferences, undefined, nextCommand);
     }
   }
 
@@ -1147,6 +1155,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.activeSubAgents.clear();
     this.activeProgressKeys.clear();
     this.queuedReferences = undefined;
+    this.queuedCommand = undefined;
     this.persistNow();
     await this.restoreWebview();
     this.postSessions();
@@ -1182,6 +1191,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.activeSubAgents.clear();
     this.activeProgressKeys.clear();
     this.queuedReferences = undefined;
+    this.queuedCommand = undefined;
     this.persistNow();
     await this.restoreWebview();
     this.postSessions();
@@ -1428,7 +1438,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       packs[id] = {
         id: p.id,
         name: p.name,
-        refs: normalizeReferenceAttachments(p.refs),
+        refs: normalizeReferenceAttachments(p.refs).filter((ref) => ref.kind !== "image"),
         createdAt: typeof p.createdAt === "number" ? p.createdAt : Date.now(),
         updatedAt: typeof p.updatedAt === "number" ? p.updatedAt : Date.now(),
       };
@@ -1444,7 +1454,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private savePack(name: string, refs: ReferenceAttachment[]) {
     const trimmed = name.trim().slice(0, MAX_PACK_NAME_LEN);
     if (!trimmed) return;
-    const normalized = normalizeReferenceAttachments(refs);
+    const normalized = normalizeReferenceAttachments(refs).filter((ref) => ref.kind !== "image");
     if (normalized.length === 0) return;
     const now = Date.now();
     const existing = Object.values(this.referencePacks.packs).find(
@@ -1511,6 +1521,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     }, false);
     this.postSessions();
     this.postReferencePacks();
+    await this.postCommandsCatalogue();
     this.postProcessesSnapshot();
     this.postWorkspaceFolders();
     this.postAutoApprove();
@@ -2208,7 +2219,11 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   }
 
   private async refreshLlmConfig() {
-    if (!this.agent) return;
+    if (!this.agent) {
+      await this.postLlmConfig();
+      await this.postFirstRunState();
+      return;
+    }
     const cfg = await this.resolveLlmConfig(this.workspaceRoot(), this.ctx.extensionPath);
     if ("error" in cfg) {
       this.log(`[loom] refreshLlmConfig skipped: ${cfg.error}`);
@@ -2282,6 +2297,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.activeSubAgents.clear();
     this.activeProgressKeys.clear();
     this.queuedReferences = undefined;
+    this.queuedCommand = undefined;
     this.persistNow();
     await this.agent?.dispose();
     this.agent = undefined;
@@ -2371,6 +2387,13 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private async postLlmConfig() {
     const llmConfig = await this.currentLlmConfigView();
     this.post({ type: "llmConfig", llmConfig }, false);
+    await this.postCommandsCatalogue(llmConfig);
+  }
+
+  private async postCommandsCatalogue(config?: LlmConfigView) {
+    const llmConfig = config ?? await this.currentLlmConfigView();
+    const commands = scanCommands(this.workspaceRoot(), providerFamily(llmConfig.provider));
+    this.post({ type: "commandsCatalogue", commands }, false);
   }
 
   private async currentLlmConfigView(): Promise<LlmConfigView> {

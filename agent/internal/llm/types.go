@@ -27,8 +27,17 @@ const (
 type Message struct {
 	Role       Role       `json:"role"`
 	Content    string     `json:"content"`
+	Images     []Image    `json:"images,omitempty"`
 	ToolCalls  []ToolCall `json:"toolCalls,omitempty"`
 	ToolCallID string     `json:"toolCallId,omitempty"`
+}
+
+type Image struct {
+	ID       string `json:"id,omitempty"`
+	Label    string `json:"label,omitempty"`
+	MIMEType string `json:"mimeType"`
+	Data     string `json:"data"`
+	Size     int64  `json:"size,omitempty"`
 }
 
 type ToolCall struct {

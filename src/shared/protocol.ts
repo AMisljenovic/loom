@@ -142,14 +142,25 @@ export interface QuestionAnswer {
   otherText?: string;
 }
 
-export type ReferenceKind = "file" | "folder";
+export type ReferenceKind = "file" | "folder" | "image";
 
-export interface ReferenceAttachment {
+export interface PathReferenceAttachment {
   id: string;
-  kind: ReferenceKind;
+  kind: "file" | "folder";
   path: string;
   label?: string;
 }
+
+export interface ImageReferenceAttachment {
+  id: string;
+  kind: "image";
+  label?: string;
+  mimeType: string;
+  data: string;
+  size: number;
+}
+
+export type ReferenceAttachment = PathReferenceAttachment | ImageReferenceAttachment;
 
 export interface ReferencePack {
   id: string;
@@ -330,6 +341,7 @@ export interface LlmToolCall {
 export interface LlmMessage {
   role: "user" | "assistant" | "tool";
   content: string;
+  images?: ImageReferenceAttachment[];
   toolCalls?: LlmToolCall[];
   toolCallId?: string;
 }
@@ -391,7 +403,7 @@ export interface TodoItem {
 }
 
 export type Msg =
-  | { role: "user"; text: string; references?: ReferenceAttachment[] }
+  | { role: "user"; text: string; references?: ReferenceAttachment[]; command?: CommandInvocation }
   | { role: "assistant"; text: string; kind?: "intent" | "summary" | "error" }
   | { role: "progress"; text: string; phase: ProgressPhase; createdAt: number }
   | { role: "todo"; taskId: string; title?: string; items: TodoItem[] }
@@ -474,9 +486,22 @@ export interface SessionsIndex {
   sessions: Record<string, SessionMeta>;
 }
 
+export interface CommandInvocation {
+  name: string;
+  source?: string;
+}
+
+export interface CommandCatalogueEntry {
+  name: string;
+  description?: string;
+  argumentHint?: string;
+  body: string;
+  source: string;
+}
+
 export type WebviewToHost =
   | { type: "ready" }
-  | { type: "submit"; prompt: string; modeId?: string; references?: ReferenceAttachment[]; seedTodos?: { title?: string; items: TodoItem[] } }
+  | { type: "submit"; prompt: string; modeId?: string; references?: ReferenceAttachment[]; seedTodos?: { title?: string; items: TodoItem[] }; command?: CommandInvocation }
   | { type: "cancel" }
   | { type: "pickReferences"; existing?: ReferenceAttachment[] }
   | { type: "referenceSearch"; requestId: string; query: string; existing?: ReferenceAttachment[] }
@@ -551,6 +576,7 @@ export type HostToWebview =
   | { type: "approvalBatchRequest"; batchId: string; items: ToolApprovalItem[] }
   | { type: "processesSnapshot"; processes: ProcessSnapshot[] }
   | { type: "referencePacks"; index: ReferencePacksIndex }
+  | { type: "commandsCatalogue"; commands: CommandCatalogueEntry[] }
   | { type: "sessions"; index: SessionsIndex }
   | { type: "sessionSearchResults"; query: string; hits: SessionSearchHit[] }
   | { type: "workspaceFolders"; folders: Array<{ uri: string; name: string }>; activeUri: string }

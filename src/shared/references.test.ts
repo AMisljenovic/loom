@@ -3,6 +3,7 @@ import {
   mergeReferenceAttachments,
   normalizeReferenceAttachments,
   normalizeReferencePath,
+  referencePickerEntries,
   referenceId,
   referenceLabel,
 } from "./references";
@@ -98,6 +99,36 @@ describe("normalizeReferenceAttachments edge cases", () => {
       { kind: "file", path: "src/a.ts", label: "   " },
     ])).toEqual([
       { id: "file:src/a.ts", kind: "file", path: "src/a.ts", label: "a.ts" },
+    ]);
+  });
+
+  it("accepts valid image references", () => {
+    expect(normalizeReferenceAttachments([
+      { id: "image:1", kind: "image", label: "shot.png", mimeType: "image/png", data: "aGVsbG8=", size: 5 },
+    ])).toEqual([
+      { id: "image:1", kind: "image", label: "shot.png", mimeType: "image/png", data: "aGVsbG8=", size: 5 },
+    ]);
+  });
+
+  it("rejects invalid image references", () => {
+    expect(normalizeReferenceAttachments([
+      { id: "image:bad-type", kind: "image", mimeType: "image/bmp", data: "aGVsbG8=", size: 5 },
+      { id: "image:too-large", kind: "image", mimeType: "image/png", data: "aGVsbG8=", size: 6 * 1024 * 1024 },
+      { id: "image:bad-data", kind: "image", mimeType: "image/png", data: "not base64!", size: 5 },
+    ])).toEqual([]);
+  });
+});
+
+describe("referencePickerEntries", () => {
+  it("returns folders and files from the workspace index with picked state", () => {
+    expect(referencePickerEntries(
+      { folders: ["src", "docs"], files: ["src/a.ts", "README.md"] },
+      [{ id: "file:README.md", kind: "file", path: "README.md", label: "README.md" }],
+    )).toEqual([
+      { description: "folder", picked: false, ref: { id: "folder:docs", kind: "folder", path: "docs", label: "docs" } },
+      { description: "folder", picked: false, ref: { id: "folder:src", kind: "folder", path: "src", label: "src" } },
+      { description: "file", picked: true, ref: { id: "file:README.md", kind: "file", path: "README.md", label: "README.md" } },
+      { description: "file", picked: false, ref: { id: "file:src/a.ts", kind: "file", path: "src/a.ts", label: "a.ts" } },
     ]);
   });
 });

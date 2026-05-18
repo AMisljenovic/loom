@@ -136,6 +136,9 @@ func cloneMessages(messages []llm.Message) []llm.Message {
 		if len(m.ToolCalls) > 0 {
 			out[i].ToolCalls = append([]llm.ToolCall(nil), m.ToolCalls...)
 		}
+		if len(m.Images) > 0 {
+			out[i].Images = append([]llm.Image(nil), m.Images...)
+		}
 	}
 	return out
 }

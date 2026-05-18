@@ -61,7 +61,11 @@ export function renderSessionAsMarkdown(meta: SessionMeta, body: ConversationSta
         lines.push("");
         lines.push("**References:**");
         for (const ref of msg.references) {
-          lines.push(`- \`${ref.path}\` (${ref.kind})`);
+          if (ref.kind === "image") {
+            lines.push(`- ${ref.label || "Pasted image"} (${ref.mimeType}, ${ref.size} bytes)`);
+          } else {
+            lines.push(`- \`${ref.path}\` (${ref.kind})`);
+          }
         }
       }
     } else if (msg.role === "assistant") {

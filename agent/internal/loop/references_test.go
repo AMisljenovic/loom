@@ -11,9 +11,12 @@ func TestRenderReferencesFilePreview(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "src", "a.ts"), "export const a = 1;\n")
 
-	out, err := RenderReferences(root, []Reference{{Kind: "file", Path: "src/a.ts"}})
+	out, images, err := RenderReferences(root, []Reference{{Kind: "file", Path: "src/a.ts"}})
 	if err != nil {
 		t.Fatalf("RenderReferences: %v", err)
+	}
+	if len(images) != 0 {
+		t.Fatalf("expected no images, got %#v", images)
 	}
 	if !strings.Contains(out, `<reference kind="file" path="src/a.ts">`) {
 		t.Fatalf("missing file reference: %s", out)
@@ -28,7 +31,7 @@ func TestRenderReferencesFolderListing(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "src", "a.ts"), "a")
 	mustWrite(t, filepath.Join(root, "src", "nested", "b.ts"), "b")
 
-	out, err := RenderReferences(root, []Reference{{Kind: "folder", Path: "src"}})
+	out, _, err := RenderReferences(root, []Reference{{Kind: "folder", Path: "src"}})
 	if err != nil {
 		t.Fatalf("RenderReferences: %v", err)
 	}
@@ -39,7 +42,7 @@ func TestRenderReferencesFolderListing(t *testing.T) {
 
 func TestRenderReferencesRejectsEscapingPath(t *testing.T) {
 	root := t.TempDir()
-	_, err := RenderReferences(root, []Reference{{Kind: "file", Path: "../secret.txt"}})
+	_, _, err := RenderReferences(root, []Reference{{Kind: "file", Path: "../secret.txt"}})
 	if err == nil || !strings.Contains(err.Error(), "escapes workspace") {
 		t.Fatalf("expected escaping path error, got %v", err)
 	}
@@ -50,7 +53,7 @@ func TestRenderReferencesBinaryAndTruncated(t *testing.T) {
 	mustWriteBytes(t, filepath.Join(root, "bin.dat"), []byte{0, 1, 2})
 	mustWrite(t, filepath.Join(root, "large.txt"), strings.Repeat("x", maxReferenceFileBytes+10))
 
-	out, err := RenderReferences(root, []Reference{
+	out, _, err := RenderReferences(root, []Reference{
 		{Kind: "file", Path: "bin.dat"},
 		{Kind: "file", Path: "large.txt"},
 	})
@@ -62,6 +65,44 @@ func TestRenderReferencesBinaryAndTruncated(t *testing.T) {
 	}
 	if !strings.Contains(out, `truncated="true"`) {
 		t.Fatalf("missing truncation marker: %s", out)
+	}
+}
+
+func TestRenderReferencesImage(t *testing.T) {
+	out, images, err := RenderReferences("", []Reference{
+		{ID: "image:1", Kind: "image", Label: "shot.png", MIMEType: "image/png", Data: "aGVsbG8=", Size: 5},
+	})
+	if err != nil {
+		t.Fatalf("RenderReferences: %v", err)
+	}
+	if !strings.Contains(out, `<reference kind="image" label="shot.png" mime="image/png" size="5" />`) {
+		t.Fatalf("missing image metadata: %s", out)
+	}
+	if len(images) != 1 || images[0].MIMEType != "image/png" || images[0].Data != "aGVsbG8=" {
+		t.Fatalf("unexpected images: %#v", images)
+	}
+}
+
+func TestRenderReferencesMixedKeepsImagesAfterTextCap(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "large1.txt"), strings.Repeat("x", maxReferenceFileBytes+100))
+	mustWrite(t, filepath.Join(root, "large2.txt"), strings.Repeat("x", maxReferenceFileBytes+100))
+	mustWrite(t, filepath.Join(root, "large3.txt"), strings.Repeat("x", maxReferenceFileBytes+100))
+
+	out, images, err := RenderReferences(root, []Reference{
+		{Kind: "file", Path: "large1.txt"},
+		{Kind: "file", Path: "large2.txt"},
+		{Kind: "file", Path: "large3.txt"},
+		{ID: "image:1", Kind: "image", Label: "shot.png", MIMEType: "image/png", Data: "aGVsbG8=", Size: 5},
+	})
+	if err != nil {
+		t.Fatalf("RenderReferences: %v", err)
+	}
+	if !strings.Contains(out, `reference total byte cap reached`) || !strings.Contains(out, `kind="image"`) {
+		t.Fatalf("expected truncation marker and image metadata: %s", out)
+	}
+	if len(images) != 1 {
+		t.Fatalf("expected image payload after text cap, got %#v", images)
 	}
 }
 

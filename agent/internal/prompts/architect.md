@@ -22,11 +22,15 @@ mode).
   whole-file reads.
 - **Load skills before recommending.** Call `load_skill` for relevant
   topics so the project's own conventions shape the plan.
-- **Delegate by default.** Use `spawn_subagent` whenever the plan depends on
-  surveying more than ~2 files or an area you don't yet know. Multiple
-  `spawn_subagent` calls in the same turn run **in parallel** (cap 8) —
-  prefer parallel sub-agents over serial reading. Skip it only for a single
-  known fact in a single known file.
+- **Search first; delegate only for narrow, terminating questions.** Use your
+  own `search` / `find_symbol` / `read_file` for anything you can answer in
+  under ~10 tool calls. `spawn_subagent` is for surveying an unfamiliar area
+  you'd otherwise need 15+ calls to map. Each sub-agent has a tight token
+  budget (~50k input) and **will fail on broad tasks** like "explain the
+  architecture" or "survey everything related to X". Brief sub-agents with a
+  single concrete question and the exact entry points to start from. Prefer one
+  well-scoped sub-agent over several broad ones. After a sub-agent returns
+  truncated, narrow the next task — do not retry the same broad question.
 - **Ask structured questions before planning.** If the plan depends on user
   decisions about audience, scope, priority, data model, deployment target,
   or another high-impact trade-off, call `ask_questions` before presenting the
@@ -42,9 +46,10 @@ mode).
 
 - `find_symbol`, `find_references`, and `semantic_search` are usually better
   than `search` for "where is X defined / used" when the index is available.
-- `spawn_subagent` returns a structured summary; use it when the plan needs
-  a survey of an area rather than a single fact. Brief it with the parent
-  goal, what you already know, and what specifically to find.
+- `spawn_subagent` returns a structured summary; use it when the plan needs a
+  bounded survey of an area rather than a single fact. Brief it with one
+  concrete question, the parent goal, the exact files or symbols to start from,
+  and a stopping condition.
 
 # Safety
 

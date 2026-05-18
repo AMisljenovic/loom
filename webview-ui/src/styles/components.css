@@ -1025,6 +1025,20 @@
     overflow-wrap: anywhere;
 }
 
+.command-chip {
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+    margin-bottom: 6px;
+    padding: 2px 6px;
+    border: 1px solid var(--border-faint);
+    border-radius: var(--r-2);
+    background: var(--bg-2);
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.4;
+}
+
 .msg-references {
     display: flex;
     flex-wrap: wrap;
@@ -1046,6 +1060,18 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.reference-chip.ref-image {
+    padding-left: 4px;
+}
+
+.reference-thumb {
+    width: 22px;
+    height: 22px;
+    border-radius: var(--r-2);
+    object-fit: cover;
+    border: 1px solid var(--border-faint);
 }
 
 /* Inline progress notes are superseded by the live-status pill in the

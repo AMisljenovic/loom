@@ -52,12 +52,24 @@ export function Thread({ messages, pendingDiffs, pendingOutputs, busy, onToggleT
                         <div key={i} className="msg msg-user">
                             <div className="msg-who">You</div>
                             <div className="msg-body">
+                                {msg.command && <div className="command-chip">expanded from /{msg.command.name}</div>}
                                 {msg.text && <div>{msg.text}</div>}
                                 {msg.references && msg.references.length > 0 && (
                                     <div className="msg-references">
                                         {msg.references.map((ref) => (
-                                            <span className="msg-reference" key={ref.id} title={`${ref.kind}: ${ref.path}`}>
-                                                {ref.kind === "folder" ? "folder" : "file"} {ref.path}
+                                            <span
+                                                className={`msg-reference ref-${ref.kind}`}
+                                                key={ref.id}
+                                                title={ref.kind === "image" ? ref.mimeType : `${ref.kind}: ${ref.path}`}
+                                            >
+                                                {ref.kind === "image" ? (
+                                                    <>
+                                                        <img className="reference-thumb" src={`data:${ref.mimeType};base64,${ref.data}`} alt="" />
+                                                        image {ref.label || "Pasted image"}
+                                                    </>
+                                                ) : (
+                                                    <>{ref.kind === "folder" ? "folder" : "file"} {ref.path}</>
+                                                )}
                                             </span>
                                         ))}
                                     </div>

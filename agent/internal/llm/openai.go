@@ -120,7 +120,7 @@ func (p *openaiProvider) Stream(
 	for _, m := range messages {
 		switch m.Role {
 		case RoleUser:
-			oaiMsgs = append(oaiMsgs, openai.UserMessage(m.Content))
+			oaiMsgs = append(oaiMsgs, openAIUserMessage(m))
 		case RoleAssistant:
 			if len(m.ToolCalls) == 0 {
 				oaiMsgs = append(oaiMsgs, openai.AssistantMessage(m.Content))
@@ -235,7 +235,7 @@ func (p *openaiProvider) Complete(ctx context.Context, systemPrompt string, mess
 	for _, m := range messages {
 		switch m.Role {
 		case RoleUser:
-			oaiMsgs = append(oaiMsgs, openai.UserMessage(m.Content))
+			oaiMsgs = append(oaiMsgs, openAIUserMessage(m))
 		case RoleAssistant:
 			oaiMsgs = append(oaiMsgs, openai.AssistantMessage(m.Content))
 		case RoleTool:
@@ -264,6 +264,22 @@ func (p *openaiProvider) Complete(ctx context.Context, systemPrompt string, mess
 		InputTokens:  resp.Usage.PromptTokens,
 		OutputTokens: resp.Usage.CompletionTokens,
 	}, nil
+}
+
+func openAIUserMessage(m Message) openai.ChatCompletionMessageParamUnion {
+	if len(m.Images) == 0 {
+		return openai.UserMessage(m.Content)
+	}
+	parts := make([]openai.ChatCompletionContentPartUnionParam, 0, 1+len(m.Images))
+	if m.Content != "" {
+		parts = append(parts, openai.TextContentPart(m.Content))
+	}
+	for _, img := range m.Images {
+		parts = append(parts, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
+			URL: "data:" + img.MIMEType + ";base64," + img.Data,
+		}))
+	}
+	return openai.UserMessage(parts)
 }
 
 func (p *openaiProvider) Model() string {
