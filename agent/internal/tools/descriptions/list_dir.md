@@ -8,12 +8,13 @@ requires_approval: false
 List entries in a directory relative to the workspace root.
 
 ## When to use
-- You need to discover what's in a directory before reading a specific file.
-- You are exploring an unfamiliar area of the workspace.
+- You need to discover what's in a single directory before reading a file.
+- You are exploring an unfamiliar area of the workspace one level at a time.
 
 ## When NOT to use
-- For recursive listings — call `list_dir` per level, or use `search` with a
-  pattern instead.
+- To find files by name pattern across the tree — use `find_files`.
+- For content search — use `search`.
+- For recursive listings — `find_files` with a `**` glob is the right tool.
 - To check whether a single named file exists — just `read_file` it and
   handle the error.
 

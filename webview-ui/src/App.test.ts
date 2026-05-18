@@ -114,7 +114,7 @@ describe("upsertTodoMessage", () => {
     });
   });
 
-  it("updates an existing todo card in place", () => {
+  it("moves an existing todo card to the end on update and preserves title fallback", () => {
     const existing: Msg[] = [
       { role: "todo", taskId: "task-1", title: "Update Todos", items: [{ id: "read", text: "Read files", status: "in_progress" }] },
       tool("top"),
@@ -125,13 +125,41 @@ describe("upsertTodoMessage", () => {
     ]);
 
     expect(next).toHaveLength(2);
-    expect(next[0]).toMatchObject({
+    expect(next[0]).toBe(existing[1]);
+    expect(next[1]).toMatchObject({
       role: "todo",
       taskId: "task-1",
       title: "Update Todos",
       items: [{ id: "read", text: "Read files", status: "done" }],
     });
-    expect(next[1]).toBe(existing[1]);
+  });
+
+  it("keeps todo cards from other tasks at their original positions", () => {
+    const other: Msg = {
+      role: "todo",
+      taskId: "task-2",
+      title: "Other",
+      items: [{ id: "x", text: "Other todo", status: "pending" }],
+    };
+    const existing: Msg[] = [
+      { role: "todo", taskId: "task-1", title: "Update Todos", items: [{ id: "read", text: "Read files", status: "in_progress" }] },
+      tool("top"),
+      other,
+    ];
+
+    const next = upsertTodoMessage(existing, "task-1", "New Title", [
+      { id: "read", text: "Read files", status: "done" },
+    ]);
+
+    expect(next).toHaveLength(3);
+    expect(next[0]).toBe(existing[1]);
+    expect(next[1]).toBe(other);
+    expect(next[2]).toMatchObject({
+      role: "todo",
+      taskId: "task-1",
+      title: "New Title",
+      items: [{ id: "read", text: "Read files", status: "done" }],
+    });
   });
 });
 

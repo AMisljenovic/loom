@@ -7,12 +7,18 @@ requires_approval: false
 ## Purpose
 Search the codebase with a regex query and return `path:line:snippet` matches.
 
+## First tool for most navigation
+Reach for `search` before `read_file` when you don't already know exactly
+which lines you need. Combine `globs` to scope to a language or directory,
+then follow up with a narrow `read_file` slice on the lines that matched.
+
 ## When to use
 - Locating string literals, symbol names, or patterns across many files.
 - Confirming where a function, constant, or import is referenced.
 - Quickly checking whether a feature exists before adding it.
 
 ## When NOT to use
+- To find files by name pattern (no content match) — use `find_files`.
 - For semantic "find me code that does X" queries — use `semantic_search`
   if available, or `find_references` when you have a specific symbol.
 - For inspecting a single known file — `read_file` is direct and faster.
@@ -45,4 +51,4 @@ Find the prompt-build function inside the Go agent.
 {"query": "TODO|FIXME", "globs": ["*.ts", "*.tsx"], "maxResults": 50}
 ```
 
-Find pending markers across the TypeScript source.
+Scoped, capped query — typical first-step navigation before reading.

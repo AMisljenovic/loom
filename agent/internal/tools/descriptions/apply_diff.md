@@ -5,37 +5,43 @@ requires_approval: true
 ---
 
 ## Purpose
-Modify or create a file relative to the workspace root using one or more edits.
+Modify or create a file using one or more edits — anchor-matched
+(`oldText`/`newText`) or line-range (`startLine`/`endLine`/`newText`).
 
 ## When to use
-- You need to change a file's contents. Pass unique `oldText` / `newText`
-  pairs that match the file exactly.
-- You need to create a new file. Pass a single edit with empty `oldText` and
-  the full file body as `newText`.
+- Change a file's contents. Use **anchor edits** for small unique regions.
+  Use **range edits** when the region is large or already known by line
+  number (e.g. after a `search` hit), or when anchor matching has failed.
+- Create a new file: one anchor edit with empty `oldText` and the body as
+  `newText`.
 
 ## When NOT to use
-- For renames or deletes — there is no tool for those; ask the user.
-- To stage a change for review. `apply_diff` writes immediately (subject to
-  approval).
+- For renames or deletes — ask the user.
+- To stage a change for review. `apply_diff` writes immediately (subject
+  to approval).
 
 ## Input
-- `path` (string, required) — workspace-relative path. Absolute paths are
-  rejected.
-- `edits` (array, required) — one or more `{oldText, newText}` objects.
+- `path` (string, required) — workspace-relative path.
+- `edits` (array, required) — one or more edit objects. Each is either:
+  - Anchor: `{ "oldText": "...", "newText": "..." }`
+  - Range: `{ "startLine": N, "endLine": M, "newText": "..." }`
+    (1-based, inclusive). For pure insert, set `endLine = startLine - 1`.
 
 ## Behavior
-- Each edit's `oldText` must match the file's current contents exactly,
-  including whitespace and indentation. Match is literal, not regex.
-- If `oldText` matches multiple places, the call fails — provide more
-  surrounding context to make it unique.
-- If a call fails because `oldText` is not found or is ambiguous, recover by
-  calling `read_file` for the same path, then call `apply_diff` once with
-  `oldText` equal to the full current file contents and `newText` equal to the
-  full desired file contents. Do not repeatedly retry guessed partial edits.
-- After a successful apply, the host re-fetches diagnostics for the affected
-  files (~750ms settle) and replays new errors as a `<diagnostics-followup>`
-  user message on the next turn. Do not pre-emptively call `get_diagnostics`
-  on a file you just edited.
+- Anchor `oldText` must match exactly and uniquely. Multi-match errors
+  list every matched line number — pick one and re-issue as a range edit,
+  or tighten `oldText`.
+- Range edits replace lines N..M. Line endings (`\r\n` or `\n`) are
+  preserved.
+- In one call: range edits apply first in descending `startLine` order so
+  earlier line numbers stay valid; anchor edits apply to the resulting
+  buffer.
+- On any failure, **do not re-emit the whole file**. Use `search` to find
+  the exact lines, then issue a tight range edit for the changed slice.
+- After a successful apply, the host re-fetches diagnostics (~750ms
+  settle) and replays new errors as a `<diagnostics-followup>` user
+  message. Do not pre-emptively call `get_diagnostics` on a just-edited
+  file.
 - Requires user approval unless the `write` category is auto-approved.
 
 ## Examples
@@ -44,7 +50,14 @@ Modify or create a file relative to the workspace root using one or more edits.
 {"path": "src/foo.ts", "edits": [{"oldText": "const x = 1;", "newText": "const x = 2;"}]}
 ```
 
-Single-line change.
+Anchor edit — small, unique region.
+
+```json
+{"path": "agent/internal/loop/loop.go", "edits": [{"startLine": 412, "endLine": 418, "newText": "if err := registry.Validate(); err != nil {\n    return err\n}\n"}]}
+```
+
+Range edit — replace seven lines in a large file after locating them with
+`search`. No full-file rewrite needed.
 
 ```json
 {"path": "src/new.ts", "edits": [{"oldText": "", "newText": "export const greet = () => 'hi';\n"}]}

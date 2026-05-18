@@ -5,37 +5,51 @@ requires_approval: false
 ---
 
 ## Purpose
-Read a UTF-8 text file relative to the workspace root.
+Read a slice (or all) of a UTF-8 text file relative to the workspace root.
+
+## Search first, read narrowly
+This is **not** the right first tool for navigation. Use `search` to locate the
+relevant lines, then `read_file` with `offset` and `limit` to inspect just
+that region. Use `find_files` when you need to know where a file lives.
+Whole-file reads are appropriate only for short files (~200 lines), files you
+are about to fully rewrite via `apply_diff`, or when you genuinely need the
+entire body.
 
 ## When to use
-- You need to inspect a specific file's contents before reasoning about it.
-- You have a file path from a previous tool result and need its body.
+- You have a specific file path and a known line region you need to inspect.
+- You are about to call `apply_diff` and need the current file body.
 
 ## When NOT to use
 - For binary files (images, executables). The result will be unusable.
 - To list a directory — use `list_dir`.
+- To find files by name pattern — use `find_files`.
 - To search across many files — use `search`.
 
 ## Input
 - `path` (string, required) — workspace-relative path. Absolute paths are
   rejected. Forward slashes work cross-platform.
+- `offset` (number, optional) — 1-based starting line. Default 1.
+- `limit` (number, optional) — max lines to return. Default unlimited.
 
 ## Behavior
-- Returns the full file body as a string. There is no offset/limit; if the
-  file is large, the entire content lands in your context window.
-- An error result means the file is missing or unreadable. Do not assume the
-  file exists after an error.
+- Returns the requested slice with a header line of the form
+  `// Lines <start>-<end> of <total> in <path>`. When the slice is truncated
+  the header notes how to read more (raise `offset` or pass `limit`).
+- Files over ~256 KB are soft-capped to the first 2000 lines when no `limit`
+  is supplied. Pass an explicit `offset`/`limit` to walk a large file.
+- An error result means the file is missing, a directory, or unreadable.
 
 ## Examples
 
 ```json
-{"path": "src/extension.ts"}
+{"path": "src/extension.ts", "offset": 120, "limit": 60}
 ```
 
-Read the extension entry point.
+Read 60 lines starting at line 120 — exactly the region `search` pointed at.
 
 ```json
 {"path": "agent/internal/loop/loop.go"}
 ```
 
-Read the Go agent loop.
+Whole-file read. Acceptable here because you intend to follow up with
+`apply_diff`.

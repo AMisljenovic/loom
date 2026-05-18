@@ -45,7 +45,9 @@
       "Bash(powershell -NoProfile -Command \"cd 'c:\\\\Projects\\\\loom\\\\agent'; go test ./... 2>&1 | Select-Object -Last 30\")",
       "Bash(powershell -NoProfile -Command \"cd 'c:\\\\Projects\\\\loom'; npm run test:ts -- --root webview-ui 2>&1 | Select-Object -Last 50\")",
       "Bash(powershell -NoProfile -Command \"Test-Path 'c:\\\\Projects\\\\loom\\\\webview-ui\\\\src\\\\styles\\\\components.test.ts'\")",
-      "Bash(echo \"EXIT $?\")"
+      "Bash(echo \"EXIT $?\")",
+      "Bash(git log *)",
+      "Bash(npx vitest *)"
     ],
     "deny": [
       "Bash(rm -rf:*)",

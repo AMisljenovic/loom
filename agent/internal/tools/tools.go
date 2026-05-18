@@ -1,10 +1,12 @@
 package tools
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Tool describes a tool exposed to the LLM.
@@ -29,23 +31,22 @@ func Registry() []Tool {
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"path": map[string]any{"type": "string"},
+					"path":   map[string]any{"type": "string"},
+					"offset": map[string]any{"type": "number", "description": "1-based starting line (default 1)."},
+					"limit":  map[string]any{"type": "number", "description": "Max lines to return (default unlimited; capped on very large files)."},
 				},
 				"required": []string{"path"},
 			},
 			LocalExec: func(root string, raw json.RawMessage) (string, error) {
 				var in struct {
-					Path string `json:"path"`
+					Path   string `json:"path"`
+					Offset int    `json:"offset"`
+					Limit  int    `json:"limit"`
 				}
 				if err := json.Unmarshal(raw, &in); err != nil {
 					return "", err
 				}
-				full := filepath.Join(root, in.Path)
-				b, err := os.ReadFile(full)
-				if err != nil {
-					return "", err
-				}
-				return string(b), nil
+				return ReadFile(root, in.Path, in.Offset, in.Limit)
 			},
 		},
 		{
@@ -100,6 +101,25 @@ func Registry() []Tool {
 			},
 		},
 		{
+			Name: "find_files",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"pattern":    map[string]any{"type": "string", "description": "Filename glob, e.g. \"**/*.tsx\" or \"src/**/loop.go\"."},
+					"path":       map[string]any{"type": "string", "description": "Optional workspace-relative root (defaults to workspace root)."},
+					"maxResults": map[string]any{"type": "number", "description": "Cap returned paths (default 200)."},
+				},
+				"required": []string{"pattern"},
+			},
+			LocalExec: func(root string, raw json.RawMessage) (string, error) {
+				var in FindFilesInput
+				if err := json.Unmarshal(raw, &in); err != nil {
+					return "", err
+				}
+				return FindFiles(root, in)
+			},
+		},
+		{
 			Name: "get_diagnostics",
 			InputSchema: map[string]any{
 				"type": "object",
@@ -118,14 +138,17 @@ func Registry() []Tool {
 				"properties": map[string]any{
 					"path": map[string]any{"type": "string"},
 					"edits": map[string]any{
-						"type": "array",
+						"type":        "array",
+						"description": "Each edit is either an anchor edit {oldText, newText} or a range edit {startLine, endLine, newText}. Do not mix both shapes in one edit.",
 						"items": map[string]any{
 							"type": "object",
 							"properties": map[string]any{
-								"oldText": map[string]any{"type": "string"},
-								"newText": map[string]any{"type": "string"},
+								"oldText":   map[string]any{"type": "string", "description": "Anchor mode: exact, unique text in the file. Required for anchor edits."},
+								"newText":   map[string]any{"type": "string", "description": "Replacement text. Required for both edit modes."},
+								"startLine": map[string]any{"type": "number", "description": "Range mode: 1-based inclusive start line. Required with endLine."},
+								"endLine":   map[string]any{"type": "number", "description": "Range mode: 1-based inclusive end line. Use startLine-1 for pure insert."},
 							},
-							"required": []string{"oldText", "newText"},
+							"required": []string{"newText"},
 						},
 					},
 				},
@@ -281,6 +304,126 @@ func Registry() []Tool {
 		panic(fmt.Sprintf("tools: %v", err))
 	}
 	return tools
+}
+
+// Read tuning constants. These are exposed for tests.
+const (
+	// readSoftSizeLimit is the byte threshold above which read_file applies
+	// readSoftLineCap when the caller did not specify a limit. The intent is
+	// to keep accidental whole-file reads from blowing up the model's context
+	// while still letting the caller opt in to the full body via offset/limit.
+	readSoftSizeLimit = 256 * 1024
+	readSoftLineCap   = 2000
+	// readBufMax keeps long lines (minified bundles, generated JSON) readable
+	// without blowing memory on pathological files.
+	readBufMax = 1 * 1024 * 1024
+)
+
+// ReadFile returns a slice of the file at workspace-relative `rel`. offset is
+// 1-based; offset<=0 means start at line 1. limit<=0 means "no caller limit"
+// (but the soft cap may still apply for very large files). The returned
+// string is prefixed with a single comment header noting the line window and
+// truncation status so the model knows whether more content exists.
+func ReadFile(root, rel string, offset, limit int) (string, error) {
+	full, err := cleanRelativePath(root, rel)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(full)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("path is a directory: %s", rel)
+	}
+	f, err := os.Open(full)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	if offset < 1 {
+		offset = 1
+	}
+	softCap := 0
+	if limit <= 0 && info.Size() > readSoftSizeLimit {
+		softCap = readSoftLineCap
+	}
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), readBufMax)
+
+	var b strings.Builder
+	startLine := offset
+	endLine := offset - 1
+	emitted := 0
+	totalLines := 0
+	more := false
+
+	for lineNo := 1; scanner.Scan(); lineNo++ {
+		totalLines = lineNo
+		if lineNo < offset {
+			continue
+		}
+		if limit > 0 && emitted >= limit {
+			more = true
+			break
+		}
+		if softCap > 0 && emitted >= softCap {
+			more = true
+			break
+		}
+		b.WriteString(scanner.Text())
+		b.WriteByte('\n')
+		emitted++
+		endLine = lineNo
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+
+	if more {
+		// Drain remaining line count so the header can report the true total.
+		// Re-open and count rather than buffering — file is on disk.
+		if n, ok := countLines(full); ok {
+			totalLines = n
+		}
+	}
+
+	header := fmt.Sprintf("// Lines %d-%d", startLine, endLine)
+	if emitted == 0 {
+		header = fmt.Sprintf("// Lines %d-%d (empty range)", startLine, startLine)
+	}
+	if totalLines > 0 {
+		header += fmt.Sprintf(" of %d", totalLines)
+	}
+	header += fmt.Sprintf(" in %s", slashPath(rel))
+	if more {
+		if softCap > 0 && limit <= 0 {
+			header += "\n// File exceeds soft size limit; pass offset/limit to read more, or use search to locate specific lines."
+		} else {
+			header += "\n// Truncated by limit; pass a higher offset to continue."
+		}
+	}
+	return header + "\n" + b.String(), nil
+}
+
+func countLines(full string) (int, bool) {
+	f, err := os.Open(full)
+	if err != nil {
+		return 0, false
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64*1024), readBufMax)
+	n := 0
+	for sc.Scan() {
+		n++
+	}
+	if sc.Err() != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 func overlayDescriptions(tools []Tool) error {

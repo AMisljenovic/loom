@@ -1,4 +1,4 @@
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useState, type Dispatch, type KeyboardEvent, type SetStateAction } from "react";
 import type { Msg, QuestionSpec } from "../../../../src/shared/protocol";
 import * as Ico from "../../brand/icons";
 import { questionActivityLabel, selectedAnswerLabels } from "../../util/activity";
@@ -6,6 +6,7 @@ import { post } from "../../vscode";
 import {
     draftToAnswers,
     emptyDraft,
+    isQuestionDraftComplete,
     isQuestionFormComplete,
     type DraftAnswers,
 } from "../../util/questionValidation";
@@ -17,10 +18,14 @@ interface QuestionFormProps {
 export function QuestionForm({ msg }: QuestionFormProps) {
     const [draft, setDraft] = useState<DraftAnswers>(() => emptyDraft(msg.questions));
     const [expanded, setExpanded] = useState(msg.status === "pending");
+    const [activeTab, setActiveTab] = useState(0);
     const complete = isQuestionFormComplete(msg.questions, draft);
     const answered = msg.status === "answered";
     const cancelled = msg.status === "cancelled";
     const activity = questionActivityLabel(msg);
+    const multi = msg.questions.length > 1;
+    const safeTab = Math.min(activeTab, Math.max(msg.questions.length - 1, 0));
+    const activeQuestion = msg.questions[safeTab];
 
     useEffect(() => {
         if (msg.status === "answered") {
@@ -31,6 +36,16 @@ export function QuestionForm({ msg }: QuestionFormProps) {
     const submit = () => {
         if (!complete || answered) return;
         post({ type: "answerQuestions", callId: msg.callId, answers: draftToAnswers(msg.questions, draft) });
+    };
+
+    const onTabKey = (e: KeyboardEvent<HTMLButtonElement>, idx: number) => {
+        if (e.key === "ArrowRight") {
+            e.preventDefault();
+            setActiveTab(Math.min(idx + 1, msg.questions.length - 1));
+        } else if (e.key === "ArrowLeft") {
+            e.preventDefault();
+            setActiveTab(Math.max(idx - 1, 0));
+        }
     };
 
     return (
@@ -54,16 +69,49 @@ export function QuestionForm({ msg }: QuestionFormProps) {
                 </div>
             ) : (
                 <>
-                    <div className="question-list">
-                        {msg.questions.map((q) => (
+                    {multi && (
+                        <div className="question-tabs" role="tablist" aria-label="Questions">
+                            {msg.questions.map((q, idx) => {
+                                const done = isQuestionDraftComplete(q, draft[q.id]);
+                                const isActive = idx === safeTab;
+                                const panelId = `question-${msg.callId}-panel-${q.id}`;
+                                return (
+                                    <button
+                                        key={q.id}
+                                        type="button"
+                                        role="tab"
+                                        id={`question-${msg.callId}-tab-${q.id}`}
+                                        aria-controls={panelId}
+                                        aria-selected={isActive}
+                                        tabIndex={isActive ? 0 : -1}
+                                        className={`question-tab${isActive ? " active" : ""}${done ? " done" : ""}`}
+                                        onClick={() => setActiveTab(idx)}
+                                        onKeyDown={(e) => onTabKey(e, idx)}
+                                    >
+                                        <span className="question-tab-num">Q{idx + 1}</span>
+                                        <span className="question-tab-dot" aria-hidden="true">
+                                            {done ? <Ico.Check size={9} /> : null}
+                                        </span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+                    {activeQuestion && (
+                        <div
+                            className="question-list"
+                            role={multi ? "tabpanel" : undefined}
+                            id={multi ? `question-${msg.callId}-panel-${activeQuestion.id}` : undefined}
+                            aria-labelledby={multi ? `question-${msg.callId}-tab-${activeQuestion.id}` : undefined}
+                        >
                             <QuestionField
-                                key={q.id}
-                                question={q}
+                                key={activeQuestion.id}
+                                question={activeQuestion}
                                 draft={draft}
                                 setDraft={setDraft}
                             />
-                        ))}
-                    </div>
+                        </div>
+                    )}
                     <div className="question-actions">
                         <button className="btn btn-primary" disabled={!complete} onClick={submit}>
                             Submit answers

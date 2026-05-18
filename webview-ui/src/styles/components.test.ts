@@ -68,4 +68,27 @@ describe("component layout CSS invariants", () => {
         expectDeclaration(card, "flex-shrink", "0");
         expectDeclaration(card, "border-left", "3px solid var(--warn)");
     });
+
+    it("renders reasoning lines as a quiet card, not borderless italic", () => {
+        const intent = rule(".intent-line");
+        expectDeclaration(intent, "font-style", "normal");
+        expectDeclaration(intent, "background", "var(--surface-2)");
+        expectDeclaration(intent, "border-radius", "var(--r-3)");
+        expectDeclaration(intent, "color", "var(--text)");
+
+        const tag = rule(".intent-tag");
+        expectDeclaration(tag, "text-transform", "uppercase");
+        expectDeclaration(tag, "color", "var(--text-muted)");
+    });
+
+    it("makes sub-agent cards visually distinct from tool cards", () => {
+        const card = rule(".subagent-card");
+        expectDeclaration(card, "flex-shrink", "0");
+        expectDeclaration(card, "border-left", "3px solid var(--accent)");
+        expect(card.replace(/\s+/g, " ")).toContain("animation: subagent-enter");
+
+        const tag = rule(".subagent-tag");
+        expectDeclaration(tag, "color", "var(--accent)");
+        expectDeclaration(tag, "text-transform", "uppercase");
+    });
 });

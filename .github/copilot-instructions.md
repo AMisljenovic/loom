@@ -104,6 +104,14 @@ newline-delimited JSON-RPC over stdio.
     may pre-apply the same parser for responsiveness.
 15. Assistant Markdown rendering stays webview-only and sanitized. Store raw
     message text in session state; render Markdown without raw HTML.
+15b. Read-side tools are search-first. `read_file` accepts optional
+    `offset`/`limit` for narrow slices and soft-caps files over ~256 KB to
+    the first 2000 lines when no `limit` is given. `find_files` (filename
+    glob) and `search` (regex content grep) cover navigation; `list_dir`
+    is for single-directory inspection. Tool descriptions and the
+    Code/Architect/Ask mode prompts lead with "search first, read
+    narrowly" — preserve that ordering when adding new read-side tools.
+
 16. v0.1.4 sub-agents run in parallel within a turn. Only the built-in
     `research` preset exists, exposed through `spawn_subagent`. Multiple
     spawns emitted in one turn run concurrently through the same errgroup

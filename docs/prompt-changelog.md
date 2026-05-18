@@ -2,6 +2,52 @@
 
 Reverse-chronological notes for meaningful Loom prompt-layer changes.
 
+## 2026-05-18 - Range edits and no-whole-file fallback for apply_diff
+
+- Affected files: `src/tools/index.ts`, `src/tools/applyDiffEdits.ts` (new
+  pure-logic module), `src/tools/applyDiffRecovery.ts`,
+  `agent/internal/tools/tools.go` (apply_diff schema),
+  `agent/internal/tools/descriptions/apply_diff.md`,
+  `agent/internal/prompts/code.md`, `agent/internal/prompts/debug.md`.
+- Rationale: on 1000+ line files the old recovery contract ("re-emit the
+  whole file as oldText/newText") forced the model to stream tens of
+  thousands of output tokens, taking 2-5 minutes per edit and frequently
+  failing again. `apply_diff` now accepts a second edit shape —
+  `{startLine, endLine, newText}` — and the failure message + Code/Debug
+  prompts steer the model to use a tight range edit instead of a whole-file
+  rewrite. Multi-match errors enumerate every matched line so the model can
+  pivot in one turn. Edits within a single call sort range-first
+  descending, anchor-after, so line numbers stay valid.
+- Eval impact: tool catalogue order is unchanged; only the apply_diff
+  schema grows. Stable system prefix cache misses once, then re-stabilizes.
+  Run `npm run eval` with provider credentials.
+
+## 2026-05-18 - Search-first discipline and delegate-by-default
+
+- Affected files: `agent/internal/tools/tools.go`,
+  `agent/internal/tools/find_files.go` (new),
+  `agent/internal/tools/descriptions/read_file.md`,
+  `agent/internal/tools/descriptions/search.md`,
+  `agent/internal/tools/descriptions/list_dir.md`,
+  `agent/internal/tools/descriptions/spawn_subagent.md`,
+  `agent/internal/tools/descriptions/find_files.md` (new),
+  `agent/internal/prompts/code.md`,
+  `agent/internal/prompts/architect.md`,
+  `agent/internal/prompts/ask.md`.
+- Rationale: the model was reading whole files where targeted `search` plus
+  a narrow read would do, and rarely spawning sub-agents because the
+  guidance gated delegation on "non-trivial" multi-file work. `read_file`
+  now accepts `offset`/`limit` and soft-caps very large files; a new
+  `find_files` tool fills the filename-pattern (glob) gap. Mode prompts and
+  the `spawn_subagent` description now lead with "search first, read
+  narrowly" and "delegate by default for multi-file surveys, run sub-agents
+  in parallel."
+- Eval impact: tool catalogue gains `find_files`; `read_file` schema gains
+  optional `offset`/`limit`. The stable system prefix changes once (cache
+  miss expected) and then stabilizes — tool order is unchanged, only the
+  read_file schema and the description bodies grow. Run `npm run eval` with
+  provider credentials.
+
 ## 2026-05-18 - Diff recovery and live todos
 
 - Affected files: `agent/internal/prompts/code.md`,

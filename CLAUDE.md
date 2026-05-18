@@ -71,6 +71,27 @@ change to a message type must be made on both sides.
   skills live in `.loom/skills/<id>/SKILL.md`. `load_skill` is intercepted
   in the loop (not a regular `LocalExec`) because it mutates
   `conversation.Entry.LoadedSkills`.
+- **Search-first, read narrowly.** `read_file` accepts optional
+  `offset`/`limit` (1-based line window) and soft-caps files over ~256 KB
+  to the first 2000 lines when no `limit` is given — the header line
+  reports the window and whether more remains. `find_files` exists for
+  filename-pattern (glob) lookups; `search` is the content-grep tool;
+  `list_dir` is for single-directory inspection. Tool descriptions and
+  mode prompts (`code.md`, `architect.md`, `ask.md`) all lead with
+  "search first, read narrowly" — keep that ordering when adding new
+  read-side tools.
+- **`apply_diff` supports two edit shapes.** Each `edits` entry is either
+  an anchor edit `{oldText, newText}` (exact, unique string match) or a
+  range edit `{startLine, endLine, newText}` (1-based inclusive line
+  range; `endLine = startLine - 1` means pure insert). Pure logic lives in
+  [src/tools/applyDiffEdits.ts](src/tools/applyDiffEdits.ts) so it can be
+  unit-tested without the VS Code layer; [src/tools/index.ts](src/tools/index.ts)
+  wires it to `WorkspaceEdit`. Within one call, range edits apply first in
+  descending `startLine` order so earlier line numbers stay valid; anchor
+  edits apply to the resulting buffer. On any anchor failure, the
+  recovery error in [src/tools/applyDiffRecovery.ts](src/tools/applyDiffRecovery.ts)
+  steers the model to a range edit — **never** to a whole-file rewrite.
+  Keep that recovery contract intact when changing the schema.
 - **Diagnostics feedback loop.** After a successful `apply_diff`, the TS
   side diffs pre/post-edit `vscode.languages.getDiagnostics` for affected
   URIs (750ms settle) and attaches new errors/warnings as a `followups`
@@ -120,8 +141,9 @@ change to a message type must be made on both sides.
   description, IN pane = one-line input summary, OUT pane = first ~3 lines
   truncated; click to expand). Do not re-introduce per-tool specialty body
   components. Assistant deltas are split on tool-call / question / progress
-  boundaries — each chunk of inter-tool prose becomes a slim italic
-  `intent-line`. The last non-empty assistant message before
+  boundaries — each chunk of inter-tool prose becomes a low-key reasoning
+  card (`intent-line` — quiet card chrome, normal weight, non-italic, with
+  a small "Reasoning" tag). The last non-empty assistant message before
   `task.done` with `reason === "completed"` is promoted to `kind: "summary"`
   and renders as a Summary card. Inline progress notes are hidden in the
   transcript — they're surfaced through the composer's live-status pill.

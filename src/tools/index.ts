@@ -3,7 +3,7 @@ import * as childProcess from "node:child_process";
 import * as nodePath from "node:path";
 import * as vscode from "vscode";
 import type { ToolCall, ToolFollowup, ToolFollowupDiagRow, ToolResult } from "../shared/protocol";
-import { recoverableApplyDiffError } from "./applyDiffRecovery";
+import { applyEdits, parseApplyDiffInput, type ApplyDiffEdit, type ApplyDiffInput } from "./applyDiffEdits";
 import { killProcess, readProcessOutput, runCommandBackground } from "./processes";
 
 export type ApprovalFn = (call: ToolCall) => Promise<boolean>;
@@ -13,15 +13,7 @@ export interface ToolContext {
   onProgress?: (chunk: string) => void;
 }
 
-interface ApplyDiffEdit {
-  oldText: string;
-  newText: string;
-}
-
-interface ApplyDiffInput {
-  path: string;
-  edits: ApplyDiffEdit[];
-}
+export type { ApplyDiffEdit, ApplyDiffInput };
 
 interface ExecError {
   killed?: boolean;
@@ -94,7 +86,7 @@ export async function prepareApplyDiff(
   const read = await readTextIfExists(uri);
   const existed = read !== undefined;
   if (!existed) {
-    if (input.edits.length !== 1 || input.edits[0].oldText !== "") {
+    if (input.edits.length !== 1 || input.edits[0].kind !== "anchor" || input.edits[0].oldText !== "") {
       throw new Error("new files require exactly one edit with oldText empty and newText as the full file content");
     }
     return {
@@ -108,20 +100,7 @@ export async function prepareApplyDiff(
     };
   }
 
-  let after = read;
-  input.edits.forEach((edit, index) => {
-    if (edit.oldText === "") {
-      throw new Error(`edit ${index + 1}: oldText must not be empty for existing files`);
-    }
-    const occurrences = countOccurrences(after, edit.oldText);
-    if (occurrences === 0) {
-      throw new Error(recoverableApplyDiffError(input.path, index + 1, "oldText not found"));
-    }
-    if (occurrences > 1) {
-      throw new Error(recoverableApplyDiffError(input.path, index + 1, `oldText found ${occurrences} times`));
-    }
-    after = after.replace(edit.oldText, edit.newText);
-  });
+  const after = applyEdits(read, input.edits, input.path);
 
   return {
     callId: call.callId,
@@ -273,21 +252,6 @@ async function collectDiagnosticsFollowups(plan: PreparedApplyDiff): Promise<Too
   return out;
 }
 
-function parseApplyDiffInput(input: unknown): ApplyDiffInput {
-  const candidate = input as Partial<ApplyDiffInput>;
-  if (typeof candidate.path !== "string" || !Array.isArray(candidate.edits)) {
-    throw new Error("apply_diff requires path and edits");
-  }
-  const edits = candidate.edits.map((edit) => {
-    const e = edit as Partial<ApplyDiffEdit>;
-    if (typeof e.oldText !== "string" || typeof e.newText !== "string") {
-      throw new Error("each edit requires oldText and newText strings");
-    }
-    return { oldText: e.oldText, newText: e.newText };
-  });
-  return { path: candidate.path, edits };
-}
-
 async function readTextIfExists(uri: vscode.Uri): Promise<string | undefined> {
   try {
     const bytes = await vscode.workspace.fs.readFile(uri);
@@ -300,16 +264,6 @@ async function readTextIfExists(uri: vscode.Uri): Promise<string | undefined> {
 
 function isFileNotFound(e: unknown): boolean {
   return typeof e === "object" && e !== null && "code" in e && (e as { code?: string }).code === "FileNotFound";
-}
-
-function countOccurrences(text: string, needle: string): number {
-  let count = 0;
-  let index = text.indexOf(needle);
-  while (index !== -1) {
-    count += 1;
-    index = text.indexOf(needle, index + needle.length);
-  }
-  return count;
 }
 
 function severityLabel(severity: vscode.DiagnosticSeverity): string {

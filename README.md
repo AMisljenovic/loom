@@ -64,9 +64,11 @@ added through `loom.modes`.
 
 **Safe edits and command execution**
 
-Loom can read files, search, inspect diagnostics, apply diffs, run foreground
-or background commands, read process output, and stop processes. Write and
-execute tools require approval unless your workspace policy allows them.
+Loom can read files (with `offset`/`limit` for narrow slices of large files),
+search content with regex, locate files by name glob via `find_files`,
+inspect diagnostics, apply diffs, run foreground or background commands,
+read process output, and stop processes. Write and execute tools require
+approval unless your workspace policy allows them.
 
 **Sessions that survive reloads**
 

@@ -22,6 +22,7 @@ export function SubAgentCard({ msg, pendingDiffs, pendingOutputs, onToggleToolEx
         <div className={`subagent-card subagent-${msg.status}`}>
             <button className="subagent-head" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}>
                 <span className={`subagent-pip${running ? " running" : ""}`} />
+                <span className="subagent-tag">Sub-agent</span>
                 <span className="subagent-main">
                     <span className="subagent-title">{msg.type}</span>
                     <span className="subagent-task">{msg.task}</span>

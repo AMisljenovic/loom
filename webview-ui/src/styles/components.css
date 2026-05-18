@@ -1217,17 +1217,28 @@
 /* ---- Sub-agent card ---- */
 .subagent-card {
     border: 1px solid var(--border);
-    border-left: 2px solid var(--accent);
+    border-left: 3px solid var(--accent);
     border-radius: var(--r-3);
     background: var(--surface);
     overflow: hidden;
     font-size: 12.5px;
+    flex-shrink: 0;
+    animation: subagent-enter 220ms var(--ease);
+}
+
+.subagent-card.subagent-running {
+    box-shadow: 0 0 0 1px var(--accent-soft, var(--accent));
+}
+
+@keyframes subagent-enter {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
 }
 
 .subagent-head {
     width: 100%;
     display: grid;
-    grid-template-columns: 10px minmax(0, 1fr) auto 14px;
+    grid-template-columns: 12px auto minmax(0, 1fr) auto 14px;
     align-items: center;
     gap: 8px;
     padding: 8px 10px;
@@ -1238,16 +1249,31 @@
     background: var(--hover);
 }
 
+.subagent-tag {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: var(--accent-soft, var(--surface-strong, var(--surface)));
+    border: 1px solid var(--accent);
+    border-radius: var(--r-2, 3px);
+    padding: 1px 5px;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
 .subagent-pip {
-    width: 7px;
-    height: 7px;
+    width: 9px;
+    height: 9px;
     border-radius: 50%;
     background: var(--ok);
 }
 
 .subagent-pip.running {
     background: var(--accent);
-    animation: pip-pulse 1.5s var(--ease) infinite;
+    box-shadow: 0 0 0 3px var(--accent-soft, transparent);
+    animation: pip-pulse 1.4s var(--ease) infinite;
 }
 
 .subagent-error .subagent-pip {
@@ -1452,6 +1478,68 @@
     text-transform: uppercase;
     letter-spacing: 0.06em;
     white-space: nowrap;
+}
+
+.question-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-faint);
+    margin-bottom: 4px;
+}
+
+.question-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--r-2);
+    color: var(--text-muted);
+    font-size: 11.5px;
+    font-weight: 550;
+    line-height: 1.2;
+    cursor: pointer;
+    outline: none;
+}
+
+.question-tab:hover {
+    color: var(--text);
+    background: var(--bg-soft, rgba(127, 127, 127, 0.08));
+}
+
+.question-tab:focus-visible {
+    border-color: var(--accent-ring);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.question-tab.active {
+    color: var(--text);
+    border-color: var(--border-faint);
+    background: var(--bg-soft, rgba(127, 127, 127, 0.08));
+    box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.question-tab-num {
+    letter-spacing: 0.02em;
+}
+
+.question-tab-dot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1px solid var(--border-faint);
+    color: var(--accent);
+}
+
+.question-tab.done .question-tab-dot {
+    background: var(--accent-soft);
+    border-color: var(--accent-ring);
 }
 
 .question-list {
@@ -3500,16 +3588,31 @@ button.mcp-status:hover { color: var(--text-strong); }
     background: var(--surface);
 }
 
-/* Intent line: a slim italic snippet of the model's own prose between
-   tool calls. No header, no accent bar — meant to feel like a thought. */
+/* Reasoning card: the model's prose between tool calls. Quiet card chrome
+   so it reads as plain text, not as a quote. Matches the SummaryCard rhythm
+   but with a muted (non-accent) header tag. */
 .intent-line {
-    margin: 6px 2px 6px 4px;
-    padding-left: 8px;
-    border-left: 2px solid var(--border-faint);
-    color: var(--text-muted);
-    font-size: 12.5px;
-    font-style: italic;
+    margin: 8px 0;
+    padding: 10px 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-faint);
+    border-radius: var(--r-3);
+    color: var(--text);
+    font-size: 13px;
+    font-style: normal;
     line-height: 1.55;
+    flex-shrink: 0;
+}
+
+.intent-tag {
+    display: inline-flex;
+    align-items: center;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin-bottom: 6px;
 }
 
 .intent-line .markdown-body p {

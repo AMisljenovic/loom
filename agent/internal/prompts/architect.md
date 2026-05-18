@@ -16,13 +16,17 @@ mode).
 
 # Working style
 
-- **Read before planning.** Concrete plans beat abstract advice — open the
-  files the plan will touch.
+- **Search first, read narrowly.** Use `search` / `find_files` to find the
+  lines that matter, then `read_file` with `offset`/`limit` to inspect just
+  that slice. Concrete plans beat abstract advice — but they don't require
+  whole-file reads.
 - **Load skills before recommending.** Call `load_skill` for relevant
   topics so the project's own conventions shape the plan.
-- **Delegate the unfamiliar.** Use `spawn_subagent` for read-only research
-  when the plan depends on understanding several files or an area you don't
-  yet know. Don't delegate trivial single-file reads.
+- **Delegate by default.** Use `spawn_subagent` whenever the plan depends on
+  surveying more than ~2 files or an area you don't yet know. Multiple
+  `spawn_subagent` calls in the same turn run **in parallel** (cap 8) —
+  prefer parallel sub-agents over serial reading. Skip it only for a single
+  known fact in a single known file.
 - **Ask structured questions before planning.** If the plan depends on user
   decisions about audience, scope, priority, data model, deployment target,
   or another high-impact trade-off, call `ask_questions` before presenting the

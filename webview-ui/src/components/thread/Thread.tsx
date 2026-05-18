@@ -21,18 +21,31 @@ interface ThreadProps {
 }
 
 export function Thread({ messages, pendingDiffs, pendingOutputs, busy, onToggleToolExpanded, onContinue, conversationId }: ThreadProps) {
+    const threadRef = useRef<HTMLDivElement>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
+    const stuckRef = useRef(true);
 
     useEffect(() => {
-        const active = document.activeElement;
-        if (active instanceof HTMLElement && active.closest(".tc-mini")) {
-            return;
-        }
-        bottomRef.current?.scrollIntoView({ block: "end" });
+        const el = threadRef.current;
+        if (!el) return;
+        const onScroll = () => {
+            const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+            stuckRef.current = distance < 32;
+        };
+        el.addEventListener("scroll", onScroll, { passive: true });
+        return () => el.removeEventListener("scroll", onScroll);
+    }, []);
+
+    useEffect(() => {
+        if (!stuckRef.current) return;
+        const raf = window.requestAnimationFrame(() => {
+            bottomRef.current?.scrollIntoView({ block: "end" });
+        });
+        return () => window.cancelAnimationFrame(raf);
     }, [messages, pendingOutputs]);
 
     return (
-        <div className="thread" role="log" aria-live="polite">
+        <div className="thread" role="log" aria-live="polite" ref={threadRef}>
             {messages.map((msg, i) => {
                 if (msg.role === "user") {
                     return (
@@ -181,6 +194,7 @@ export function IntentLine({ text, id }: { text: string; id?: string }) {
     const copyText = stripStructuralTags(trimmed);
     return (
         <div className="intent-line">
+            <div className="intent-tag">Reasoning</div>
             <MarkdownMessage text={trimmed} />
             {copyText && (
                 <div className="msg-actions intent-actions">

@@ -8,15 +8,23 @@ requires_approval: false
 Delegate focused read-only research to a fresh sub-agent with isolated
 context.
 
+## Delegate by default for multi-file surveys
+Spawn a sub-agent whenever an answer requires reading more than ~2 files,
+mapping an unfamiliar area, or holding intermediate notes you don't want
+sitting in the parent context. Multiple `spawn_subagent` calls in the same
+turn run **in parallel** (cap 8) — prefer parallel sub-agents over a long
+serial chain of reads.
+
 ## When to use
 - A question requires reading several files or surveying an unfamiliar area
   before you can answer.
-- You want to keep your main context window focused while a side
-  investigation happens.
+- You want to keep your main context window focused while side
+  investigations happen.
 - The investigation is well-scoped enough to brief in a few sentences.
 
 ## When NOT to use
-- For single-file reads or trivial lookups — call the tool directly.
+- For looking up a single known fact in a single known file — call
+  `read_file` directly.
 - For tasks that require writing, running commands, or spawning further
   sub-agents (sub-agents are read-only and cannot nest).
 - For ambiguous goals. A vague `context` produces a vague summary.
@@ -45,9 +53,11 @@ context.
 {
   "type": "research",
   "task": "Locate every place auth tokens are persisted.",
-  "context": "Parent goal: rotate the token-storage encryption. I already know src/auth/ holds the main flow. Find every other place tokens are read or written, including tests.",
+  "context": "Parent goal: rotate token-storage encryption. I know src/auth/ holds the main flow. Find every other place tokens are read or written, including tests.",
   "files": ["src/auth/store.ts"]
 }
 ```
 
-Survey for an auth refactor.
+Two more `spawn_subagent` calls in the same turn — one for "find all callers
+of refreshToken" and one for "summarize how cookies are set" — would run
+concurrently with the above.

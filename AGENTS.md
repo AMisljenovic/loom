@@ -101,6 +101,14 @@ handoff:
     may pre-apply the same parser for responsiveness.
 14. Assistant Markdown rendering stays webview-only and sanitized. Store raw
     message text in session state; render Markdown without raw HTML.
+14b. Read-side tools are search-first. `read_file` accepts optional
+    `offset`/`limit` for narrow slices and soft-caps files over ~256 KB to
+    the first 2000 lines when no `limit` is given. `find_files` (filename
+    glob), `search` (regex content grep), and `list_dir` (single
+    directory) cover the navigation cases. Tool descriptions and the
+    Code/Architect/Ask mode prompts lead with "search first, read
+    narrowly" — preserve that ordering when adding new read-side tools.
+
 15. v0.1.4 sub-agents run in parallel within a turn. Only the built-in
     `research` preset exists, exposed through `spawn_subagent`. Multiple
     spawns emitted in one turn run concurrently through the same errgroup

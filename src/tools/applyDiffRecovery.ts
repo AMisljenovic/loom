@@ -1,7 +1,16 @@
-export function recoverableApplyDiffError(path: string, editNumber: number, reason: string): string {
-  return [
-    `edit ${editNumber}: ${reason}`,
-    "Recovery: call read_file for the same path, then call apply_diff once with oldText set to the full current file contents and newText set to the full desired file contents.",
+export function recoverableApplyDiffError(
+  path: string,
+  editNumber: number,
+  reason: string,
+  matchLines?: number[],
+): string {
+  const lines = [`edit ${editNumber}: ${reason}`];
+  if (matchLines && matchLines.length > 0) {
+    lines.push(`Matches at lines: ${matchLines.join(", ")}.`);
+  }
+  lines.push(
+    "Recovery: use `search` to locate the exact lines, then call `apply_diff` with a range edit {startLine, endLine, newText} for just the changed slice. Do not re-emit the whole file.",
     `Path: ${path}`,
-  ].join("\n");
+  );
+  return lines.join("\n");
 }

@@ -126,9 +126,14 @@ export function upsertTodoMessage(
     items: normalized,
   };
   if (idx < 0) return [...msgs, todoMsg];
-  const next = [...msgs];
-  const existing = next[idx] as Extract<Msg, { role: "todo" }>;
-  next[idx] = { ...todoMsg, title: title || existing.title };
+  const existing = msgs[idx] as Extract<Msg, { role: "todo" }>;
+  const merged: Extract<Msg, { role: "todo" }> = {
+    ...todoMsg,
+    title: title || existing.title,
+  };
+  const next = msgs.slice();
+  next.splice(idx, 1);
+  next.push(merged);
   return next;
 }
 
