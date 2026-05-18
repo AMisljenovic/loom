@@ -84,7 +84,29 @@ descriptions, built-in skills, sub-agent contracts, or project-rule loading.
 
 ## Releasing
 
-Before tagging:
+Versioning and changelog are driven by [Conventional Commits](#commit-style).
+`npm run release` scans commits since the last `v*.*.*` tag, decides the bump
+level (`feat` → minor, `fix`/`perf`/`refactor` → patch, `!` or
+`BREAKING CHANGE:` in the body → major), writes a new `CHANGELOG.md` section,
+and bumps `package.json` + `package-lock.json`. Commits typed `chore`,
+`docs`, `test`, `ci`, `build`, `style` are skipped and do not bump the
+version.
+
+```bash
+npm run release --dry-run   # preview the bump and changelog section
+npm run release             # apply the file changes (does NOT commit or tag)
+```
+
+After running, review the diff, then:
+
+```bash
+git add package.json package-lock.json CHANGELOG.md
+git commit -m "chore: release vX.Y.Z"
+git tag vX.Y.Z
+git push --follow-tags
+```
+
+Before tagging, run:
 
 ```bash
 npm run build
@@ -101,9 +123,13 @@ Verify `dist/` contains exactly one VSIX for each supported target:
 - `linux-x64`
 - `win32-x64`
 
-Tag a commit with `v0.X.Y` and push. The release workflow
-(`.github/workflows/release.yml`) runs the Node packaging path and creates a
-draft GitHub release. Marketplace publish is gated behind manual confirmation.
+`README.md` stays evergreen — do not add per-version "What's New" sections;
+the Marketplace and the in-editor extension page render `CHANGELOG.md` as a
+separate Changelog tab. The release workflow
+(`.github/workflows/release.yml`) packages per-platform VSIX files on tag
+push and creates a draft GitHub release whose body is the matching
+`## <version>` section of `CHANGELOG.md`. Marketplace publish is gated
+behind manual confirmation.
 
 The v1.0 VSIX files are unsigned. Keep the macOS Gatekeeper and Windows
 SmartScreen workaround notes in `TROUBLESHOOTING.md` accurate until signing is

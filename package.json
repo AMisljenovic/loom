@@ -324,6 +324,7 @@
     "test:ts": "vitest run",
     "watch": "node esbuild.config.mjs --watch",
     "package": "node scripts/package.mjs",
+    "release": "node scripts/release.mjs",
     "prepare": "husky"
   },
   "devDependencies": {
