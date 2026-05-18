@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.4.1
+## 0.4.2
 
-Loom 0.4.1 is a navigation, edit-speed, and readability release. The agent
+Loom 0.4.2 is a navigation, edit-speed, and readability release. The agent
 now searches first and reads narrowly, edits large files without rewriting
 them whole, and delegates broader investigations to parallel sub-agents
 that stand out in the transcript.

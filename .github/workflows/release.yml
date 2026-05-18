@@ -37,12 +37,26 @@ jobs:
           name: vsix-packages
           path: dist/*.vsix
 
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            $0 ~ "^## " v "( |$)" { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "No CHANGELOG section found for $version" >&2
+            exit 1
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.vsix
           draft: true
-          generate_release_notes: true
+          body_path: release-notes.md
 
   # publish:
   #   name: Publish to VS Code Marketplace
