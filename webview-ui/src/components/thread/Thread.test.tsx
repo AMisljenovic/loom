@@ -2,7 +2,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Msg } from "../../../../src/shared/protocol";
-import { StopCard, TodoCard } from "./Thread";
+import { nextTurnLimit, StopCard, TodoCard } from "./Thread";
 
 describe("TodoCard", () => {
     it("renders live todo status compactly", () => {
@@ -38,6 +38,7 @@ describe("StopCard", () => {
             reason: "turn_limit",
             canContinue: true,
             continuePrompt: "continue",
+            maxTurns: 32,
         };
 
         const html = renderToStaticMarkup(<StopCard msg={msg} busy={false} onContinue={() => { }} />);
@@ -46,5 +47,31 @@ describe("StopCard", () => {
         expect(html).toContain("Loom reached 32 model/tool turns");
         expect(html).toContain("Continue");
         expect(html).toContain("stop-turn_limit");
+    });
+
+    it("renders the doubled next turn cap on a turn_limit stop", () => {
+        const msg: Extract<Msg, { role: "stop" }> = {
+            role: "stop",
+            title: "Stopped at turn limit",
+            text: "limit",
+            reason: "turn_limit",
+            canContinue: true,
+            maxTurns: 32,
+        };
+        const html = renderToStaticMarkup(<StopCard msg={msg} busy={false} onContinue={() => { }} />);
+        expect(html).toContain("cap 64");
+    });
+
+});
+
+describe("nextTurnLimit", () => {
+    it("doubles a known previous cap", () => {
+        expect(nextTurnLimit(32)).toBe(64);
+        expect(nextTurnLimit(64)).toBe(128);
+        expect(nextTurnLimit(128)).toBe(256);
+    });
+    it("falls back to twice the default when no previous cap is known", () => {
+        expect(nextTurnLimit(undefined)).toBe(64);
+        expect(nextTurnLimit(0)).toBe(64);
     });
 });

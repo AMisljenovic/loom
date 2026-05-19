@@ -68,6 +68,26 @@ func TestPresetFamilyFlipSwapsDirectory(t *testing.T) {
 	}
 }
 
+func TestPresetGeminiFamilyLoadsGeminiAgents(t *testing.T) {
+	root := t.TempDir()
+	writePresetFile(t, root, ".gemini/agents/gem.md", "gem", "Gemini agent", "read_file")
+	writePresetFile(t, root, ".claude/agents/claude.md", "claude", "Claude agent", "read_file")
+
+	reg := LoadPresets(root, "gemini")
+	if _, err := reg.For("gem"); err != nil {
+		t.Fatalf("expected gemini family to load .gemini agent: %v", err)
+	}
+	if _, err := reg.For("claude"); err == nil {
+		t.Fatal("did not expect .claude agent when .gemini contributed")
+	}
+}
+
+func TestIsExternalPresetSource_RecognisesGemini(t *testing.T) {
+	if !isExternalPresetSource(".gemini/agents/foo.md") {
+		t.Fatal("expected .gemini agent path to be external")
+	}
+}
+
 func writePresetFile(t *testing.T, root, rel, name, description, tools string) {
 	t.Helper()
 	full := filepath.Join(root, filepath.FromSlash(rel))

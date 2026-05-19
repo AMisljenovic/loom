@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.5.4
+
+Loom 0.5.4 stops Azure/OpenAI tasks from crashing after long context
+windows, treats Gemini as a first-class provider family for project
+context, keeps the chat scrollbar pinned to the bottom during streaming,
+and lets you double the per-task turn cap each time you press Continue.
+
+### Fixed
+
+- **Azure/OpenAI `messages.[N].role: tool` 400 after long sessions.**
+  When the conversation grew past 75 % of the model window, the
+  `maybeSummarize` compactor could cut the message slice in the middle
+  of a tool batch — leaving the kept tail starting with an orphan
+  `tool` message whose parent `assistant(tool_calls)` had just been
+  folded into the `<summary>` user message. OpenAI/Azure rejected the
+  request shape. The new pure helper `safeCutBoundary`
+  ([agent/internal/loop/summarize.go](agent/internal/loop/summarize.go))
+  walks the proposed cut back so the kept tail never starts with
+  `RoleTool` and the summarized prefix never ends on an
+  `assistant(tool_calls)` whose results live in the tail.
+- **Transcript scrollbar falling behind streaming responses.** The old
+  auto-scroll keyed off `[messages, pendingOutputs]` React commits, so
+  late-rendering markdown / code / images and tool-card output streams
+  grew the content height after the scroll fired and stalled
+  auto-follow once the user-scroll handler tripped past the threshold.
+  `Thread.tsx` now pins to the bottom via a `ResizeObserver` +
+  `MutationObserver` on the thread and its children, and suppresses the
+  user-scroll detector for one event after each programmatic pin so
+  layout shifts can't flip `stuckRef` off mid-stream.
+
+### Added
+
+- **Gemini as a first-class rule / skill / preset family.** Gemini was
+  previously demoted to the universal fallback chain, so `GEMINI.md` and
+  `.gemini/rules/*.md` were ignored whenever any other native file
+  existed. `openaiProvider.Family()` now detects Gemini from the model
+  id (`gemini-*`, including `models/gemini-*`) regardless of which
+  preset routed it, and `agent/internal/rules`, `agent/internal/skills`,
+  and `agent/internal/loop/preset.go` each grew a `gemini` native
+  branch (`GEMINI.md`, `.gemini/rules/`, `.gemini/skills/`,
+  `.gemini/agents/`). Falling back to other providers' files still
+  works when the workspace doesn't ship Gemini-shaped conventions.
+- **Continue doubles the per-task turn cap.** Long tasks still stop
+  after the default 32 model/tool turns, but the stop card's Continue
+  button now resumes with the cap doubled (32 → 64 → 128 → …) instead
+  of restarting at 32. The doubled value is shown next to the button so
+  you can see what you're requesting before you press it.
+  `Msg.maxTurns` rides the stop card through to `submit.maxTurns`,
+  through `TaskStartParams.maxTurns` on the wire, and is read by
+  `Driver.Run` via `StartParams.MaxTurns`. Other stop reasons (error,
+  cancellation) keep the default cap.
+
 ## 0.5.3
 
 Loom 0.5.3 normalises external AI-tool context before the model sees it,

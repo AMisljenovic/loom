@@ -418,11 +418,11 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         this.queuedReferences = undefined;
         this.queuedCommand = undefined;
         if (next) {
-          await this.runTask(next, nextModeId, nextReferences, m.seedTodos, nextCommand);
+          await this.runTask(next, nextModeId, nextReferences, m.seedTodos, nextCommand, m.maxTurns);
         }
         return;
       }
-      await this.runTask(m.prompt, m.modeId, m.references, m.seedTodos, m.command);
+      await this.runTask(m.prompt, m.modeId, m.references, m.seedTodos, m.command, m.maxTurns);
     } else if (m.type === "cancel") {
       this.cancelActiveTask();
     } else if (m.type === "newConversation") {
@@ -566,6 +566,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     references?: ReferenceAttachment[],
     seedTodos?: { title?: string; items: TodoItem[] },
     command?: CommandInvocation,
+    maxTurns?: number,
   ) {
     this.ensureStateShape();
     const taskReferences = normalizeReferenceAttachments(references);
@@ -615,6 +616,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         cwd: workspaceRoot,
         mode: activeMode,
         references: taskReferences,
+        maxTurns: maxTurns && maxTurns > 0 ? maxTurns : undefined,
       });
     } catch (e: unknown) {
       this.activeTaskId = undefined;
@@ -2668,6 +2670,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         durationMs: msg.durationMs,
         canContinue: true,
         continuePrompt,
+        maxTurns: msg.maxTurns,
       };
     }
     if (msg.reason === "cancelled") {

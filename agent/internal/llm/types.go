@@ -107,8 +107,9 @@ func (s SystemPrompt) String() string {
 type Provider interface {
 	Model() string
 	MaxContextTokens() int64
-	// Family identifies the model family ("anthropic" or "openai") so the
-	// rules loader can pick the right rule files (CLAUDE.md vs AGENTS.md).
+	// Family identifies the model family ("anthropic", "openai", or "gemini")
+	// so the rules loader can pick the right convention files (CLAUDE.md vs
+	// AGENTS.md vs GEMINI.md).
 	Family() string
 	Stream(
 		ctx context.Context,

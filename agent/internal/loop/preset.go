@@ -132,6 +132,8 @@ func nativeAgentsDir(family string) string {
 		return ".claude/agents"
 	case "openai":
 		return ".codex/agents"
+	case "gemini":
+		return ".gemini/agents"
 	default:
 		return ""
 	}
@@ -140,11 +142,13 @@ func nativeAgentsDir(family string) string {
 func fallbackAgentsDirs(family string) []string {
 	switch family {
 	case "anthropic":
-		return []string{".codex/agents"}
+		return []string{".codex/agents", ".gemini/agents"}
 	case "openai":
-		return []string{".claude/agents"}
-	default:
+		return []string{".claude/agents", ".gemini/agents"}
+	case "gemini":
 		return []string{".claude/agents", ".codex/agents"}
+	default:
+		return []string{".claude/agents", ".codex/agents", ".gemini/agents"}
 	}
 }
 
@@ -223,7 +227,9 @@ func splitMarkdownFrontmatter(text string) (frontMatter, body string, ok bool) {
 }
 
 func isExternalPresetSource(source string) bool {
-	return strings.HasPrefix(source, ".claude/") || strings.HasPrefix(source, ".codex/")
+	return strings.HasPrefix(source, ".claude/") ||
+		strings.HasPrefix(source, ".codex/") ||
+		strings.HasPrefix(source, ".gemini/")
 }
 
 func researchPreset() (Preset, error) {

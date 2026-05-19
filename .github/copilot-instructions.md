@@ -140,19 +140,36 @@ newline-delimited JSON-RPC over stdio.
     `npm run build` when the extension surface is touched).
 19. Project rules are auto-loaded by `agent/internal/rules/` and frozen at task
     start. `.loomrules` is always loaded first and declared top-precedence in
-    the prompt envelope. Provider-native files are loaded next (CLAUDE.md +
+    the prompt envelope. Provider-native files are loaded next: CLAUDE.md +
     `.claude/rules/*.md` for Anthropic, AGENTS.md + `.codex/rules/*.md` for
-    OpenAI). When the provider's native files are absent, a universal
-    fallback chain picks up the opposite provider's files, then
-    `.github/copilot-instructions.md`, `.github/instructions/*.md`,
-    `GEMINI.md`, `.gemini/rules/*.md`, `.cursor/rules/*.md`, and
-    `.cursorrules`, so Loom respects whatever convention the workspace
-    already uses. The whole bundle is capped at 32 KB, deduped by content
-    hash, and lives in the volatile tail of the system prompt.
+    OpenAI, GEMINI.md + `.gemini/rules/*.md` for Gemini. Gemini family is
+    detected from the model id (`gemini*`, including `models/gemini-*`)
+    regardless of which provider preset routed it. When the provider's
+    native files are absent, a universal fallback chain picks up the other
+    providers' files, then `.github/copilot-instructions.md`,
+    `.github/instructions/*.md`, `.cursor/rules/*.md`, and `.cursorrules`,
+    so Loom respects whatever convention the workspace already uses. The
+    whole bundle is capped at 32 KB, deduped by content hash, and lives in
+    the volatile tail of the system prompt.
 20. Skills, sub-agents, and commands are imported by provider family:
-    Anthropic uses `.claude/<kind>/`; OpenAI, OpenAI-compatible, and local use
-    `.codex/<kind>/`; the opposite family is fallback-only. Loom-native
-    entries win (`.loom/<kind>/` over builtins, builtins over external).
+    Anthropic uses `.claude/<kind>/`; OpenAI, OpenAI-compatible, and local
+    use `.codex/<kind>/`; Gemini uses `.gemini/<kind>/`. The other family
+    folders are fallback-only. Loom-native entries win (`.loom/<kind>/`
+    over builtins, builtins over external).
+21. `agent/internal/loop/maybeSummarize` never cuts mid-tool-batch.
+    `safeCutBoundary` walks the proposed cut back so the kept tail never
+    starts with `RoleTool` and the summarized prefix never ends on an
+    `assistant(tool_calls)` whose results live in the tail. OpenAI/Azure
+    rejects either shape.
+22. Default turn cap is 32. Continue on a `turn_limit` stop doubles it
+    (32 → 64 → 128 → …) via `Msg.maxTurns` on the stop card →
+    `submit.maxTurns` → `TaskStartParams.maxTurns` → `StartParams.MaxTurns`
+    in `Driver.Run`. Other stop reasons resume at the default.
+23. Transcript auto-follow in `Thread.tsx` uses a `ResizeObserver` +
+    `MutationObserver` to pin scrollTop on every container/child growth
+    while the user is within 32 px of the bottom. The user-scroll
+    detector is suppressed for one event after each programmatic pin so
+    streaming layout shifts can't stall auto-follow.
 
 ## Pre-commit hook
 

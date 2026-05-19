@@ -97,6 +97,10 @@ export interface TaskStartParams {
   cwd: string;
   mode?: ModeDefinition;
   references?: ReferenceAttachment[];
+  // Optional per-task override of the default model/tool turn cap (32).
+  // Set when the webview resumes a turn_limit-stopped task via Continue so
+  // each resume doubles the budget (32 → 64 → 128 → …).
+  maxTurns?: number;
 }
 
 export interface MessageDelta {
@@ -416,6 +420,9 @@ export type Msg =
     durationMs?: number;
     canContinue: boolean;
     continuePrompt?: string;
+    // For turn_limit stops, the cap the task hit. Continue uses this to
+    // request twice the budget on resume; absent on other stop reasons.
+    maxTurns?: number;
   }
   | {
     role: "tool";
@@ -505,7 +512,7 @@ export interface CommandCatalogueEntry {
 
 export type WebviewToHost =
   | { type: "ready" }
-  | { type: "submit"; prompt: string; modeId?: string; references?: ReferenceAttachment[]; seedTodos?: { title?: string; items: TodoItem[] }; command?: CommandInvocation }
+  | { type: "submit"; prompt: string; modeId?: string; references?: ReferenceAttachment[]; seedTodos?: { title?: string; items: TodoItem[] }; command?: CommandInvocation; maxTurns?: number }
   | { type: "cancel" }
   | { type: "pickReferences"; existing?: ReferenceAttachment[] }
   | { type: "referenceSearch"; requestId: string; query: string; existing?: ReferenceAttachment[] }

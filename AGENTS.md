@@ -179,22 +179,46 @@ handoff:
     provider credentials are available.
 18. Project rules are auto-loaded by `agent/internal/rules/` and frozen at task
     start. `.loomrules` is always loaded first and declared top-precedence in
-    the prompt envelope. Provider-native files come next (CLAUDE.md +
+    the prompt envelope. Provider-native files come next: CLAUDE.md +
     `.claude/rules/*.md` for Anthropic, AGENTS.md + `.codex/rules/*.md` for
-    OpenAI). When the provider's native files are absent, a universal
-    fallback chain picks up the opposite provider's files, then
+    OpenAI, GEMINI.md + `.gemini/rules/*.md` for Gemini. Gemini family is
+    detected from the model id (any model whose name starts with `gemini`,
+    including `models/gemini-*`) regardless of which provider preset routed
+    it. When the provider's native files are absent, a universal fallback
+    chain picks up the other providers' files, then
     `.github/copilot-instructions.md`, `.github/instructions/*.md`,
-    `GEMINI.md`, `.gemini/rules/*.md`, `.cursor/rules/*.md`, and
-    `.cursorrules`, so Loom respects whichever convention the workspace
-    already uses. The bundle is capped at 32 KB, deduped by content hash,
-    and lives in the volatile tail of the system prompt.
+    `.cursor/rules/*.md`, and `.cursorrules`, so Loom respects whichever
+    convention the workspace already uses. The bundle is capped at 32 KB,
+    deduped by content hash, and lives in the volatile tail of the system
+    prompt.
 19. Skills, sub-agents, and commands are auto-imported with the same
     provider-family convention. Loom-native config (`builtin` plus
     `.loom/<kind>/`) wins; `.loom/<kind>/` overrides builtins, builtins
     override external entries, and external entries are additive only.
     Anthropic loads `.claude/<kind>/`; OpenAI, OpenAI-compatible, and local
-    providers load `.codex/<kind>/`. The opposite provider folder is consulted
-    only when the family-native folder contributes zero entries.
+    providers load `.codex/<kind>/`; Gemini loads `.gemini/<kind>/`. The
+    other providers' folders are consulted only when the family-native
+    folder contributes zero entries.
+20. `agent/internal/loop/maybeSummarize` must never cut mid-tool-batch.
+    `safeCutBoundary` (`agent/internal/loop/summarize.go`) walks the cut
+    back so the kept tail never begins with `RoleTool` and the summarized
+    prefix never ends on an `assistant(tool_calls)` whose results live in
+    the tail. OpenAI/Azure rejects either shape with
+    `messages.[N].role: tool must be a response to a preceding message with
+    tool_calls`.
+21. Default per-task model/tool turn cap is 32 (`loop.go`). Continue on a
+    `turn_limit` stop doubles the cap (32 → 64 → 128 → …): the stop card
+    carries `maxTurns`, the Continue button posts `submit` with `maxTurns`
+    doubled, the host forwards it via `TaskStartParams.maxTurns`, and
+    `Driver.Run` reads it through `StartParams.MaxTurns`. Non-turn-limit
+    stops (`error`, `cancelled`) omit `maxTurns` and resume at the
+    default.
+22. Transcript auto-follow lives in `Thread.tsx` and uses a
+    `ResizeObserver` + `MutationObserver` to pin scrollTop whenever the
+    container or any child grows, while the user is within 32 px of the
+    bottom. The user-scroll detector is suppressed for one event after
+    each programmatic pin so streaming layout shifts don't flip
+    `stuckRef` off mid-conversation.
 
 ## Pre-commit hook
 

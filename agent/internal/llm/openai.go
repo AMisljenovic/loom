@@ -104,7 +104,13 @@ func isAzureOpenAIBaseURL(raw string) bool {
 		strings.HasSuffix(host, ".cognitiveservices.azure.com")
 }
 
-func (p *openaiProvider) Family() string { return "openai" }
+func (p *openaiProvider) Family() string {
+	m := strings.ToLower(strings.TrimPrefix(p.model, "models/"))
+	if strings.HasPrefix(m, "gemini") {
+		return "gemini"
+	}
+	return "openai"
+}
 
 func (p *openaiProvider) Stream(
 	ctx context.Context,

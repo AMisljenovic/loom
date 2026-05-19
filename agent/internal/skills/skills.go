@@ -5,7 +5,8 @@
 //
 //   - builtin/*.md, embedded via embed.FS
 //   - <workspace>/.loom/skills/<id>/SKILL.md
-//   - <workspace>/.claude/skills/<id>/SKILL.md or .codex/skills/<id>/SKILL.md
+//   - <workspace>/.claude/skills/<id>/SKILL.md, .codex/skills/<id>/SKILL.md,
+//     or .gemini/skills/<id>/SKILL.md
 //
 // Loom-native entries win over external entries. Workspace .loom skills win
 // over builtins, preserving the existing user override behavior.
@@ -143,6 +144,8 @@ func nativeSkillsDir(family string) string {
 		return ".claude/skills"
 	case "openai":
 		return ".codex/skills"
+	case "gemini":
+		return ".gemini/skills"
 	default:
 		return ""
 	}
@@ -151,11 +154,13 @@ func nativeSkillsDir(family string) string {
 func fallbackSkillsDirs(family string) []string {
 	switch family {
 	case "anthropic":
-		return []string{".codex/skills"}
+		return []string{".codex/skills", ".gemini/skills"}
 	case "openai":
-		return []string{".claude/skills"}
-	default:
+		return []string{".claude/skills", ".gemini/skills"}
+	case "gemini":
 		return []string{".claude/skills", ".codex/skills"}
+	default:
+		return []string{".claude/skills", ".codex/skills", ".gemini/skills"}
 	}
 }
 
@@ -195,7 +200,9 @@ func (c Catalogue) HasExternal() bool {
 
 // IsExternalSource reports whether source belongs to a non-Loom convention.
 func IsExternalSource(source string) bool {
-	return strings.HasPrefix(source, ".claude/") || strings.HasPrefix(source, ".codex/")
+	return strings.HasPrefix(source, ".claude/") ||
+		strings.HasPrefix(source, ".codex/") ||
+		strings.HasPrefix(source, ".gemini/")
 }
 
 // RenderLoaded returns the concatenated bodies of the given skill ids (in

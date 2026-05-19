@@ -60,10 +60,14 @@ type StartParams struct {
 	CWD            string          `json:"cwd"`
 	Mode           *ModeDefinition `json:"mode,omitempty"`
 	References     []Reference     `json:"references,omitempty"`
+	// MaxTurns optionally overrides the default per-task model/tool turn
+	// cap (32). Used when the webview clicks Continue on a turn_limit stop
+	// to double the budget for the resumed task. Zero means "use default".
+	MaxTurns int `json:"maxTurns,omitempty"`
 }
 
 func (d *Driver) Run(ctx context.Context, p StartParams) error {
-	return d.run(ctx, p, runOptions{})
+	return d.run(ctx, p, runOptions{MaxTurns: p.MaxTurns})
 }
 
 type runOptions struct {
@@ -277,9 +281,7 @@ func (d *Driver) maybeSummarize(ctx context.Context, taskID, conversationID, sys
 	if keepFrom := len(entry.Messages) - 4; cut > keepFrom {
 		cut = keepFrom
 	}
-	for cut > 0 && entry.Messages[cut-1].Role == llm.RoleAssistant && len(entry.Messages[cut-1].ToolCalls) > 0 {
-		cut--
-	}
+	cut = safeCutBoundary(entry.Messages, cut)
 	if cut <= 0 {
 		return nil
 	}

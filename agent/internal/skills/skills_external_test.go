@@ -61,6 +61,37 @@ func TestMalformedExternalSkillSkipped(t *testing.T) {
 	}
 }
 
+func TestGeminiFamilyLoadsGeminiSkills(t *testing.T) {
+	root := t.TempDir()
+	writeSkillFile(t, root, ".gemini/skills/gem/SKILL.md", "gem-skill", "Gemini skill")
+	writeSkillFile(t, root, ".claude/skills/claude/SKILL.md", "claude-skill", "Claude skill")
+
+	cat := Load(root, "gemini")
+	if _, ok := cat.Skills["gem-skill"]; !ok {
+		t.Fatalf("expected gemini family to load .gemini skill, got %v", cat.Skills)
+	}
+	if _, ok := cat.Skills["claude-skill"]; ok {
+		t.Fatal("did not expect .claude skill when .gemini contributed")
+	}
+}
+
+func TestGeminiSkillRendersOriginAttr(t *testing.T) {
+	root := t.TempDir()
+	writeSkillFile(t, root, ".gemini/skills/foo/SKILL.md", "foo", "Gemini foo")
+
+	cat := Load(root, "gemini")
+	out := cat.RenderLoaded([]string{"foo"})
+	if !contains(out, `<skill id="foo" origin="gemini">`) {
+		t.Fatalf("expected origin=\"gemini\" on rendered skill, got:\n%s", out)
+	}
+}
+
+func TestIsExternalSource_RecognisesGemini(t *testing.T) {
+	if !IsExternalSource(".gemini/skills/foo/SKILL.md") {
+		t.Fatal("expected .gemini path to be recognised as external")
+	}
+}
+
 func TestExternalSkillFallbackOnlyWhenNativeEmpty(t *testing.T) {
 	root := t.TempDir()
 	writeSkillFile(t, root, ".codex/skills/codex/SKILL.md", "codex-skill", "Codex fallback")

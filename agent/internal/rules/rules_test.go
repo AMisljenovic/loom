@@ -99,8 +99,56 @@ func TestLoad_OppositeProviderUsedAsFallback(t *testing.T) {
 	}
 }
 
+func TestLoad_GeminiNativePresent_FallbackSuppressed(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "GEMINI.md", "gemini rules body")
+	writeFile(t, dir, "CLAUDE.md", "claude rules body")
+	writeFile(t, dir, "AGENTS.md", "agents rules body")
+	writeFile(t, dir, ".github/copilot-instructions.md", "copilot body")
+
+	b := Load(dir, "gemini")
+
+	if !containsExact(b.Sources, "GEMINI.md") {
+		t.Fatalf("expected GEMINI.md in sources under gemini family, got %v", b.Sources)
+	}
+	for _, forbidden := range []string{"CLAUDE.md", "AGENTS.md", ".github/copilot-instructions.md"} {
+		if containsExact(b.Sources, forbidden) {
+			t.Fatalf("fallback should be suppressed when GEMINI.md present; got %s in sources %v", forbidden, b.Sources)
+		}
+	}
+}
+
+func TestLoad_GeminiFallbackPullsClaudeAndAgents(t *testing.T) {
+	// Gemini family but no GEMINI.md — the other providers' files come first
+	// in the fallback chain.
+	dir := t.TempDir()
+	writeFile(t, dir, "CLAUDE.md", "claude body")
+	writeFile(t, dir, "AGENTS.md", "agents body")
+
+	b := Load(dir, "gemini")
+	for _, want := range []string{"CLAUDE.md", "AGENTS.md"} {
+		if !containsExact(b.Sources, want) {
+			t.Fatalf("expected %s in fallback for gemini, got %v", want, b.Sources)
+		}
+	}
+}
+
+func TestLoad_GeminiRulesDirCountsAsNative(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".gemini/rules/style.md", "gemini style rules")
+	writeFile(t, dir, "CLAUDE.md", "claude body")
+
+	b := Load(dir, "gemini")
+	if !containsExact(b.Sources, ".gemini/rules/style.md") {
+		t.Fatalf("expected .gemini/rules entry, got %v", b.Sources)
+	}
+	if containsExact(b.Sources, "CLAUDE.md") {
+		t.Fatalf("fallback should be suppressed when .gemini/rules contributed; got %v", b.Sources)
+	}
+}
+
 func TestLoad_LoomrulesAlwaysFirst(t *testing.T) {
-	for _, family := range []string{"anthropic", "openai", "unknown"} {
+	for _, family := range []string{"anthropic", "openai", "gemini", "unknown"} {
 		t.Run(family, func(t *testing.T) {
 			dir := t.TempDir()
 			writeFile(t, dir, ".loomrules", "loom rules")

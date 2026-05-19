@@ -89,6 +89,13 @@ The first-run panel is global, not per workspace. Pick a provider once, store
 API keys in VS Code SecretStorage, tune model settings, and override per
 workspace only when needed.
 
+**Doubling Continue**
+
+Long-running tasks stop after 32 model/tool turns by default. The stop card's
+Continue button raises the cap each time you press it (32 → 64 → 128 → …), so
+you can resume without losing conversation state. Other stop reasons (errors,
+cancellations) keep the default cap when resumed.
+
 ## Install
 
 Loom Code is currently distributed as per-platform VSIX packages from GitHub
@@ -125,17 +132,19 @@ machine IDs.
 
 ## Project Instructions
 
-Loom automatically loads `.loomrules` first, then provider-native files such as
-`CLAUDE.md` or `AGENTS.md`. When those are absent, it falls back to common
-workspace conventions such as `.github/copilot-instructions.md`,
-`GEMINI.md`, `.cursor/rules/*.md`, and `.cursorrules`.
+Loom automatically loads `.loomrules` first, then provider-native files:
+`CLAUDE.md` for Anthropic, `AGENTS.md` for OpenAI/OpenAI-compatible/local,
+and `GEMINI.md` for Gemini (detected from the model id, e.g. `gemini-2.5-pro`).
+When those are absent, it falls back to common workspace conventions such as
+`.github/copilot-instructions.md`, `.cursor/rules/*.md`, and `.cursorrules`,
+plus the other providers' native files.
 
 Skills, sub-agent presets, and slash commands are imported with the same
 provider-family idea. Anthropic loads `.claude/<kind>/`; OpenAI,
-OpenAI-compatible, and local providers load `.codex/<kind>/`; the opposite
-family is used only when the native folder is empty. Precedence is:
-`.loom/<kind>/` wins over Loom builtins, Loom builtins win over external
-entries, and external entries are additive only.
+OpenAI-compatible, and local providers load `.codex/<kind>/`; Gemini loads
+`.gemini/<kind>/`; the other families are used only when the native folder
+is empty. Precedence: `.loom/<kind>/` wins over Loom builtins, Loom builtins
+win over external entries, and external entries are additive only.
 
 See [docs/loomrules.md](docs/loomrules.md) for precedence, size limits, and
 examples.

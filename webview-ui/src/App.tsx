@@ -170,6 +170,7 @@ export function taskStopMessage(input: {
       durationMs: input.durationMs,
       canContinue: true,
       continuePrompt: baseContinue,
+      maxTurns: input.maxTurns,
     };
   }
   if (input.reason === "cancelled") {
@@ -811,13 +812,18 @@ export function App() {
     setBusy(true);
   };
 
-  const continueStoppedTask = (prompt: string) => {
+  const continueStoppedTask = (prompt: string, nextMaxTurns?: number) => {
     if (busy) return;
     const nextPrompt = prompt.trim() || "Continue from where you stopped.";
     setMessages((m) => [...m, { role: "user", text: nextPrompt }]);
     setShowSessions(false);
     setPlanHandoffArmed(false);
-    post({ type: "submit", prompt: nextPrompt, modeId: currentModeId });
+    post({
+      type: "submit",
+      prompt: nextPrompt,
+      modeId: currentModeId,
+      maxTurns: nextMaxTurns,
+    });
     setBusy(true);
   };
 

@@ -1,13 +1,13 @@
 // Package rules loads provider-aware project rule files (.loomrules,
-// CLAUDE.md/.claude/, AGENTS.md/.codex/) and produces a single bundle the
-// agent system prompt can include. When the provider's native convention
-// files are absent, a universal fallback chain picks up other common
-// conventions (Copilot, Gemini, Cursor, plus the opposite provider's files)
-// so Loom respects whatever convention the workspace already uses. Each
-// included file is normalised (frontmatter stripped, redundant H1s dropped)
-// and wrapped in a per-file <rule source origin> block; the whole body is
-// then wrapped in a stable <rules sources origins precedence> envelope and
-// capped at MaxBundleBytes so it cannot dominate the prompt.
+// CLAUDE.md/.claude/, AGENTS.md/.codex/, GEMINI.md/.gemini/) and produces a
+// single bundle the agent system prompt can include. When the provider's
+// native convention files are absent, a universal fallback chain picks up
+// other common conventions (Copilot, Cursor, plus the other providers'
+// files) so Loom respects whatever convention the workspace already uses.
+// Each included file is normalised (frontmatter stripped, redundant H1s
+// dropped) and wrapped in a per-file <rule source origin> block; the whole
+// body is then wrapped in a stable <rules sources origins precedence>
+// envelope and capped at MaxBundleBytes so it cannot dominate the prompt.
 package rules
 
 import (
@@ -35,19 +35,19 @@ type Bundle struct {
 }
 
 // Load reads the rule files appropriate for the LLM family and returns the
-// concatenated bundle. family is "anthropic" or "openai" (other values fall
-// through to the universal fallback chain after .loomrules).
+// concatenated bundle. family is "anthropic", "openai", or "gemini" (other
+// values fall through to the universal fallback chain after .loomrules).
 //
 // Load order (concatenated in this order, duplicates by normalised content
 // hash skipped):
 //  1. .loomrules                                       (always; top precedence)
 //  2. Provider-native:
-//     anthropic: CLAUDE.md, then .claude/rules/*.md (sorted)
-//     openai:    AGENTS.md, then .codex/rules/*.md  (sorted)
+//     anthropic: CLAUDE.md,  then .claude/rules/*.md (sorted)
+//     openai:    AGENTS.md,  then .codex/rules/*.md  (sorted)
+//     gemini:    GEMINI.md,  then .gemini/rules/*.md (sorted)
 //  3. Universal fallback — appended only if step 2 contributed zero files:
-//     the other provider's native files, then
+//     the other providers' native files, then
 //     .github/copilot-instructions.md, .github/instructions/*.md,
-//     GEMINI.md, .gemini/rules/*.md,
 //     .cursor/rules/*.md, .cursorrules
 func Load(workspaceRoot, family string) Bundle {
 	if workspaceRoot == "" {
@@ -167,32 +167,45 @@ func nativeCandidates(workspaceRoot, family string) []string {
 		out := []string{"AGENTS.md"}
 		out = append(out, globMarkdown(workspaceRoot, ".codex/rules")...)
 		return out
+	case "gemini":
+		out := []string{"GEMINI.md"}
+		out = append(out, globMarkdown(workspaceRoot, ".gemini/rules")...)
+		return out
 	}
 	return nil
 }
 
 // fallbackCandidates returns the universal chain to try when the provider's
-// own files are absent. The opposite provider's files come first so a user
-// who only has AGENTS.md still gets it under Anthropic (and vice versa).
+// own files are absent. The other providers' files come first so a user with
+// only AGENTS.md still gets it under Anthropic (and vice versa).
 func fallbackCandidates(workspaceRoot, family string) []string {
 	var out []string
 	switch family {
 	case "anthropic":
 		out = append(out, "AGENTS.md")
 		out = append(out, globMarkdown(workspaceRoot, ".codex/rules")...)
+		out = append(out, "GEMINI.md")
+		out = append(out, globMarkdown(workspaceRoot, ".gemini/rules")...)
 	case "openai":
 		out = append(out, "CLAUDE.md")
 		out = append(out, globMarkdown(workspaceRoot, ".claude/rules")...)
+		out = append(out, "GEMINI.md")
+		out = append(out, globMarkdown(workspaceRoot, ".gemini/rules")...)
+	case "gemini":
+		out = append(out, "CLAUDE.md")
+		out = append(out, globMarkdown(workspaceRoot, ".claude/rules")...)
+		out = append(out, "AGENTS.md")
+		out = append(out, globMarkdown(workspaceRoot, ".codex/rules")...)
 	default:
 		out = append(out, "CLAUDE.md")
 		out = append(out, globMarkdown(workspaceRoot, ".claude/rules")...)
 		out = append(out, "AGENTS.md")
 		out = append(out, globMarkdown(workspaceRoot, ".codex/rules")...)
+		out = append(out, "GEMINI.md")
+		out = append(out, globMarkdown(workspaceRoot, ".gemini/rules")...)
 	}
 	out = append(out, ".github/copilot-instructions.md")
 	out = append(out, globMarkdown(workspaceRoot, ".github/instructions")...)
-	out = append(out, "GEMINI.md")
-	out = append(out, globMarkdown(workspaceRoot, ".gemini/rules")...)
 	out = append(out, globMarkdown(workspaceRoot, ".cursor/rules")...)
 	out = append(out, ".cursorrules")
 	return out

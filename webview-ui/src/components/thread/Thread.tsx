@@ -16,19 +16,37 @@ interface ThreadProps {
     pendingOutputs: Map<string, string>;
     busy: boolean;
     onToggleToolExpanded: (callId: string) => void;
-    onContinue: (prompt: string) => void;
+    onContinue: (prompt: string, nextMaxTurns?: number) => void;
     conversationId?: string;
+}
+
+// Default per-task turn cap mirrored from the Go loop. Each Continue press
+// after a turn_limit stop doubles this value (32 → 64 → 128 → …) so users
+// can ride out long tasks without rebuilding context.
+const DEFAULT_TURN_LIMIT = 32;
+
+export function nextTurnLimit(previous: number | undefined): number {
+    const base = typeof previous === "number" && previous > 0 ? previous : DEFAULT_TURN_LIMIT;
+    return base * 2;
 }
 
 export function Thread({ messages, pendingDiffs, pendingOutputs, busy, onToggleToolExpanded, onContinue, conversationId }: ThreadProps) {
     const threadRef = useRef<HTMLDivElement>(null);
-    const bottomRef = useRef<HTMLDivElement>(null);
     const stuckRef = useRef(true);
+    // Suppress the user-scroll detector for one scroll event whenever we
+    // programmatically pin to the bottom. Otherwise the layout shift caused
+    // by streaming content can briefly push scrollTop past the threshold and
+    // flip stuckRef to false, after which auto-follow stops mid-conversation.
+    const programmaticRef = useRef(false);
 
     useEffect(() => {
         const el = threadRef.current;
         if (!el) return;
         const onScroll = () => {
+            if (programmaticRef.current) {
+                programmaticRef.current = false;
+                return;
+            }
             const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
             stuckRef.current = distance < 32;
         };
@@ -36,13 +54,46 @@ export function Thread({ messages, pendingDiffs, pendingOutputs, busy, onToggleT
         return () => el.removeEventListener("scroll", onScroll);
     }, []);
 
+    // Pin to bottom on every content size change (text deltas, markdown
+    // rendering late, code blocks measuring, images loading, tool cards
+    // populating) while the user is still stuck at the bottom. Using
+    // ResizeObserver covers growth that lands after React commit, which the
+    // old [messages, pendingOutputs] effect missed and which caused the
+    // scrollbar to fall behind streaming responses.
     useEffect(() => {
-        if (!stuckRef.current) return;
-        const raf = window.requestAnimationFrame(() => {
-            bottomRef.current?.scrollIntoView({ block: "end" });
+        const el = threadRef.current;
+        if (!el || typeof ResizeObserver === "undefined") return;
+        let raf = 0;
+        const pin = () => {
+            if (!stuckRef.current) return;
+            cancelAnimationFrame(raf);
+            raf = requestAnimationFrame(() => {
+                if (!stuckRef.current) return;
+                programmaticRef.current = true;
+                el.scrollTop = el.scrollHeight;
+            });
+        };
+        const ro = new ResizeObserver(pin);
+        ro.observe(el);
+        for (const child of Array.from(el.children) as Element[]) {
+            ro.observe(child);
+        }
+        const mo = new MutationObserver((muts) => {
+            for (const m of muts) {
+                m.addedNodes.forEach((n) => {
+                    if (n instanceof Element) ro.observe(n);
+                });
+            }
+            pin();
         });
-        return () => window.cancelAnimationFrame(raf);
-    }, [messages, pendingOutputs]);
+        mo.observe(el, { childList: true });
+        pin();
+        return () => {
+            cancelAnimationFrame(raf);
+            ro.disconnect();
+            mo.disconnect();
+        };
+    }, []);
 
     return (
         <div className="thread" role="log" aria-live="polite" ref={threadRef}>
@@ -140,7 +191,6 @@ export function Thread({ messages, pendingDiffs, pendingOutputs, busy, onToggleT
                 }
                 return null;
             })}
-            <div ref={bottomRef} />
         </div>
     );
 }
@@ -152,8 +202,10 @@ export function StopCard({
 }: {
     msg: Extract<Msg, { role: "stop" }>;
     busy: boolean;
-    onContinue: (prompt: string) => void;
+    onContinue: (prompt: string, nextMaxTurns?: number) => void;
 }) {
+    const isTurnLimit = msg.reason === "turn_limit";
+    const doubled = isTurnLimit ? nextTurnLimit(msg.maxTurns) : undefined;
     return (
         <div className={`stop-card stop-${msg.reason}`} role="status">
             <div className="stop-head">
@@ -166,9 +218,20 @@ export function StopCard({
                     <button
                         className="btn btn-primary btn-sm stop-continue"
                         disabled={busy}
-                        onClick={() => onContinue(msg.continuePrompt || "Continue from where you stopped.")}
+                        onClick={() =>
+                            onContinue(
+                                msg.continuePrompt || "Continue from where you stopped.",
+                                doubled,
+                            )
+                        }
+                        title={
+                            doubled
+                                ? `Resume with the turn cap raised to ${doubled}`
+                                : undefined
+                        }
                     >
                         <Ico.Send size={12} /> Continue
+                        {doubled && <span className="stop-continue-hint"> · cap {doubled}</span>}
                     </button>
                 )}
                 <CopyButton text={msg.text} />

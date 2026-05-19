@@ -181,6 +181,14 @@ describe("stop messages", () => {
     });
     expect(msg.text).toContain("32 model/tool turns");
     expect(msg.text).toContain("2m 5s");
+    expect(msg).toMatchObject({ maxTurns: 32 });
+  });
+
+  it("omits maxTurns on non-turn-limit stop messages", () => {
+    const cancelled = taskStopMessage({ taskId: "task-1", reason: "cancelled" });
+    expect(cancelled.maxTurns).toBeUndefined();
+    const errored = taskStopMessage({ taskId: "task-1", reason: "error", error: "boom" });
+    expect(errored.maxTurns).toBeUndefined();
   });
 
   it("updates an existing stop card in place by task id", () => {

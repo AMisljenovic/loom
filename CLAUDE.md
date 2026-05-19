@@ -53,17 +53,21 @@ change to a message type must be made on both sides.
   prefix — it will break the cache.
 - **Rules are auto-loaded, provider-aware, task-frozen.**
   `agent/internal/rules/` reads `.loomrules` always, plus `CLAUDE.md` +
-  `.claude/rules/*.md` for Anthropic or `AGENTS.md` + `.codex/rules/*.md`
-  for OpenAI. When the provider's native files are absent, a universal
-  fallback chain picks up the opposite provider's files, then
+  `.claude/rules/*.md` for Anthropic, `AGENTS.md` + `.codex/rules/*.md`
+  for OpenAI, or `GEMINI.md` + `.gemini/rules/*.md` for Gemini. Gemini
+  family is detected from the model id by `openaiProvider.Family()` — any
+  model whose name starts with `gemini` (including `models/gemini-*`)
+  routes to the gemini family regardless of which UI preset created the
+  config. When the provider's native files are absent, a universal
+  fallback chain picks up the other providers' files, then
   `.github/copilot-instructions.md`, `.github/instructions/*.md`,
-  `GEMINI.md`, `.gemini/rules/*.md`, `.cursor/rules/*.md`, and
-  `.cursorrules` — so Loom respects whatever convention the workspace
-  already uses without forcing duplication. `.loomrules` is always loaded
-  first and the envelope advertises it as top precedence on conflict. The
-  bundle hash is captured on the conversation `Entry` at task start;
-  mid-task file edits do not invalidate the running cache. Provider family
-  is reported by `llm.Provider.Family()`.
+  `.cursor/rules/*.md`, and `.cursorrules` — so Loom respects whatever
+  convention the workspace already uses without forcing duplication.
+  `.loomrules` is always loaded first and the envelope advertises it as
+  top precedence on conflict. The bundle hash is captured on the
+  conversation `Entry` at task start; mid-task file edits do not
+  invalidate the running cache. Provider family is reported by
+  `llm.Provider.Family()`.
 - **External context is normalised in-memory.** `agent/internal/normalize/`
   detects the origin of each rule/skill/preset file (`loom`, `claude`,
   `codex`, `copilot`, `cursor`, `gemini`) and applies deterministic,
@@ -91,12 +95,12 @@ change to a message type must be made on both sides.
 - **Skills, sub-agents, and commands import external conventions.**
   Provider family comes from `llm.Provider.Family()` in Go and from the active
   `loom.provider` in the TS host. Anthropic loads `.claude/<kind>/`; OpenAI,
-  OpenAI-compatible, and local providers load `.codex/<kind>/`. The opposite
-  provider folder is a fallback only when the family-native folder contributes
-  zero entries. Loom-native config wins: `.loom/<kind>/` overrides builtins,
-  builtins override external entries, and external entries are additive only.
-  Imported sub-agent presets trust their `tools:` field as written; write tools
-  still flow through normal approval.
+  OpenAI-compatible, and local providers load `.codex/<kind>/`; Gemini loads
+  `.gemini/<kind>/`. The other family folders are fallbacks only when the
+  family-native folder contributes zero entries. Loom-native config wins:
+  `.loom/<kind>/` overrides builtins, builtins override external entries, and
+  external entries are additive only. Imported sub-agent presets trust their
+  `tools:` field as written; write tools still flow through normal approval.
 - **Search-first, read narrowly.** `read_file` accepts optional
   `offset`/`limit` (1-based line window) and soft-caps files over ~256 KB
   to the first 2000 lines when no `limit` is given — the header line
@@ -200,6 +204,23 @@ change to a message type must be made on both sides.
   tests in `webview-ui/src/components/thread/ToolCardMinimal.test.tsx` and
   `webview-ui/src/styles/components.test.ts` updated with transcript UI
   changes.
+- **Transcript auto-follow uses a ResizeObserver, not a length effect.**
+  `Thread.tsx` watches the thread container and its children with a
+  ResizeObserver + MutationObserver and pins `scrollTop = scrollHeight` on
+  every size change while the user is stuck within 32 px of the bottom.
+  The user-scroll detector is suppressed for one event after each
+  programmatic pin so a streaming layout shift can't flip `stuckRef` off
+  and stall auto-follow. Do not revert to keying the scroll effect on
+  `[messages, pendingOutputs]` — late markdown/code rendering grows
+  content after React commit and the old approach falls behind.
+- **Turn limit doubles per Continue.** Default cap is 32 model/tool turns
+  (`loop.go`). When a task stops with `reason="turn_limit"`, the stop card
+  carries the cap that was hit (`Msg.maxTurns`) and the Continue button
+  sends a `submit` with `maxTurns` doubled (32 → 64 → 128 → …) via
+  `nextTurnLimit` in `webview-ui/src/components/thread/Thread.tsx`. The
+  host forwards it to `TaskStartParams.maxTurns`; the Go loop uses it
+  through `runOptions.MaxTurns`. Non-turn-limit stops (`error`,
+  `cancelled`) omit `maxTurns` and Continue uses the default.
 - **Sub-agents run in parallel within a turn (v0.1.4).** The only built-in
   preset is `research`, exposed through `spawn_subagent`. Multiple
   `spawn_subagent` calls emitted in the same turn run concurrently through
@@ -390,6 +411,14 @@ multiple implementations.
   mcp | mode | subtasks | question`; the legacy boolean shape migrates
   automatically. The toolbar pill (`auto-approve on` / `off`) opens the
   popover defined in `webview-ui/src/components/AutoApprovePopover.tsx`.
+- **Summarization must not cut mid-tool-batch.** `maybeSummarize` in
+  `agent/internal/loop/loop.go` uses `safeCutBoundary` (in
+  `agent/internal/loop/summarize.go`) to walk the proposed cut back so the
+  kept tail never starts with `RoleTool` and the summarized prefix never
+  ends on an `assistant(tool_calls)` whose results live in the tail.
+  OpenAI/Azure rejects either shape with `messages.[N].role: tool must be
+  a response to a preceding message with tool_calls`. If you change the
+  compaction policy, preserve both invariants.
 - **Cross-platform paths.** Use `filepath.Join` in Go and `path.join` from
   `node:path` in TS. Never string-concatenate paths.
 - **Binary permissions.** On Unix, the bundled Go binary needs the executable
