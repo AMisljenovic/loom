@@ -1,12 +1,13 @@
 # Changelog
 
-## 0.5.2
+## 0.5.3
 
-Loom 0.5.2 normalises external AI-tool context before the model sees it,
+Loom 0.5.3 normalises external AI-tool context before the model sees it,
 isolates chat sessions per workspace, and adds a marketplace auto-publish
-workflow. (0.5.1 was tagged for publish but never reached the marketplace
-due to a transient CI toolchain mismatch; this release rolls those changes
-forward together with the dependency bump that unblocked CI.)
+workflow. (0.5.1 and 0.5.2 were tagged for publish but never reached the
+marketplace — first a CI toolchain mismatch, then a `vsce publish` flag
+conflict. This release rolls those changes forward with the workflow fix
+that finally unblocks the upload.)
 
 ### Added
 

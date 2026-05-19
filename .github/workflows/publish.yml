@@ -94,8 +94,10 @@ jobs:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         shell: bash
         run: |
+          # The per-platform target is already encoded in each VSIX (packaged
+          # with `vsce package --target ...` in scripts/package.mjs), so
+          # `vsce publish` only takes --packagePath. Passing both is rejected.
           for vsix in dist/loom-*.vsix; do
-            target=$(basename "$vsix" .vsix | sed 's/^loom-//')
-            echo "publishing $vsix for $target"
-            npx vsce publish --target "$target" --packagePath "$vsix"
+            echo "publishing $vsix"
+            npx vsce publish --packagePath "$vsix"
           done
