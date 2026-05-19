@@ -48,7 +48,13 @@
       "Bash(echo \"EXIT $?\")",
       "Bash(git log *)",
       "Bash(npx vitest *)",
-      "Bash(npm --prefix webview-ui run build)"
+      "Bash(npm --prefix webview-ui run build)",
+      "Bash(grep -E \"\\\\.\\(go|ts\\)$\")",
+      "Bash(cd /c/Projects/loom/agent && head -5 go.mod)",
+      "Read(//c/c/Projects/loom/agent/**)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:developers.openai.com)",
+      "Bash(npm install *)"
     ],
     "deny": [
       "Bash(rm -rf:*)",
