@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.5.1
+
+Loom 0.5.1 normalises external AI-tool context before the model sees it,
+isolates chat sessions per workspace, and adds a marketplace auto-publish
+workflow.
+
+### Added
+
+- **In-memory normalization of external context.** A new
+  `agent/internal/normalize/` package detects the origin of each rule,
+  skill, and sub-agent preset file (`loom`, `claude`, `codex`, `copilot`,
+  `cursor`, `gemini`) and applies deterministic, idempotent transforms
+  before the content reaches the prompt. Copilot and Cursor frontmatter
+  is stripped, redundant `# CLAUDE.md` / `# AGENTS.md` / `# GEMINI.md`
+  H1s are dropped, and `.loomrules` / `.loom/` content passes through
+  verbatim. Nothing is written to disk.
+- **Per-file rule envelopes with origin tagging.** The rules bundle now
+  wraps each included file in `<rule source="..." origin="...">…</rule>`
+  blocks (replacing the legacy `--- path ---` text marker) and the outer
+  `<rules>` tag advertises a sorted, deduped `origins="..."` list so the
+  model can see the format mix at a glance. Skill bodies render with
+  `<skill id="..." origin="...">` only when the origin is non-loom;
+  native skill rendering stays byte-stable.
+- **Auto-publish workflow.** A new `.github/workflows/publish.yml`
+  triggers on push to `main` and publishes a new VS Code Marketplace
+  release whenever `package.json` introduces a version that isn't already
+  tagged. Bump the version + add a `## X.Y.Z` CHANGELOG section in a PR
+  and the workflow tags, drafts a GitHub Release, and runs `vsce publish`
+  per platform. Requires a `VSCE_PAT` repository secret. The existing
+  tag-driven `release.yml` remains as a manual escape hatch.
+
+### Fixed
+
+- **Sessions leaking across workspaces.** When `ExtensionContext.storageUri`
+  was unavailable (folderless windows, very early activation), session
+  bodies fell back to `workspaceState`, which VS Code backs with shared
+  empty-workbench storage — so a single folderless run could seed an
+  index that other windows then inherited. Bodies now write to
+  `globalStorageUri/fallback-sessions/<workspaceFingerprint>/` instead;
+  the `SessionsIndex` carries a `workspaceFingerprint` (16-char SHA-1 of
+  the workspace identity); and `loadSessions()` discards any index whose
+  fingerprint differs from the active workspace.
+
+### Changed
+
+- **Rules bundle hash mixes the normalization version.**
+  `normalize.Version` is folded into `Bundle.Hash`; bumping the constant
+  deliberately invalidates cached prompt prefixes after a transform
+  change. Dedupe of rule bodies now hashes the *normalised* content, so
+  identical prose across foreign formats (e.g. `CLAUDE.md` and
+  `AGENTS.md` with the same text) collapses to one entry.
+- **`Skill` and `Preset` carry an `Origin` field.** External skills are
+  parsed through a unified `parseExternalSkill()` (the
+  Claude/Codex-format reader, now origin-aware) and presets thread the
+  origin alongside `Source` for downstream rendering.
+
 ## 0.5.0
 
 Loom 0.5.0 adds a per-conversation scratchpad so the agent can keep

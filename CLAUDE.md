@@ -64,6 +64,23 @@ change to a message type must be made on both sides.
   bundle hash is captured on the conversation `Entry` at task start;
   mid-task file edits do not invalidate the running cache. Provider family
   is reported by `llm.Provider.Family()`.
+- **External context is normalised in-memory.** `agent/internal/normalize/`
+  detects the origin of each rule/skill/preset file (`loom`, `claude`,
+  `codex`, `copilot`, `cursor`, `gemini`) and applies deterministic,
+  idempotent transforms before content reaches the prompt: Copilot and
+  Cursor frontmatter is stripped, redundant `# CLAUDE.md` / `# AGENTS.md`
+  / `# GEMINI.md` H1s are dropped, and `.loomrules` / `.loom/` content
+  always passes through verbatim. The rules envelope wraps every included file in
+  `<rule source origin>…</rule>` blocks and advertises the deduped origin
+  list on the outer `<rules sources origins precedence>` tag. `normalize.Version`
+  is mixed into `Bundle.Hash` so bumping the constant deliberately
+  invalidates cached prefixes after a transform change. Bodies are
+  deduplicated on their *normalised* hash, so identical prose across
+  foreign formats collapses to one entry. `Skill.Origin` and
+  `Preset.Origin` carry the same identifier; `RenderLoaded()` adds
+  `origin="..."` to `<skill>` tags only for non-loom origins, keeping the
+  native-skill rendering byte-stable. Do not put origin in the catalogue
+  lines (`CatalogueLines()`) — that lives in the stable prefix.
 - **Skills are advertised in the prefix, loaded on demand.** The catalogue
   (id + synopsis) sits in the stable prefix; bodies are injected into the
   volatile tail only after the model calls `load_skill`. Builtin skills
@@ -130,13 +147,19 @@ change to a message type must be made on both sides.
   `//go:build cgo`. The non-CGO build path compiles fine and reports an
   empty index; `find_symbol` / `find_references` return "no matches".
   `semantic_search` only registers when `LOOM_EMBED_PROVIDER` is set.
-- **Conversation sessions are multi-row.** TS keeps a small `SessionsIndex` in
-  `workspaceState["loom.sessions.index"]`; bulky per-session bodies are JSON
-  files under `ExtensionContext.storageUri` and legacy
-  `loom.sessions.body:<id>` workspaceState bodies are migrated and cleared.
-  The legacy `loom.conversation` single-state key is migrated on first load.
-  The Go store ([agent/internal/conversation/](agent/internal/conversation/))
-  was already keyed by `conversationId`, so multi-session is a TS+webview
+- **Conversation sessions are multi-row and workspace-scoped.** TS keeps a
+  small `SessionsIndex` in `workspaceState["loom.sessions.index"]`; bulky
+  per-session bodies are JSON files under `ExtensionContext.storageUri`.
+  When `storageUri` is unavailable (folderless windows, very early activation)
+  bodies are written to `globalStorageUri/fallback-sessions/<fingerprint>/`
+  — never back into `workspaceState`, which would alias all folderless
+  windows together. The index carries a `workspaceFingerprint` (16-char SHA-1
+  of `workspaceFile`/first folder URI/`"no-folder"`), and `loadSessions()`
+  discards any saved index whose fingerprint differs from the active
+  workspace's. Legacy `loom.sessions.body:<id>` workspaceState bodies and
+  the `loom.conversation` single-state key are migrated and cleared. The Go
+  store ([agent/internal/conversation/](agent/internal/conversation/)) was
+  already keyed by `conversationId`, so multi-session is a TS+webview
   feature; do not add list-management logic in Go. Switching sessions
   cancels any in-flight task before swapping to avoid stream cross-talk.
 - **Webview theming is data-attribute driven.** Three VS Code settings

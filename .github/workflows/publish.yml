@@ -1,0 +1,101 @@
+name: Publish
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check-version:
+    name: Check for version bump
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+      should_publish: ${{ steps.read.outputs.should_publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Read package.json and check tag
+        id: read
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          tag="v$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git rev-parse "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "tag $tag already exists; skipping publish"
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publishing $tag"
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    name: Package and publish
+    needs: check-version
+    if: needs.check-version.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - run: npm ci
+      - run: npm ci
+        working-directory: webview-ui
+
+      - name: Package VSIX per platform
+        run: npm run package
+
+      - name: Extract release notes from CHANGELOG.md
+        shell: bash
+        run: |
+          version="${{ needs.check-version.outputs.version }}"
+          awk -v v="$version" '
+            $0 ~ "^## " v "( |$)" { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "No CHANGELOG section found for $version" >&2
+            exit 1
+          fi
+
+      - name: Tag commit
+        run: |
+          git tag "v${{ needs.check-version.outputs.version }}"
+          git push origin "v${{ needs.check-version.outputs.version }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.check-version.outputs.version }}
+          files: dist/*.vsix
+          body_path: release-notes.md
+
+      - name: Publish to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        shell: bash
+        run: |
+          for vsix in dist/loom-*.vsix; do
+            target=$(basename "$vsix" .vsix | sed 's/^loom-//')
+            echo "publishing $vsix for $target"
+            npx vsce publish --target "$target" --packagePath "$vsix"
+          done

@@ -484,6 +484,10 @@ export interface SessionsIndex {
   activeId: string;
   order: string[];
   sessions: Record<string, SessionMeta>;
+  // Identifies the workspace this index belongs to. Loaded indexes whose
+  // fingerprint differs from the active workspace are discarded — guards
+  // against cross-workspace bleed when storageUri was unavailable.
+  workspaceFingerprint?: string;
 }
 
 export interface CommandInvocation {

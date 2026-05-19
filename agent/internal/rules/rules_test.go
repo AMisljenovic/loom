@@ -181,6 +181,89 @@ func TestLoad_ProviderNativeDirCountsAsNotEmpty(t *testing.T) {
 	}
 }
 
+func TestLoad_CopilotFrontmatterStripped(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".github/copilot-instructions.md",
+		"---\napplyTo: \"**\"\ndescription: ignore me\n---\n# Use tabs.\n")
+
+	b := Load(dir, "anthropic")
+
+	if strings.Contains(b.Text, "applyTo") {
+		t.Fatalf("copilot frontmatter should be stripped:\n%s", b.Text)
+	}
+	if !strings.Contains(b.Text, "# Use tabs.") {
+		t.Fatalf("body lost during normalisation:\n%s", b.Text)
+	}
+	if !strings.Contains(b.Text, `origin="copilot"`) {
+		t.Fatalf("expected origin attribute, got:\n%s", b.Text)
+	}
+}
+
+func TestLoad_PerFileBlockReplacesTextMarker(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".loomrules", "loom body")
+
+	b := Load(dir, "anthropic")
+
+	if strings.Contains(b.Text, "--- .loomrules ---") {
+		t.Fatalf("legacy text marker should be gone:\n%s", b.Text)
+	}
+	if !strings.Contains(b.Text, `<rule source=".loomrules" origin="loom">`) {
+		t.Fatalf("expected per-file rule block, got:\n%s", b.Text)
+	}
+	if !strings.Contains(b.Text, "</rule>") {
+		t.Fatalf("expected closing tag, got:\n%s", b.Text)
+	}
+}
+
+func TestLoad_EnvelopeAdvertisesOrigins(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".loomrules", "loom body")
+	writeFile(t, dir, "CLAUDE.md", "claude body")
+
+	b := Load(dir, "anthropic")
+
+	if !strings.Contains(b.Text, `origins="claude,loom"`) {
+		t.Fatalf("expected sorted origins attribute, got:\n%s", b.Text)
+	}
+}
+
+func TestLoad_HashStableAcrossRuns(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".loomrules", "loom body")
+	writeFile(t, dir, "CLAUDE.md", "claude body")
+	writeFile(t, dir, ".github/copilot-instructions.md",
+		"---\napplyTo: \"**\"\n---\ncopilot body\n")
+
+	first := Load(dir, "anthropic")
+	second := Load(dir, "anthropic")
+	if first.Hash == "" || first.Hash != second.Hash {
+		t.Fatalf("hash unstable: %q vs %q", first.Hash, second.Hash)
+	}
+	if first.Text != second.Text {
+		t.Fatalf("text not byte-stable across calls")
+	}
+}
+
+func TestLoad_DedupeOnNormalizedBody(t *testing.T) {
+	// .loomrules and a copilot file produce the same body after frontmatter
+	// stripping; the copilot entry should dedupe out.
+	dir := t.TempDir()
+	body := "shared instructions"
+	writeFile(t, dir, ".loomrules", body)
+	writeFile(t, dir, ".github/copilot-instructions.md",
+		"---\napplyTo: \"**\"\n---\n"+body)
+
+	b := Load(dir, "anthropic")
+
+	if !containsExact(b.Sources, ".loomrules") {
+		t.Fatalf("expected .loomrules in sources, got %v", b.Sources)
+	}
+	if containsExact(b.Sources, ".github/copilot-instructions.md") {
+		t.Fatalf("expected copilot entry to dedupe after normalisation, got %v", b.Sources)
+	}
+}
+
 func containsExact(list []string, want string) bool {
 	for _, s := range list {
 		if s == want {

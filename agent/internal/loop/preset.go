@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/your-org/loom/internal/normalize"
 	agentprompts "github.com/your-org/loom/internal/prompts"
 )
 
@@ -28,6 +29,7 @@ type Preset struct {
 	MaxTurns       int
 	MaxInputTokens int64
 	Source         string
+	Origin         string // normalize.Origin*; "loom" for builtins and .loom/agents
 }
 
 type Registry struct {
@@ -177,15 +179,20 @@ func parseAgentPreset(text, source, defaultName string) (Preset, bool) {
 	if name == "" || len(tools) == 0 {
 		return Preset{}, false
 	}
+	origin := normalize.Origin(source)
+	if origin == "" {
+		origin = normalize.OriginLoom
+	}
 	return Preset{
 		Name:           name,
 		Description:    description,
-		SystemPrompt:   body,
+		SystemPrompt:   normalize.PresetBody(origin, body),
 		AllowedTools:   tools,
 		AutoApprove:    nil,
 		MaxTurns:       subAgentMaxTurns,
 		MaxInputTokens: subAgentMaxInputTokens,
 		Source:         source,
+		Origin:         origin,
 	}, true
 }
 
@@ -242,5 +249,6 @@ func researchPreset() (Preset, error) {
 		MaxTurns:       subAgentMaxTurns,
 		MaxInputTokens: subAgentMaxInputTokens,
 		Source:         "builtin",
+		Origin:         normalize.OriginLoom,
 	}, nil
 }

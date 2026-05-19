@@ -80,6 +80,45 @@ func TestExternalSkillFallbackOnlyWhenNativeEmpty(t *testing.T) {
 	}
 }
 
+func TestExternalSkill_RenderLoadedTagsOrigin(t *testing.T) {
+	root := t.TempDir()
+	writeSkillFile(t, root, ".claude/skills/foo/SKILL.md", "foo", "External foo")
+
+	cat := Load(root, "anthropic")
+	out := cat.RenderLoaded([]string{"foo"})
+	if !contains(out, `<skill id="foo" origin="claude">`) {
+		t.Fatalf("expected origin attribute on external skill, got:\n%s", out)
+	}
+}
+
+func TestLoomSkill_RenderLoadedOmitsOriginAttr(t *testing.T) {
+	root := t.TempDir()
+	writeLoomSkillFile(t, root, ".loom/skills/bar/SKILL.md", "bar", "Local bar")
+
+	cat := Load(root, "anthropic")
+	out := cat.RenderLoaded([]string{"bar"})
+	if !contains(out, `<skill id="bar">`) {
+		t.Fatalf("expected bare <skill id> for loom-native skill, got:\n%s", out)
+	}
+	if contains(out, "origin=") {
+		t.Fatalf("did not expect origin attribute on loom skill:\n%s", out)
+	}
+}
+
+func contains(haystack, needle string) bool {
+	return len(needle) > 0 && len(haystack) >= len(needle) &&
+		(haystack == needle || indexOf(haystack, needle) >= 0)
+}
+
+func indexOf(haystack, needle string) int {
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return i
+		}
+	}
+	return -1
+}
+
 func writeSkillFile(t *testing.T, root, rel, name, description string) {
 	t.Helper()
 	writeRawFile(t, root, rel, "---\nname: "+name+"\ndescription: "+description+"\n---\nBody")

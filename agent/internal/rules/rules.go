@@ -3,8 +3,10 @@
 // agent system prompt can include. When the provider's native convention
 // files are absent, a universal fallback chain picks up other common
 // conventions (Copilot, Gemini, Cursor, plus the opposite provider's files)
-// so Loom respects whatever convention the workspace already uses. The
-// bundle text is wrapped in a stable <rules sources="..."> envelope and
+// so Loom respects whatever convention the workspace already uses. Each
+// included file is normalised (frontmatter stripped, redundant H1s dropped)
+// and wrapped in a per-file <rule source origin> block; the whole body is
+// then wrapped in a stable <rules sources origins precedence> envelope and
 // capped at MaxBundleBytes so it cannot dominate the prompt.
 package rules
 
@@ -16,6 +18,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/your-org/loom/internal/normalize"
 )
 
 // MaxBundleBytes caps the concatenated rules body. Files beyond this point
@@ -34,7 +38,8 @@ type Bundle struct {
 // concatenated bundle. family is "anthropic" or "openai" (other values fall
 // through to the universal fallback chain after .loomrules).
 //
-// Load order (concatenated in this order, duplicates by content hash skipped):
+// Load order (concatenated in this order, duplicates by normalised content
+// hash skipped):
 //  1. .loomrules                                       (always; top precedence)
 //  2. Provider-native:
 //     anthropic: CLAUDE.md, then .claude/rules/*.md (sorted)
@@ -49,16 +54,15 @@ func Load(workspaceRoot, family string) Bundle {
 		return Bundle{}
 	}
 
-	// Step 1: always-loaded.
 	always := []string{".loomrules"}
-
-	// Step 2: provider-native.
 	native := nativeCandidates(workspaceRoot, family)
 
 	seen := make(map[string]bool, 16)
 	var (
 		bodyB     strings.Builder
 		sources   []string
+		origins   []string
+		seenOrig  = make(map[string]bool, 6)
 		truncated int
 	)
 
@@ -68,24 +72,37 @@ func Load(workspaceRoot, family string) Bundle {
 		if err != nil {
 			return false
 		}
-		sum := sha256.Sum256(data)
+		body, origin := normalize.Rule(rel, data)
+		// Dedupe on normalised content so identical prose across foreign
+		// formats (e.g. CLAUDE.md and AGENTS.md with the same text) collapses
+		// to one entry.
+		sum := sha256.Sum256(body)
 		key := hex.EncodeToString(sum[:])
 		if seen[key] {
 			return false
 		}
 		seen[key] = true
 
-		header := fmt.Sprintf("\n--- %s ---\n", rel)
-		if bodyB.Len()+len(header)+len(data) > MaxBundleBytes {
+		if origin == "" {
+			origin = "unknown"
+		}
+		block := fmt.Sprintf("\n<rule source=%q origin=%q>\n", rel, origin)
+		closeTag := "\n</rule>"
+		if bodyB.Len()+len(block)+len(body)+len(closeTag) > MaxBundleBytes {
 			truncated++
 			return false
 		}
 		if bodyB.Len() > 0 {
 			bodyB.WriteString("\n")
 		}
-		bodyB.WriteString(header)
-		bodyB.Write(data)
+		bodyB.WriteString(block)
+		bodyB.Write(body)
+		bodyB.WriteString(closeTag)
 		sources = append(sources, rel)
+		if !seenOrig[origin] {
+			seenOrig[origin] = true
+			origins = append(origins, origin)
+		}
 		return true
 	}
 
@@ -100,7 +117,6 @@ func Load(workspaceRoot, family string) Bundle {
 		}
 	}
 
-	// Step 3: universal fallback only when no provider-native file contributed.
 	if nativeRead == 0 {
 		for _, rel := range fallbackCandidates(workspaceRoot, family) {
 			appendFile(rel)
@@ -115,11 +131,19 @@ func Load(workspaceRoot, family string) Bundle {
 	if truncated > 0 {
 		body += fmt.Sprintf("\n<truncated: %d file(s) omitted>", truncated)
 	}
-	hash := sha256.Sum256([]byte(body))
+
+	// Mix the normalisation version into the hash so a future revision of
+	// the per-origin transforms deliberately invalidates cached prefixes.
+	hashInput := fmt.Sprintf("%s\x00v%d", body, normalize.Version)
+	hash := sha256.Sum256([]byte(hashInput))
+
+	sort.Strings(origins)
 
 	var envelope strings.Builder
 	envelope.WriteString(`<rules sources="`)
 	envelope.WriteString(strings.Join(sources, ","))
+	envelope.WriteString(`" origins="`)
+	envelope.WriteString(strings.Join(origins, ","))
 	envelope.WriteString(`" precedence=".loomrules">`)
 	envelope.WriteString("\nOn conflict, rules from .loomrules take precedence over other listed sources.\n")
 	envelope.WriteString(body)

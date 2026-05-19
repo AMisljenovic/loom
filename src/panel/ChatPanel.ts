@@ -71,7 +71,13 @@ import {
   sanitizeFileBase,
   sliceLlmMessagesByUserTurns,
 } from "../shared/sessionExport";
-import { legacySessionBodyIds, normalizeStoredConversationState, sessionBodyFileName } from "../shared/sessionStorage";
+import {
+  computeWorkspaceFingerprint,
+  indexMatchesWorkspace,
+  legacySessionBodyIds,
+  normalizeStoredConversationState,
+  sessionBodyFileName,
+} from "../shared/sessionStorage";
 import {
   cachePreparedApplyDiff,
   discardPreparedApplyDiff,
@@ -1755,18 +1761,29 @@ export class ChatPanel implements vscode.WebviewViewProvider {
 
   private loadSessions(): SessionsIndex {
     this.clearLegacySessionBodiesFromWorkspaceState();
+    const fingerprint = this.workspaceFingerprint();
     const saved = this.ctx.workspaceState.get<SessionsIndex>(SESSIONS_INDEX_KEY);
     if (saved && saved.version === 1 && saved.activeId && saved.sessions) {
-      saved.order = Array.isArray(saved.order) ? saved.order : Object.keys(saved.sessions);
-      for (const id of Object.keys(saved.sessions)) {
-        this.migrateWorkspaceStateBodyToFile(id);
+      if (!indexMatchesWorkspace(saved, fingerprint)) {
+        // Index was persisted under a different workspace identity — most
+        // likely leaked via the empty-workbench memento. Drop it and seed
+        // fresh; the body files for the old workspace stay on disk under
+        // their own subdirectory and remain reachable if that workspace is
+        // reopened.
+        void this.ctx.workspaceState.update(SESSIONS_INDEX_KEY, undefined);
+      } else {
+        saved.order = Array.isArray(saved.order) ? saved.order : Object.keys(saved.sessions);
+        saved.workspaceFingerprint = fingerprint;
+        for (const id of Object.keys(saved.sessions)) {
+          this.migrateWorkspaceStateBodyToFile(id);
+        }
+        // Defensive: make sure activeId is in the map.
+        if (!saved.sessions[saved.activeId]) {
+          const firstActive = saved.order.find((id) => saved.sessions[id]?.state === "active");
+          saved.activeId = firstActive ?? this.seedSessionInPlace(saved).conversationId;
+        }
+        return saved;
       }
-      // Defensive: make sure activeId is in the map.
-      if (!saved.sessions[saved.activeId]) {
-        const firstActive = saved.order.find((id) => saved.sessions[id]?.state === "active");
-        saved.activeId = firstActive ?? this.seedSessionInPlace(saved).conversationId;
-      }
-      return saved;
     }
     // Migration: lift legacy single-conversation state into a session row.
     const legacy = this.ctx.workspaceState.get<ConversationState>(LEGACY_STATE_KEY);
@@ -1777,6 +1794,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         activeId: legacy.conversationId,
         order: [legacy.conversationId],
         sessions: { [legacy.conversationId]: meta },
+        workspaceFingerprint: fingerprint,
       };
       // Persist the legacy body under its new key and clear the old key.
       if (!this.writeSessionBodyFile(legacy.conversationId, legacy)) {
@@ -1787,9 +1805,26 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       return index;
     }
     // Fresh install: seed one empty active session.
-    const fresh: SessionsIndex = { version: 1, activeId: "", order: [], sessions: {} };
+    const fresh: SessionsIndex = {
+      version: 1,
+      activeId: "",
+      order: [],
+      sessions: {},
+      workspaceFingerprint: fingerprint,
+    };
     this.seedSessionInPlace(fresh);
     return fresh;
+  }
+
+  // workspaceFingerprint hashes the current VS Code workspace identity so we
+  // can stamp the sessions index and reject leaked state from a different
+  // workspace. Folderless windows collapse to a literal "no-folder" identity.
+  private workspaceFingerprint(): string {
+    const identity =
+      vscode.workspace.workspaceFile?.toString()
+      ?? vscode.workspace.workspaceFolders?.[0]?.uri.toString()
+      ?? "no-folder";
+    return computeWorkspaceFingerprint(identity);
   }
 
   private seedSessionInPlace(index: SessionsIndex): SessionMeta {
@@ -1911,9 +1946,10 @@ export class ChatPanel implements vscode.WebviewViewProvider {
           }
         }
       }
-      const wroteBodyFile = this.writeSessionBodyFile(this.state.conversationId, this.state);
+      this.writeSessionBodyFile(this.state.conversationId, this.state);
+      this.sessions.workspaceFingerprint = this.workspaceFingerprint();
       void Promise.all([
-        this.ctx.workspaceState.update(this.bodyKey(this.state.conversationId), wroteBodyFile ? undefined : this.state),
+        this.ctx.workspaceState.update(this.bodyKey(this.state.conversationId), undefined),
         this.ctx.workspaceState.update(SESSIONS_INDEX_KEY, this.sessions),
         this.ctx.workspaceState.update(AUTO_APPROVE_KEY, this.autoApprove),
         this.ctx.workspaceState.update(ALWAYS_ALLOW_KEY, this.alwaysAllow),
@@ -1944,7 +1980,13 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       this.state.usage = { inputTokens: 0, outputTokens: 0 };
     }
     if (!this.sessions || typeof this.sessions !== "object") {
-      this.sessions = { version: 1, activeId: this.state.conversationId, order: [], sessions: {} };
+      this.sessions = {
+        version: 1,
+        activeId: this.state.conversationId,
+        order: [],
+        sessions: {},
+        workspaceFingerprint: this.workspaceFingerprint(),
+      };
     }
     if (!this.sessions.sessions || typeof this.sessions.sessions !== "object") {
       this.sessions.sessions = {};
@@ -1989,23 +2031,23 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       sessions: {
         [id]: this.makeMeta(id, deriveTitleFromMessages(messages), messages.length),
       },
+      workspaceFingerprint: this.workspaceFingerprint(),
     };
     this.assistantIndex = null;
   }
 
-  private sessionBodyFile(id: string): string | undefined {
-    const root = this.ctx.storageUri?.fsPath;
-    if (!root) {
-      return undefined;
-    }
+  private sessionBodyFile(id: string): string {
+    // storageUri is normally workspace-scoped and is the preferred location.
+    // When it is unavailable (folderless windows, very early activation), fall
+    // back to a workspace-keyed subdirectory under globalStorageUri so we never
+    // dump bodies into the shared empty-workbench memento.
+    const root = this.ctx.storageUri?.fsPath
+      ?? path.join(this.ctx.globalStorageUri.fsPath, "fallback-sessions", this.workspaceFingerprint());
     return path.join(root, "sessions", sessionBodyFileName(id));
   }
 
   private readSessionBodyFile(id: string): ConversationState | undefined {
     const file = this.sessionBodyFile(id);
-    if (!file) {
-      return undefined;
-    }
     try {
       if (!fs.existsSync(file)) {
         return undefined;
@@ -2019,9 +2061,6 @@ export class ChatPanel implements vscode.WebviewViewProvider {
 
   private writeSessionBodyFile(id: string, body: ConversationState): boolean {
     const file = this.sessionBodyFile(id);
-    if (!file) {
-      return false;
-    }
     try {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, JSON.stringify(body), "utf8");
@@ -2034,9 +2073,6 @@ export class ChatPanel implements vscode.WebviewViewProvider {
 
   private deleteSessionBodyFile(id: string) {
     const file = this.sessionBodyFile(id);
-    if (!file) {
-      return;
-    }
     try {
       if (fs.existsSync(file)) {
         fs.unlinkSync(file);

@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/your-org/loom/internal/normalize"
 )
 
 //go:embed builtin/*.md
@@ -30,6 +32,7 @@ type Skill struct {
 	Triggers []string // optional: topics that suggest loading the skill
 	Body     string
 	Source   string // "builtin" or workspace-relative path
+	Origin   string // normalize.Origin* (loom/claude/codex/...); "loom" for builtins
 }
 
 // Catalogue holds the available skills, keyed by ID, plus the sorted order.
@@ -68,6 +71,7 @@ func Load(workspaceRoot, family string) Catalogue {
 			if !ok {
 				continue
 			}
+			s.Origin = normalize.OriginLoom
 			cat.Skills[s.ID] = s
 		}
 	}
@@ -91,6 +95,7 @@ func Load(workspaceRoot, family string) Catalogue {
 				if !ok {
 					continue
 				}
+				s.Origin = normalize.OriginLoom
 				cat.Skills[s.ID] = s
 			}
 		}
@@ -122,7 +127,7 @@ func loadExternalSkills(cat *Catalogue, workspaceRoot, relDir string) int {
 		if err != nil {
 			continue
 		}
-		s, ok := parseClaudeSkill(string(data), rel)
+		s, ok := parseExternalSkill(string(data), rel)
 		if !ok {
 			continue
 		}
@@ -216,8 +221,13 @@ func (c Catalogue) RenderLoaded(ids []string) string {
 		if i > 0 {
 			b.WriteString("\n\n")
 		}
-		b.WriteString(fmt.Sprintf("<skill id=\"%s\">\n", id))
-		b.WriteString(strings.TrimSpace(c.Skills[id].Body))
+		s := c.Skills[id]
+		if s.Origin != "" && s.Origin != normalize.OriginLoom {
+			b.WriteString(fmt.Sprintf("<skill id=\"%s\" origin=\"%s\">\n", id, s.Origin))
+		} else {
+			b.WriteString(fmt.Sprintf("<skill id=\"%s\">\n", id))
+		}
+		b.WriteString(strings.TrimSpace(s.Body))
 		b.WriteString("\n</skill>")
 	}
 	return b.String()
@@ -257,7 +267,9 @@ func parseSkill(text, source string) (Skill, bool) {
 	return Skill{ID: id, Synopsis: synopsis, Triggers: triggers, Body: body, Source: source}, true
 }
 
-func parseClaudeSkill(text, source string) (Skill, bool) {
+// parseExternalSkill parses Claude/Codex-format SKILL.md (name: → id,
+// description: → synopsis) and normalises the body for the detected origin.
+func parseExternalSkill(text, source string) (Skill, bool) {
 	frontMatter, body, ok := splitFrontmatter(text)
 	if !ok {
 		return Skill{}, false
@@ -284,7 +296,14 @@ func parseClaudeSkill(text, source string) (Skill, bool) {
 	if id == "" {
 		return Skill{}, false
 	}
-	return Skill{ID: id, Synopsis: synopsis, Body: body, Source: source}, true
+	origin := normalize.Origin(source)
+	return Skill{
+		ID:       id,
+		Synopsis: synopsis,
+		Body:     normalize.SkillBody(origin, body),
+		Source:   source,
+		Origin:   origin,
+	}, true
 }
 
 func splitFrontmatter(text string) (frontMatter, body string, ok bool) {
