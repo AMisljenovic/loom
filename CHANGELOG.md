@@ -1,10 +1,12 @@
 # Changelog
 
-## 0.5.1
+## 0.5.2
 
-Loom 0.5.1 normalises external AI-tool context before the model sees it,
+Loom 0.5.2 normalises external AI-tool context before the model sees it,
 isolates chat sessions per workspace, and adds a marketplace auto-publish
-workflow.
+workflow. (0.5.1 was tagged for publish but never reached the marketplace
+due to a transient CI toolchain mismatch; this release rolls those changes
+forward together with the dependency bump that unblocked CI.)
 
 ### Added
 
@@ -55,6 +57,9 @@ workflow.
   parsed through a unified `parseExternalSkill()` (the
   Claude/Codex-format reader, now origin-aware) and presets thread the
   origin alongside `Source` for downstream rendering.
+- **esbuild dev-dep bumped to `^0.28.0`** so it satisfies the peer-dep
+  vite 8 imposes via vitest 4. No source changes; build and tests
+  behave identically.
 
 ## 0.5.0
 
