@@ -21,13 +21,22 @@ Run a short, blocking shell command in the workspace terminal.
 ## Input
 - `command` (string, required) — the exact command to run. No shell
   interpolation is done by the agent; the user's shell handles it.
+- `cwd` (string, optional) — workspace-relative working directory. Defaults
+  to the workspace root.
+- `shell` (string, optional) — one of `"auto"`, `"powershell"`, `"cmd"`,
+  `"bash"`, or `"sh"`. Defaults to `"auto"`.
 
 ## Behavior
 - Blocks until the command exits or 120 seconds elapse (whichever is first).
   A timeout returns the partial output and a non-zero exit code.
 - Exit code, stdout, and stderr are returned together. Read stderr — error
   messages often live there.
-- Runs in the workspace root unless the user's shell config changes that.
+- Runs in the workspace root unless `cwd` is provided.
+- Shell resolution is platform-aware: `"auto"` uses PowerShell on Windows,
+  `/bin/bash` on macOS/Linux when available, and `/bin/sh` otherwise.
+- If output shows shell-specific syntax or startup failure, do not repeat the
+  same command blindly. Retry once with an equivalent command and explicit
+  `shell` (or `cwd`) only when that addresses the failure.
 - Requires user approval unless the `execute` category is auto-approved.
 
 ## Examples
@@ -43,3 +52,9 @@ Run Go tests.
 ```
 
 Build the extension.
+
+```json
+{"command": "go test ./...", "cwd": "agent", "shell": "powershell"}
+```
+
+Run Go tests from `agent/` using PowerShell explicitly.

@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import type { Msg } from "../../../../src/shared/protocol";
 import * as Ico from "../../brand/icons";
 import { peekLines, toolInputLine, toolLabel } from "../../util/activity";
+import { formatToolDisplayOutput } from "../../util/parseToolOutput";
 import { ApprovalActions } from "./ApprovalActions";
 import { OpenInEditorButton } from "./OpenInEditorButton";
 
@@ -79,13 +80,14 @@ export function ToolCardMinimal({ msg, pendingDiff, liveOutput, onToggleExpanded
     const isRunning = msg.status === "running";
     const isError = msg.status === "error";
 
-    const label = toolLabel(msg.name).trim() || "Tool";
+    const label = toolLabel(msg.name, msg.input).trim() || "Tool";
     const target = toolInputLine(msg.name, msg.input);
     const description = target && target !== msg.name ? target : "";
 
     const outputText = liveOutput ?? msg.output ?? (isPending ? (pendingDiff ?? "") : "");
-    const expandedOutput = outputText || (isRunning ? "(running...)" : isPending ? "(awaiting approval)" : "(no output)");
-    const { lines: outputPeek, more: hasMore } = peekLines(outputText, 3);
+    const displayText = formatToolDisplayOutput(msg.name, outputText);
+    const expandedOutput = displayText || (isRunning ? "(running...)" : isPending ? "(awaiting approval)" : "(no output)");
+    const { lines: outputPeek, more: hasMore } = peekLines(displayText, 3);
 
     const showDuration = typeof msg.durationMs === "number" && msg.durationMs >= 100;
     const statusBadge = isPending
@@ -144,12 +146,12 @@ export function ToolCardMinimal({ msg, pendingDiff, liveOutput, onToggleExpanded
                     <div className="tc-pane tc-out">
                         <div className="tc-pane-label">
                             <span>output</span>
-                            {outputText && (
+                            {displayText && (
                                 <OpenInEditorButton
                                     id={`tool-${msg.callId}`}
                                     title={`${msg.name} output (${msg.callId.slice(0, 4)})`}
-                                    content={outputText}
-                                    language={guessLanguage(msg.name, outputText)}
+                                    content={displayText}
+                                    language={guessLanguage(msg.name, displayText)}
                                 />
                             )}
                         </div>

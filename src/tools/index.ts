@@ -4,6 +4,7 @@ import * as nodePath from "node:path";
 import * as vscode from "vscode";
 import type { ToolCall, ToolFollowup, ToolFollowupDiagRow, ToolResult } from "../shared/protocol";
 import { applyEdits, parseApplyDiffInput, type ApplyDiffEdit, type ApplyDiffInput } from "./applyDiffEdits";
+import { resolveCommandCwd, resolveCommandShell } from "./commandShell";
 import { killProcess, readProcessOutput, runCommandBackground } from "./processes";
 
 export type ApprovalFn = (call: ToolCall) => Promise<boolean>;
@@ -294,12 +295,20 @@ const COMMAND_MAX_BUFFER = 1024 * 1024;
 const STREAM_TAIL_CHARS = 8000;
 
 async function runCommand(call: ToolCall, ctx: ToolContext): Promise<ToolResult> {
-  const { command } = call.input as { command: string };
-  const cwd = ctx.workspaceRoot || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const { command, cwd: inputCwd, shell: inputShell } = call.input as { command: string; cwd?: string; shell?: string };
+  if (typeof command !== "string" || !command.trim()) {
+    return { callId: call.callId, ok: false, error: "command is required" };
+  }
+  const workspaceRoot = resolveWorkspaceRoot(ctx);
+  const cwd = resolveCommandCwd(workspaceRoot, inputCwd);
+  const shell = resolveCommandShell(inputShell);
   const channel = getOutputChannel();
   const progress = createProgressEmitter(ctx.onProgress);
   channel.show(true);
+  channel.appendLine(`[shell: ${shell.label} (${shell.executable})]`);
+  channel.appendLine(`[cwd: ${cwd}]`);
   channel.appendLine(`$ ${command}`);
+  progress.push(`[shell: ${shell.label} (${shell.executable})]\n[cwd: ${cwd}]\n`);
   progress.push(`$ ${command}\n`);
 
   const result = await new Promise<{ stdout: string; stderr: string; code: number; timedOut: boolean }>((resolve) => {
@@ -307,7 +316,7 @@ async function runCommand(call: ToolCall, ctx: ToolContext): Promise<ToolResult>
     let stderr = "";
     const child = childProcess.exec(
       command,
-      { cwd, timeout: COMMAND_TIMEOUT_MS, maxBuffer: COMMAND_MAX_BUFFER, windowsHide: true },
+      { cwd, shell: shell.executable, timeout: COMMAND_TIMEOUT_MS, maxBuffer: COMMAND_MAX_BUFFER, windowsHide: true },
       (err) => {
         const execErr = err as ExecError | null;
         const timedOut = !!(execErr && execErr.signal === "SIGTERM" && execErr.killed);
@@ -344,7 +353,11 @@ async function runCommand(call: ToolCall, ctx: ToolContext): Promise<ToolResult>
   const tail = (s: string) =>
     s.length > STREAM_TAIL_CHARS ? `...(truncated)\n${s.slice(-STREAM_TAIL_CHARS)}` : s;
 
-  const parts = [`exit code: ${result.code}${result.timedOut ? " (timed out)" : ""}`];
+  const parts = [
+    `shell: ${shell.kind} (${shell.executable})`,
+    `cwd: ${cwd}`,
+    `exit code: ${result.code}${result.timedOut ? " (timed out)" : ""}`,
+  ];
   if (result.stdout) parts.push(`stdout:\n${tail(result.stdout)}`);
   if (result.stderr) parts.push(`stderr:\n${tail(result.stderr)}`);
 

@@ -53,4 +53,15 @@ describe("stripStructuralTags", () => {
   it("returns empty input unchanged", () => {
     expect(stripStructuralTags("")).toBe("");
   });
+
+  it("strips model-emitted semantic tags so wrapped paths render as plain text", () => {
+    expect(stripStructuralTags("Edit <path>radio_player/gui_parts/theme.py</path> next."))
+      .toBe("Edit radio_player/gui_parts/theme.py next.");
+    expect(stripStructuralTags("see <file>src/foo.ts</file> and <function>parse</function>"))
+      .toBe("see src/foo.ts and parse");
+    expect(stripStructuralTags("<filename>a.txt</filename> in <dir>logs</dir>"))
+      .toBe("a.txt in logs");
+    expect(stripStructuralTags("Run <command>npm test</command> when ready."))
+      .toBe("Run npm test when ready.");
+  });
 });

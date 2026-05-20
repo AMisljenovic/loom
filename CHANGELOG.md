@@ -1,5 +1,110 @@
 # Changelog
 
+## 0.5.6
+
+Loom 0.5.6 is a transcript-readability and command-execution pass:
+`run_command` / `run_command_background` now pick a platform-native shell
+(PowerShell on Windows, `/bin/bash` or `/bin/sh` on macOS/Linux) and accept
+explicit `shell` + `cwd` inputs; the tool-card OUT pane no longer dumps the
+raw JSON envelope returned by background-process tools; the Processes panel
+auto-prunes exited rows; reasoning/summary cards no longer overflow the
+panel; and a handful of webview layout glitches around the plan handoff,
+session switching, and summary card are fixed.
+
+### Added
+
+- **Shell-aware command execution.** New
+  [src/tools/commandShell.ts](src/tools/commandShell.ts) resolves `shell`
+  (`auto` / `powershell` / `cmd` / `bash` / `sh`) and `cwd` (workspace-
+  relative) per call, with a deterministic platform-aware default. Both
+  `run_command` and `run_command_background` accept the new inputs and
+  surface the chosen shell in `ProcessSnapshot` so the Processes panel and
+  the model see the same picture. Output channels print a `[shell: …]`
+  + `[cwd: …]` header on spawn for transparency. Tool descriptions and
+  the Code/Debug mode prompts gained a one-line guidance not to blindly
+  rerun a command that failed with shell-specific syntax — retry once
+  with an explicit `shell` instead.
+  ([src/tools/processes.ts](src/tools/processes.ts),
+  [src/tools/index.ts](src/tools/index.ts),
+  [src/shared/protocol.ts](src/shared/protocol.ts),
+  [agent/internal/tools/descriptions/run_command.md](agent/internal/tools/descriptions/run_command.md),
+  [agent/internal/tools/descriptions/run_command_background.md](agent/internal/tools/descriptions/run_command_background.md),
+  [agent/internal/prompts/code.md](agent/internal/prompts/code.md),
+  [agent/internal/prompts/debug.md](agent/internal/prompts/debug.md))
+- **"Clear completed" affordance in the Processes panel.** Background
+  processes carry an `exitedAt` timestamp; the webview auto-hides exited
+  rows 30 s after they terminate (host log retention stays at 5 min) and
+  exposes a one-click button to flush them. The host owns a new
+  `disposeExitedProcesses()` export wired through a `processesClearCompleted`
+  message.
+  ([src/tools/processes.ts](src/tools/processes.ts),
+  [src/panel/ChatPanel.ts](src/panel/ChatPanel.ts),
+  [webview-ui/src/App.tsx](webview-ui/src/App.tsx))
+
+### Fixed
+
+- **Tool-card OUT pane leaked raw JSON for background-process tools.**
+  `run_command_background` returned `{"processId":…,"pid":…,"command":…}`
+  and `read_process_output` returned `{"output":"…\r\n…","cursor":…,…}`
+  verbatim into the transcript. A new shared formatter normalises both at
+  render time — the spawn collapses to `Started pid <pid> — <command>`,
+  reads show the decoded program output (real newlines, not `\r\n`
+  escapes) plus a small `[exit N]` / `[…running, N bytes streamed]`
+  footer. The wire content the model sees is unchanged.
+  ([webview-ui/src/util/parseToolOutput.ts](webview-ui/src/util/parseToolOutput.ts),
+  [webview-ui/src/components/thread/ToolCardMinimal.tsx](webview-ui/src/components/thread/ToolCardMinimal.tsx))
+- **Reasoning and Summary cards overflowed past the right edge.** Long
+  code blocks and URLs stretched the cards out of the panel because the
+  flex chain lacked `min-width: 0`; the inner `<pre>` couldn't trigger
+  its own `overflow-x: auto`. The transcript card wrappers
+  (`.intent-line`, `.summary-card`, `.summary-body`, `.tc-pane`,
+  `.tc-expand`, `.tc-pane-body`, `.markdown-body pre`) all carry the
+  constraint now, with a CSS regression test pinning the rule.
+  ([webview-ui/src/styles/components.css](webview-ui/src/styles/components.css))
+- **Summary card body disappeared behind the composer.** `.summary-card`
+  was missing `flex-shrink: 0` — the invariant ToolCardMinimal and
+  IntentLine already document — so the flex column transcript would
+  collapse it to just the "SUMMARY" head when the body was tall. Added
+  the missing constraint; removed an over-eager `overflow: hidden` that
+  was clipping vertical content.
+  ([webview-ui/src/styles/components.css](webview-ui/src/styles/components.css))
+- **Plan handoff "Implement selected" button could scroll out of reach.**
+  The handoff card was a single scroll container, so head and footer
+  scrolled away with the step list on long plans. The list is now the
+  only scroll region; head and foot are pinned. The whole card caps at
+  `min(50vh, 480px)` so it never pushes the composer off-screen on short
+  windows.
+  ([webview-ui/src/styles/components.css](webview-ui/src/styles/components.css))
+- **Processes panel held stale entries with unresponsive buttons.** The
+  host retains exited process logs for 5 min, but the webview never
+  pruned its row, leaving Open/Stop buttons that no-op against a reaped
+  process. The webview now auto-prunes exited rows after 30 s, the
+  `restore` handler clears the in-memory list on every session switch,
+  and a "Clear completed" button flushes the host-side map on demand.
+  ([webview-ui/src/App.tsx](webview-ui/src/App.tsx),
+  [src/panel/ChatPanel.ts](src/panel/ChatPanel.ts),
+  [src/tools/processes.ts](src/tools/processes.ts))
+- **`pendingApprovalBatches` survived a session switch.** Only the
+  single-call approval maps were cleared, so a batch raised in one
+  session could resolve into the next. `switchSession()` /
+  `newConversation()` / cancel paths now all flow through
+  `cancelPendingApprovals()`, which correctly resolves the batch
+  promises and clears the map.
+  ([src/panel/ChatPanel.ts](src/panel/ChatPanel.ts))
+- **Model-emitted `<path>` / `<file>` tags surfaced as literal text in
+  reasoning and summary cards.** Some reasoning-heavy providers wrap
+  file paths in XML-style tags. Loom does not instruct this — the model
+  produces it on its own — and ReactMarkdown without `rehype-raw`
+  escapes unknown HTML so the markers leaked through. The structural-
+  tag stripper now also drops `path`, `file`, `filename`, `dir`,
+  `function`, `class`, `command`, and `code_ref` wrappers; the inner
+  content survives.
+  ([webview-ui/src/util/markdown.ts](webview-ui/src/util/markdown.ts))
+- **`Bash` label was hard-coded for every command tool.** The tool card
+  now reflects the resolved shell (`PowerShell` / `Command` / `Bash` /
+  `Sh` / `Shell` fallback) so the transcript matches what actually ran.
+  ([webview-ui/src/util/activity.ts](webview-ui/src/util/activity.ts))
+
 ## 0.5.5
 
 Loom 0.5.5 is a Go-backend hardening pass: a latent deadlock between the

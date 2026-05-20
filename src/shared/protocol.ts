@@ -279,9 +279,12 @@ export interface ProcessSnapshot {
   processId: string;
   command: string;
   cwd: string;
+  shell: string;
+  shellExecutable: string;
   startedAt: number;
   running: boolean;
   exitCode?: number;
+  exitedAt?: number;
   totalBytes: number;
   tailOutput?: string;
 }
@@ -536,6 +539,7 @@ export type WebviewToHost =
   | { type: "approveBatch"; batchId: string; decisions: Record<string, "approved" | "rejected"> }
   | { type: "processKill"; processId: string }
   | { type: "processOpenOutput"; processId: string }
+  | { type: "processesClearCompleted" }
   | { type: "setWorkspaceFolder"; uri: string }
   | { type: "mcpReload" }
   | { type: "semanticQuerySubmit"; query: string; topK?: number }

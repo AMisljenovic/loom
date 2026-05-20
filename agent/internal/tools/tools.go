@@ -168,6 +168,8 @@ func Registry() []Tool {
 				"type": "object",
 				"properties": map[string]any{
 					"command": map[string]any{"type": "string"},
+					"cwd":     map[string]any{"type": "string", "description": "Optional workspace-relative working directory. Defaults to the workspace root."},
+					"shell":   map[string]any{"type": "string", "enum": []string{"auto", "powershell", "cmd", "bash", "sh"}, "description": "Optional shell override. Defaults to auto."},
 				},
 				"required": []string{"command"},
 			},
@@ -180,6 +182,7 @@ func Registry() []Tool {
 				"properties": map[string]any{
 					"command": map[string]any{"type": "string"},
 					"cwd":     map[string]any{"type": "string"},
+					"shell":   map[string]any{"type": "string", "enum": []string{"auto", "powershell", "cmd", "bash", "sh"}, "description": "Optional shell override. Defaults to auto."},
 				},
 				"required": []string{"command"},
 			},

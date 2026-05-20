@@ -91,7 +91,7 @@ import {
   setDiffPreview,
 } from "../tools/diffPreview";
 import { openVirtualDoc } from "../tools/openInEditor";
-import { listProcessSnapshots, onProcessesChanged, showProcessOutput } from "../tools/processes";
+import { disposeExitedProcesses, listProcessSnapshots, onProcessesChanged, showProcessOutput } from "../tools/processes";
 import { createUnifiedDiff } from "../tools/unifiedDiff";
 
 const LEGACY_STATE_KEY = "loom.conversation";
@@ -531,6 +531,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       if (!showProcessOutput(m.processId)) {
         this.post({ type: "error", error: `Unknown process ${m.processId}` });
       }
+    } else if (m.type === "processesClearCompleted") {
+      disposeExitedProcesses();
     } else if (m.type === "packSave") {
       this.savePack(m.name, m.refs);
     } else if (m.type === "packDelete") {
@@ -1153,8 +1155,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.state = this.loadSessionBody(meta.conversationId);
     this.hydratedConversationId = undefined;
     this.assistantIndex = null;
-    this.pendingApprovals.clear();
-    this.pendingApprovalCalls.clear();
+    this.cancelPendingApprovals();
     this.cancelPendingQuestions();
     this.sessionBulkCounters.clear();
     this.toolStartTimes.clear();
@@ -1189,8 +1190,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.state = this.loadSessionBody(targetId);
     this.hydratedConversationId = undefined;
     this.assistantIndex = null;
-    this.pendingApprovals.clear();
-    this.pendingApprovalCalls.clear();
+    this.cancelPendingApprovals();
     this.cancelPendingQuestions();
     this.sessionBulkCounters.clear();
     this.toolStartTimes.clear();
@@ -2325,8 +2325,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       this.activeTaskStartedAt = undefined;
       this.busy = false;
     }
-    this.pendingApprovals.clear();
-    this.pendingApprovalCalls.clear();
+    this.cancelPendingApprovals();
     this.cancelPendingQuestions();
     this.sessionBulkCounters.clear();
     this.toolStartTimes.clear();

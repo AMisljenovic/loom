@@ -378,6 +378,73 @@ function formatProcessAge(startedAt: number): string {
   return `${hours}h ago`;
 }
 
+// Auto-prune exited processes from the UI 30s after exit. The host keeps logs
+// around for 5 minutes (RETAIN_AFTER_EXIT_MS) for inspection; the UI hides
+// rows sooner so the panel doesn't accumulate stale entries with unresponsive
+// buttons.
+const PROCESS_HIDE_AFTER_EXIT_MS = 30 * 1000;
+
+function ProcessesPanel({
+  processes,
+  onOpen,
+  onKill,
+  onClearCompleted,
+}: {
+  processes: ProcessSnapshot[];
+  onOpen: (id: string) => void;
+  onKill: (id: string) => void;
+  onClearCompleted: () => void;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  const hasStale = processes.some((p) => !p.running && typeof p.exitedAt === "number");
+  useEffect(() => {
+    if (!hasStale) return;
+    const id = window.setInterval(() => setNow(Date.now()), 5000);
+    return () => window.clearInterval(id);
+  }, [hasStale]);
+  const visible = processes.filter((p) => {
+    if (p.running) return true;
+    if (typeof p.exitedAt !== "number") return true;
+    return now - p.exitedAt < PROCESS_HIDE_AFTER_EXIT_MS;
+  });
+  const completedCount = processes.filter((p) => !p.running).length;
+  return (
+    <div className="convo-list workflow-panel">
+      <div className="convo-list-head">
+        <span>Processes</span>
+        {completedCount > 0 && (
+          <button
+            className="btn btn-sm"
+            onClick={onClearCompleted}
+            title="Dismiss all exited processes"
+          >
+            Clear completed
+          </button>
+        )}
+      </div>
+      {visible.length === 0 ? (
+        <div className="workflow-empty">No background processes yet.</div>
+      ) : visible.map((proc) => (
+        <div className="workflow-row" key={proc.processId}>
+          <div className="workflow-main">
+            <div className="workflow-title">{proc.command}</div>
+            <div className="workflow-meta">
+              <span>{proc.running ? "running" : `exit ${proc.exitCode ?? "?"}`}</span>
+              <span>{formatProcessBytes(proc.totalBytes)}</span>
+              <span>{formatProcessAge(proc.startedAt)}</span>
+            </div>
+            {proc.tailOutput && <pre className="workflow-preview">{proc.tailOutput}</pre>}
+          </div>
+          <div className="workflow-actions">
+            <button className="btn btn-sm" onClick={() => onOpen(proc.processId)}>Open</button>
+            <button className="btn btn-sm" onClick={() => onKill(proc.processId)} disabled={!proc.running}>Stop</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function App() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -511,6 +578,7 @@ export function App() {
         setPendingOutputs(new Map());
         setMcpStatuses([]);
         setApprovalBatch(null);
+        setProcesses([]);
         setBusy(false);
         assistantRef.current = null;
         interruptQueuedRef.current = false;
@@ -913,30 +981,12 @@ export function App() {
         />
       )}
       {showProcesses && (
-        <div className="convo-list workflow-panel">
-          <div className="convo-list-head">
-            <span>Processes</span>
-          </div>
-          {processes.length === 0 ? (
-            <div className="workflow-empty">No background processes yet.</div>
-          ) : processes.map((proc) => (
-            <div className="workflow-row" key={proc.processId}>
-              <div className="workflow-main">
-                <div className="workflow-title">{proc.command}</div>
-                <div className="workflow-meta">
-                  <span>{proc.running ? "running" : `exit ${proc.exitCode ?? "?"}`}</span>
-                  <span>{formatProcessBytes(proc.totalBytes)}</span>
-                  <span>{formatProcessAge(proc.startedAt)}</span>
-                </div>
-                {proc.tailOutput && <pre className="workflow-preview">{proc.tailOutput}</pre>}
-              </div>
-              <div className="workflow-actions">
-                <button className="btn btn-sm" onClick={() => post({ type: "processOpenOutput", processId: proc.processId })}>Open</button>
-                <button className="btn btn-sm" onClick={() => post({ type: "processKill", processId: proc.processId })} disabled={!proc.running}>Stop</button>
-              </div>
-            </div>
-          ))}
-        </div>
+        <ProcessesPanel
+          processes={processes}
+          onOpen={(id) => post({ type: "processOpenOutput", processId: id })}
+          onKill={(id) => post({ type: "processKill", processId: id })}
+          onClearCompleted={() => post({ type: "processesClearCompleted" })}
+        />
       )}
       {showMcp && (
         <McpPanel statuses={mcpStatuses} onClose={() => setShowMcp(false)} />

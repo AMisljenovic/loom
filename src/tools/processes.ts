@@ -1,9 +1,9 @@
 import { Buffer } from "node:buffer";
 import * as childProcess from "node:child_process";
 import { randomUUID } from "node:crypto";
-import * as nodePath from "node:path";
 import * as vscode from "vscode";
 import type { ProcessSnapshot, ToolCall, ToolResult } from "../shared/protocol";
+import { resolveCommandCwd, resolveCommandShell, type ResolvedCommandShell } from "./commandShell";
 
 // Ring-buffer capacity per process. Captures the most-recent N bytes of
 // interleaved stdout+stderr; older bytes are dropped silently. The cursor
@@ -17,6 +17,7 @@ interface Process {
   id: string;
   command: string;
   cwd: string;
+  shell: ResolvedCommandShell;
   child: childProcess.ChildProcess;
   startedAt: number;
   totalBytes: number;
@@ -24,6 +25,7 @@ interface Process {
   bufStart: number; // absolute byte offset at buf[0]
   running: boolean;
   exitCode?: number;
+  exitedAt?: number;
   channel: vscode.OutputChannel;
   reapTimer?: NodeJS.Timeout;
 }
@@ -33,20 +35,23 @@ const listeners = new Set<() => void>();
 let notifyTimer: NodeJS.Timeout | undefined;
 
 export function runCommandBackground(call: ToolCall, workspaceRoot: string): ToolResult {
-  const input = call.input as { command?: string; cwd?: string };
+  const input = call.input as { command?: string; cwd?: string; shell?: string };
   if (typeof input.command !== "string" || !input.command.trim()) {
     return { callId: call.callId, ok: false, error: "command is required" };
   }
-  const cwd = input.cwd ? nodePath.resolve(workspaceRoot, input.cwd) : workspaceRoot;
+  const cwd = resolveCommandCwd(workspaceRoot, input.cwd);
+  const shell = resolveCommandShell(input.shell);
   const id = randomUUID();
   const channel = vscode.window.createOutputChannel(`Loom - ${input.command.slice(0, 40)}`);
+  channel.appendLine(`[shell: ${shell.label} (${shell.executable})]`);
+  channel.appendLine(`[cwd: ${cwd}]`);
   channel.appendLine(`$ ${input.command}`);
   channel.appendLine(`(pid pending)`);
   channel.show(true);
 
   const child = childProcess.spawn(input.command, {
     cwd,
-    shell: true,
+    shell: shell.executable,
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -54,6 +59,7 @@ export function runCommandBackground(call: ToolCall, workspaceRoot: string): Too
     id,
     command: input.command,
     cwd,
+    shell,
     child,
     startedAt: Date.now(),
     totalBytes: 0,
@@ -76,6 +82,7 @@ export function runCommandBackground(call: ToolCall, workspaceRoot: string): Too
   child.on("exit", (code, signal) => {
     proc.running = false;
     proc.exitCode = typeof code === "number" ? code : signal ? 1 : 0;
+    proc.exitedAt = Date.now();
     const line = `\n[exit ${proc.exitCode}${signal ? ` signal=${signal}` : ""}]\n`;
     appendToRing(proc, Buffer.from(line));
     channel.append(line);
@@ -85,6 +92,7 @@ export function runCommandBackground(call: ToolCall, workspaceRoot: string): Too
   child.on("error", (err) => {
     proc.running = false;
     proc.exitCode = 1;
+    proc.exitedAt = Date.now();
     const line = `\n[spawn error: ${err.message}]\n`;
     appendToRing(proc, Buffer.from(line));
     channel.append(line);
@@ -94,7 +102,14 @@ export function runCommandBackground(call: ToolCall, workspaceRoot: string): Too
   return {
     callId: call.callId,
     ok: true,
-    content: JSON.stringify({ processId: id, pid: child.pid ?? null, command: input.command }),
+    content: JSON.stringify({
+      processId: id,
+      pid: child.pid ?? null,
+      command: input.command,
+      cwd,
+      shell: shell.kind,
+      shellExecutable: shell.executable,
+    }),
   };
 }
 
@@ -174,9 +189,12 @@ export function listProcessSnapshots(): ProcessSnapshot[] {
       processId: proc.id,
       command: proc.command,
       cwd: proc.cwd,
+      shell: proc.shell.kind,
+      shellExecutable: proc.shell.executable,
       startedAt: proc.startedAt,
       running: proc.running,
       exitCode: proc.exitCode,
+      exitedAt: proc.exitedAt,
       totalBytes: proc.totalBytes,
       tailOutput: tailOutput(proc),
     }));
@@ -227,6 +245,15 @@ function disposeProcess(id: string) {
   proc.channel.dispose();
   processes.delete(id);
   scheduleNotify();
+}
+
+export function disposeExitedProcesses() {
+  for (const id of Array.from(processes.keys())) {
+    const proc = processes.get(id);
+    if (proc && !proc.running) {
+      disposeProcess(id);
+    }
+  }
 }
 
 export function disposeAllProcesses() {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseRipgrep, parseUnifiedDiff } from "./parseToolOutput";
+import { formatToolDisplayOutput, parseRipgrep, parseUnifiedDiff } from "./parseToolOutput";
 
 // ---------------------------------------------------------------------------
 // parseRipgrep
@@ -117,5 +117,87 @@ describe("parseUnifiedDiff", () => {
         // Second hunk's context should start at line 11 (from @@ +11,2 @@)
         const secondCtx = rows.find((r, i) => i > 2 && r.type === "ctx");
         expect(secondCtx?.lineNum).toBe(11);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// formatToolDisplayOutput
+// ---------------------------------------------------------------------------
+
+describe("formatToolDisplayOutput", () => {
+    it("formats run_command_background JSON as a started process line", () => {
+        const raw = JSON.stringify({
+            processId: "293e7ae4",
+            pid: 9264,
+            command: "python -m unittest discover -s tests",
+        });
+
+        expect(formatToolDisplayOutput("run_command_background", raw)).toBe(
+            "Started pid 9264 — python -m unittest discover -s tests",
+        );
+    });
+
+    it("formats run_command_background without a pid", () => {
+        const raw = JSON.stringify({
+            processId: "293e7ae4",
+            pid: null,
+            command: "npm run test:ts",
+        });
+
+        expect(formatToolDisplayOutput("run_command_background", raw)).toBe("Started — npm run test:ts");
+    });
+
+    it("decodes read_process_output and appends an exit footer when needed", () => {
+        const raw = JSON.stringify({
+            output: "...........\r\n\r\nOK\r\n",
+            cursor: 23,
+            running: false,
+            exitCode: 0,
+            totalBytes: 23,
+        });
+
+        expect(formatToolDisplayOutput("read_process_output", raw)).toBe("...........\r\n\r\nOK\r\n[exit 0]");
+    });
+
+    it("does not duplicate an existing read_process_output exit footer", () => {
+        const raw = JSON.stringify({
+            output: "OK\r\n[exit 0]\r\n",
+            cursor: 13,
+            running: false,
+            exitCode: 0,
+            totalBytes: 13,
+        });
+
+        expect(formatToolDisplayOutput("read_process_output", raw)).toBe("OK\r\n[exit 0]\r\n");
+    });
+
+    it("adds a running footer for read_process_output with streamed output", () => {
+        const raw = JSON.stringify({
+            output: "still working\r\n",
+            cursor: 15,
+            running: true,
+            exitCode: null,
+            totalBytes: 4096,
+        });
+
+        expect(formatToolDisplayOutput("read_process_output", raw)).toBe(
+            "still working\r\n[…running, 4096 bytes streamed]",
+        );
+    });
+
+    it("passes unknown tool output through unchanged", () => {
+        const raw = '{"output":"plain enough"}';
+        expect(formatToolDisplayOutput("read_file", raw)).toBe(raw);
+    });
+
+    it("passes malformed JSON through unchanged for background process tools", () => {
+        const raw = '{"output":';
+        expect(formatToolDisplayOutput("run_command_background", raw)).toBe(raw);
+        expect(formatToolDisplayOutput("read_process_output", raw)).toBe(raw);
+    });
+
+    it("returns an empty string for empty or whitespace-only input", () => {
+        expect(formatToolDisplayOutput("run_command_background", "")).toBe("");
+        expect(formatToolDisplayOutput("read_process_output", "  \n\t  ")).toBe("");
     });
 });

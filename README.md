@@ -42,6 +42,9 @@ search content with regex, locate files by name glob via `find_files`,
 inspect diagnostics, apply diffs, run foreground or background commands,
 read process output, and stop processes. Write and execute tools require
 approval unless your workspace policy allows them.
+Commands use a platform-native shell by default (PowerShell on Windows,
+`/bin/bash` or `/bin/sh` on macOS/Linux), and can opt into a specific shell or
+workspace-relative working directory when needed.
 
 **Sessions that survive reloads**
 

@@ -74,4 +74,11 @@ describe("ToolCardMinimal", () => {
         expect(html).toContain("fresh live chunk");
         expect(html).not.toContain(">stale<");
     });
+
+    it("labels command cards by the requested shell instead of always saying Bash", () => {
+        expect(renderTool(tool())).toContain('<span class="tc-label">Shell</span>');
+        expect(renderTool(tool({ input: { command: "npm test", shell: "powershell" } }))).toContain('<span class="tc-label">PowerShell</span>');
+        expect(renderTool(tool({ input: { command: "npm test", shell: "cmd" } }))).toContain('<span class="tc-label">Command</span>');
+        expect(renderTool(tool({ input: { command: "npm test", shell: "bash" } }))).toContain('<span class="tc-label">Bash</span>');
+    });
 });

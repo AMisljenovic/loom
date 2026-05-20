@@ -54,7 +54,8 @@
       "Read(//c/c/Projects/loom/agent/**)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:developers.openai.com)",
-      "Bash(npm install *)"
+      "Bash(npm install *)",
+      "Bash(awk '{print $9, $5}')"
     ],
     "deny": [
       "Bash(rm -rf:*)",

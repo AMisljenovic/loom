@@ -2,6 +2,18 @@
 
 Reverse-chronological notes for meaningful Loom prompt-layer changes.
 
+## 2026-05-20 - Command shell compatibility guidance
+
+- Affected files: `agent/internal/tools/descriptions/run_command.md`,
+  `agent/internal/tools/descriptions/run_command_background.md`,
+  `agent/internal/prompts/code.md`, `agent/internal/prompts/debug.md`.
+- Rationale: command execution is now shell-aware and defaults to a
+  platform-native shell. The model needs to know about explicit `shell` and
+  `cwd` inputs, and should retry only when output points to a shell mismatch
+  rather than blindly rerunning side-effectful commands.
+- Eval impact: tool descriptions and Code/Debug prompts change. Run
+  `npm run eval` when provider credentials are available.
+
 ## 2026-05-20 - Rules envelope: fallback annotation, dedup aliases, Copilot/Cursor scope
 
 - Affected files: `agent/internal/normalize/normalize.go`,

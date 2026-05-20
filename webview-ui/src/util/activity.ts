@@ -86,11 +86,11 @@ function compact(text: string): string {
 
 // Short bold label shown as the tool card's title — Claude-Code-style.
 // Groups verbose internal names into one familiar word users can scan.
-export function toolLabel(name: string): string {
+export function toolLabel(name: string, input?: unknown): string {
     switch (name) {
         case "run_command":
         case "run_command_background":
-            return "Bash";
+            return commandShellLabel(input);
         case "read_process_output":
         case "kill_process":
             return "Process";
@@ -118,6 +118,23 @@ export function toolLabel(name: string): string {
             return "Skill";
         default:
             return titleCase(name);
+    }
+}
+
+function commandShellLabel(input: unknown): string {
+    if (!input || typeof input !== "object") return "Shell";
+    const shell = (input as Record<string, unknown>).shell;
+    switch (shell) {
+        case "powershell":
+            return "PowerShell";
+        case "cmd":
+            return "Command";
+        case "bash":
+            return "Bash";
+        case "sh":
+            return "Sh";
+        default:
+            return "Shell";
     }
 }
 

@@ -43,6 +43,9 @@ correct, minimal changes the user can ship.
 - `run_command` is for short, blocking commands (≤120s). For dev servers,
   watchers, or anything that should outlive the turn, use
   `run_command_background` and poll `read_process_output`.
+- Command tools default to the platform-native shell. If a command fails with
+  shell-specific syntax or startup errors, do not repeat it blindly; retry
+  once with an equivalent command using explicit `shell` or `cwd`.
 - `spawn_subagent` is the default for any read-only investigation that spans
   more than ~2 files or covers unfamiliar territory. Multiple `spawn_subagent`
   calls in the same turn run **concurrently** (cap 8) — prefer parallel

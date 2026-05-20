@@ -1201,6 +1201,7 @@
 
 .markdown-body pre {
     max-width: 100%;
+    min-width: 0;
     overflow-x: auto;
     padding: 9px 10px;
     border: 1px solid var(--border-faint);
@@ -2903,14 +2904,20 @@ button.mcp-status:hover { color: var(--text-strong); }
     flex-direction: column;
     align-items: stretch;
     gap: 6px;
-    max-height: 320px;
-    overflow: auto;
+    /* Cap relative to the viewport so the panel never pushes the composer
+       off-screen on short windows, but still gives the steps list room on
+       tall ones. Head + foot are pinned (non-scrolling) below; only the
+       step list scrolls. */
+    max-height: min(50vh, 480px);
+    min-height: 0;
+    overflow: hidden;
 }
 
 .plan-handoff-head {
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-shrink: 0;
 }
 
 .plan-toggle-all {
@@ -2935,6 +2942,9 @@ button.mcp-status:hover { color: var(--text-strong); }
     display: flex;
     flex-direction: column;
     gap: 4px;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .plan-step {
@@ -2979,6 +2989,7 @@ button.mcp-status:hover { color: var(--text-strong); }
     justify-content: flex-end;
     gap: 8px;
     padding-top: 4px;
+    flex-shrink: 0;
 }
 
 /* Auto-approve popover */
@@ -3563,6 +3574,7 @@ button.mcp-status:hover { color: var(--text-strong); }
     font-family: var(--font-mono);
     font-size: 11.5px;
     line-height: 1.5;
+    min-width: 0;
 }
 
 .tc-pane-label {
@@ -3591,12 +3603,15 @@ button.mcp-status:hover { color: var(--text-strong); }
     overflow-wrap: anywhere;
     overflow: hidden;
     max-height: 4.8em;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .tc-expand {
     display: flex;
     flex-direction: column;
     background: var(--surface);
+    min-width: 0;
 }
 
 .tc-expand .tc-pane-body {
@@ -3634,6 +3649,13 @@ button.mcp-status:hover { color: var(--text-strong); }
     font-style: normal;
     line-height: 1.55;
     flex-shrink: 0;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.intent-line .markdown-body {
+    min-width: 0;
+    max-width: 100%;
 }
 
 .intent-tag {
@@ -3812,7 +3834,13 @@ button.mcp-status:hover { color: var(--text-strong); }
     }
 }
 
-/* Summary card: the turn-final assistant message, promoted on task.done. */
+/* Summary card: the turn-final assistant message, promoted on task.done.
+   `flex-shrink: 0` is load-bearing — without it the flex column transcript
+   collapses the card so its body hides behind the composer. Matches the
+   same invariant ToolCardMinimal and IntentLine document in CLAUDE.md.
+   We don't `overflow: hidden` here; long code blocks scroll inside their
+   own `<pre>` via `.markdown-body pre { overflow-x: auto }`, and clipping
+   the card vertically would hide trailing summary lines. */
 .summary-card {
     margin: 12px 0 6px;
     padding: 12px 14px;
@@ -3820,6 +3848,9 @@ button.mcp-status:hover { color: var(--text-strong); }
     border: 1px solid var(--border-faint);
     border-radius: var(--r-3);
     box-shadow: 0 1px 0 var(--border-faint);
+    min-width: 0;
+    max-width: 100%;
+    flex-shrink: 0;
 }
 
 .summary-head {
@@ -3838,6 +3869,8 @@ button.mcp-status:hover { color: var(--text-strong); }
     font-size: 13px;
     line-height: 1.6;
     color: var(--text);
+    min-width: 0;
+    max-width: 100%;
 }
 
 .summary-body>*:first-child {

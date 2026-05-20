@@ -23,6 +23,8 @@ Start a shell command as a background process and return immediately with a
 - `command` (string, required) — the command to start.
 - `cwd` (string, optional) — workspace-relative working directory. Defaults
   to the workspace root.
+- `shell` (string, optional) — one of `"auto"`, `"powershell"`, `"cmd"`,
+  `"bash"`, or `"sh"`. Defaults to `"auto"`.
 
 ## Behavior
 - Returns immediately with `{processId}`. The command keeps running until you
@@ -31,6 +33,11 @@ Start a shell command as a background process and return immediately with a
   minutes after exit. Poll `read_process_output` with the returned cursor.
 - The TS host owns the process; it survives across turns but not across
   extension restarts.
+- Shell resolution is platform-aware: `"auto"` uses PowerShell on Windows,
+  `/bin/bash` on macOS/Linux when available, and `/bin/sh` otherwise.
+- If a process fails immediately with shell-specific syntax or startup
+  failure, start a replacement once with an equivalent command and explicit
+  `shell` (or `cwd`) only when that addresses the failure.
 - Requires user approval unless the `execute` category is auto-approved.
 
 ## Examples
@@ -42,7 +49,7 @@ Start a shell command as a background process and return immediately with a
 Start the TS watcher.
 
 ```json
-{"command": "go test ./... -watch", "cwd": "agent"}
+{"command": "go test ./... -watch", "cwd": "agent", "shell": "bash"}
 ```
 
 Run Go tests in watch mode from the agent directory.

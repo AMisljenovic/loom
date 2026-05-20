@@ -81,6 +81,55 @@ describe("component layout CSS invariants", () => {
         expectDeclaration(tag, "color", "var(--text-muted)");
     });
 
+    it("constrains card width so long code blocks scroll inside the card", () => {
+        const intent = rule(".intent-line");
+        expectDeclaration(intent, "min-width", "0");
+        expectDeclaration(intent, "max-width", "100%");
+
+        const summary = rule(".summary-card");
+        expectDeclaration(summary, "min-width", "0");
+        expectDeclaration(summary, "max-width", "100%");
+        // Load-bearing: without flex-shrink:0 the card collapses behind the
+        // composer in the flex column transcript and the body disappears.
+        expectDeclaration(summary, "flex-shrink", "0");
+
+        const summaryBody = rule(".summary-body");
+        expectDeclaration(summaryBody, "min-width", "0");
+        expectDeclaration(summaryBody, "max-width", "100%");
+
+        const pane = rule(".tc-pane");
+        expectDeclaration(pane, "min-width", "0");
+
+        const expand = rule(".tc-expand");
+        expectDeclaration(expand, "min-width", "0");
+
+        const paneBody = rule(".tc-pane-body");
+        expectDeclaration(paneBody, "min-width", "0");
+        expectDeclaration(paneBody, "max-width", "100%");
+
+        const pre = rule(".markdown-body pre");
+        expectDeclaration(pre, "min-width", "0");
+        expectDeclaration(pre, "max-width", "100%");
+    });
+
+    it("pins plan-handoff head and foot while scrolling the step list", () => {
+        const structured = rule(".plan-handoff-structured");
+        expectDeclaration(structured, "max-height", "min(50vh, 480px)");
+        expectDeclaration(structured, "min-height", "0");
+        expectDeclaration(structured, "overflow", "hidden");
+
+        const head = rule(".plan-handoff-head");
+        expectDeclaration(head, "flex-shrink", "0");
+
+        const list = rule(".plan-step-list");
+        expectDeclaration(list, "flex", "1 1 auto");
+        expectDeclaration(list, "min-height", "0");
+        expectDeclaration(list, "overflow-y", "auto");
+
+        const foot = rule(".plan-handoff-foot");
+        expectDeclaration(foot, "flex-shrink", "0");
+    });
+
     it("makes sub-agent cards visually distinct from tool cards", () => {
         const card = rule(".subagent-card");
         expectDeclaration(card, "flex-shrink", "0");

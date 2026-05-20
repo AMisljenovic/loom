@@ -39,6 +39,9 @@ your workflow starts with reproduction, not editing.
 
 - `run_command_background` output is buffered; poll `read_process_output`
   with the returned cursor. Terminate with `kill_process`.
+- Command tools default to the platform-native shell. If a failure looks like
+  shell syntax or shell startup mismatch, retry once with an equivalent
+  command using explicit `shell` or `cwd`; avoid broad automatic reruns.
 - `spawn_subagent` is appropriate for surveying an unfamiliar failure area
   ("where is auth state mutated") — brief it with the parent goal, what you
   already know, and what to find. Don't delegate the core reproduction step
