@@ -25,7 +25,7 @@ func SemanticSearchTool(provider embed.Provider, store *index.VectorStore) Tool 
 			},
 			"required": []string{"query"},
 		},
-		LocalExec: func(root string, raw json.RawMessage) (string, error) {
+		LocalExec: func(ctx context.Context, root string, raw json.RawMessage) (string, error) {
 			if provider == nil || store == nil {
 				return "", fmt.Errorf("semantic_search not configured: set loom.embeddings.provider")
 			}
@@ -39,11 +39,11 @@ func SemanticSearchTool(provider embed.Provider, store *index.VectorStore) Tool 
 			if in.K <= 0 {
 				in.K = 10
 			}
-			vecs, err := provider.Embed(context.Background(), []string{in.Query})
+			vecs, err := provider.Embed(ctx, []string{in.Query})
 			if err != nil {
 				return "", fmt.Errorf("embed query: %w", err)
 			}
-			hits, err := store.Search(context.Background(), vecs[0], in.K)
+			hits, err := store.Search(ctx, vecs[0], in.K)
 			if err != nil {
 				return "", err
 			}

@@ -109,9 +109,7 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 	rulesBundle := rules.Load(p.WorkspaceRoot, family)
 
 	entry := d.Conversations.Get(p.ConversationID)
-	entry.Lock()
-	defer entry.Unlock()
-	entry.RulesHash = rulesBundle.Hash
+	entry.SetRulesHash(rulesBundle.Hash)
 
 	userPrompt := p.Prompt
 	referenceBlock, referenceImages, err := RenderReferences(p.WorkspaceRoot, p.References)
@@ -154,7 +152,7 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 		// Volatile system tail rebuilt each turn so loaded-skill bodies
 		// flow in immediately after the model calls load_skill. The cached
 		// stable prefix is unaffected.
-		volatileSystem := BuildVolatileSystem(p.WorkspaceRoot, skillsCatalogue, entry.LoadedSkills, rulesBundle)
+		volatileSystem := BuildVolatileSystem(p.WorkspaceRoot, skillsCatalogue, entry.LoadedSkillsCopy(), rulesBundle)
 		sysPrompt := llm.SystemPrompt{Stable: stableSystem, Volatile: volatileSystem}
 		if err := d.maybeSummarize(ctx, p.TaskID, p.ConversationID, sysPrompt.String(), entry); err != nil {
 			if ctx.Err() != nil {
@@ -169,7 +167,7 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 			taskID: p.TaskID,
 		}
 
-		result, err := d.LLM.Stream(ctx, sysPrompt, entry.Snapshot().Messages, toolDefs, h)
+		result, err := d.LLM.Stream(ctx, sysPrompt, entry.MessagesCopy(), toolDefs, h)
 		assistantText, toolCalls := h.finish()
 		if err != nil {
 			if ctx.Err() != nil {
@@ -189,7 +187,8 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 		entry.AddUsage(result.Usage)
 		d.Tasks.RecordUsage(p.TaskID, result.Usage.InputTokens, result.Usage.OutputTokens)
 		d.notifyUsage(p.TaskID, entry, result.Usage)
-		if opts.MaxInputTokens > 0 && entry.CumulativeInput > opts.MaxInputTokens {
+		usageTotals := entry.Usage()
+		if opts.MaxInputTokens > 0 && usageTotals.CumulativeInput > opts.MaxInputTokens {
 			d.notifyConversationUpdated(p.ConversationID, entry)
 			done("error", map[string]any{"error": "input token budget exceeded"})
 			return fmt.Errorf("input token budget exceeded")
@@ -205,8 +204,8 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 		if result.StopReason != "tool_calls" || len(toolCalls) == 0 {
 			d.Telemetry.Emit("task_completed", map[string]any{
 				"turns":               turn + 1,
-				"inputTokens":         entry.CumulativeInput,
-				"outputTokens":        entry.CumulativeOutput,
+				"inputTokens":         usageTotals.CumulativeInput,
+				"outputTokens":        usageTotals.CumulativeOutput,
 				"cacheReadTokens":     result.Usage.CacheReadTokens,
 				"cacheCreationTokens": result.Usage.CacheCreationTokens,
 			})
@@ -270,36 +269,45 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 
 func (d *Driver) maybeSummarize(ctx context.Context, taskID, conversationID, systemPrompt string, entry *conversation.Entry) error {
 	limit := d.LLM.MaxContextTokens()
-	if limit <= 0 || entry.LastInputTokens <= 0 || entry.LastInputTokens < int64(float64(limit)*0.75) {
+	totals := entry.Usage()
+	if limit <= 0 || totals.LastInputTokens <= 0 || totals.LastInputTokens < int64(float64(limit)*0.75) {
 		return nil
 	}
-	if len(entry.Messages) < 8 {
+	if totals.MessageCount < 8 {
 		return nil
 	}
 
-	cut := int(float64(len(entry.Messages)) * 0.6)
-	if keepFrom := len(entry.Messages) - 4; cut > keepFrom {
+	// Snapshot the messages once so we can compute the cut without racing
+	// against concurrent appends. The summarize LLM call runs against this
+	// snapshot; the commit below re-acquires the lock to splice the result.
+	snap := entry.MessagesCopy()
+	cut := int(float64(len(snap)) * 0.6)
+	if keepFrom := len(snap) - 4; cut > keepFrom {
 		cut = keepFrom
 	}
-	cut = safeCutBoundary(entry.Messages, cut)
+	cut = safeCutBoundary(snap, cut)
 	if cut <= 0 {
 		return nil
 	}
 
 	summaryPrompt := "Summarize the conversation so far for context continuity. Preserve file paths, decisions, and open questions."
-	summary, usage, err := d.LLM.Complete(ctx, summaryPrompt, entry.Messages[:cut])
+	summary, usage, err := d.LLM.Complete(ctx, summaryPrompt, snap[:cut])
 	if err != nil {
 		return fmt.Errorf("summarize conversation: %w", err)
 	}
 	entry.AddUsage(usage)
 	d.notifyUsage(taskID, entry, usage)
 
+	// Splice the summary in. We hold the lock for the whole replace so a
+	// concurrent Append cannot observe a half-replaced log.
+	entry.Lock()
 	rest := append([]llm.Message(nil), entry.Messages[cut:]...)
 	entry.Messages = append([]llm.Message{{
 		Role:    llm.RoleUser,
 		Content: "<summary>\n" + strings.TrimSpace(summary),
 	}}, rest...)
 	entry.LastSummarizedLen = len(entry.Messages)
+	entry.Unlock()
 	_ = d.Conn.Notify("task.summarized", map[string]any{
 		"taskId":         taskID,
 		"conversationId": conversationID,
@@ -315,16 +323,17 @@ func (d *Driver) notifyUsage(taskID string, entry *conversation.Entry, usage llm
 		rootID = node.RootID
 	}
 	subInput, subOutput, subCount := d.Tasks.TreeUsage(rootID)
+	totals := entry.Usage()
 	_ = d.Conn.Notify("task.usage", map[string]any{
 		"taskId":               taskID,
 		"inputTokens":          usage.InputTokens,
 		"outputTokens":         usage.OutputTokens,
 		"cacheCreationTokens":  usage.CacheCreationTokens,
 		"cacheReadTokens":      usage.CacheReadTokens,
-		"cumulativeInput":      entry.CumulativeInput,
-		"cumulativeOutput":     entry.CumulativeOutput,
-		"cumulativeCacheRead":  entry.CumulativeCacheRead,
-		"cumulativeCacheWrite": entry.CumulativeCacheWrite,
+		"cumulativeInput":      totals.CumulativeInput,
+		"cumulativeOutput":     totals.CumulativeOutput,
+		"cumulativeCacheRead":  totals.CumulativeCacheRead,
+		"cumulativeCacheWrite": totals.CumulativeCacheWrite,
 		"subAgentInputTokens":  subInput,
 		"subAgentOutputTokens": subOutput,
 		"subAgentCount":        subCount,
@@ -431,6 +440,11 @@ func (d *Driver) execToolsParallel(
 		return nil, err
 	}
 
+	// State-mutating tools (load_skill, scratchpad, spawn_subagent) are
+	// dispatched via the interceptor map instead of a hard-coded switch
+	// in execOneTool. See interceptors.go.
+	interceptors := d.buildInterceptors(skillsCatalogue, presetRegistry)
+
 	results := make(map[string]toolOutcome, len(calls))
 	var mu sync.Mutex
 
@@ -442,7 +456,7 @@ func (d *Driver) execToolsParallel(
 			if gctx.Err() != nil {
 				return gctx.Err()
 			}
-			out := d.execOneTool(gctx, taskID, conversationID, tc, byName, approvals, entry, skillsCatalogue, presetRegistry)
+			out := d.execOneTool(gctx, taskID, conversationID, tc, byName, approvals, entry, interceptors)
 			mu.Lock()
 			results[tc.ID] = out
 			mu.Unlock()
@@ -466,20 +480,16 @@ func (d *Driver) execOneTool(
 	byName map[string]tools.Tool,
 	approvals map[string]bool,
 	entry *conversation.Entry,
-	skillsCatalogue skills.Catalogue,
-	presetRegistry Registry,
+	interceptors map[string]localInterceptor,
 ) toolOutcome {
+	if intercept, ok := interceptors[tc.Name]; ok {
+		return intercept(ctx, taskID, conversationID, entry, tc.Input)
+	}
 	t, ok := byName[tc.Name]
 	var out toolOutcome
 	switch {
 	case !ok:
 		out = toolOutcome{err: fmt.Errorf("unknown tool: %s", tc.Name)}
-	case tc.Name == "load_skill":
-		out = execLoadSkill(entry, skillsCatalogue, tc.Input)
-	case tc.Name == "scratchpad":
-		out = execScratchpad(d.WorkspaceRoot, entry, conversationID, tc.Input)
-	case tc.Name == "spawn_subagent":
-		out = d.execSpawnSubAgent(ctx, taskID, conversationID, tc.Input, presetRegistry)
 	case t.LocalExec != nil && t.RequiresApproval && !approvals[tc.ID]:
 		out = toolOutcome{err: fmt.Errorf("user rejected")}
 	default:
@@ -811,7 +821,7 @@ func (d *Driver) execToolNoApprovalGate(
 			"requiresApproval": false,
 		})
 		startedAt := time.Now()
-		result, err := t.LocalExec(d.WorkspaceRoot, input)
+		result, err := t.LocalExec(ctx, d.WorkspaceRoot, input)
 		if err != nil {
 			_ = d.Conn.Notify("tool.localResult", map[string]any{
 				"callId":     callID,
@@ -923,38 +933,6 @@ func execLoadSkill(entry *conversation.Entry, cat skills.Catalogue, input json.R
 		parts = append(parts, "no skills loaded")
 	}
 	return toolOutcome{content: strings.Join(parts, "; ")}
-}
-
-// ExecTool dispatches a single tool, going through the full approval gate.
-// Retained for compatibility with any callers outside the loop. The loop
-// itself uses execToolsParallel.
-func (d *Driver) ExecTool(taskID, callID, name string, input json.RawMessage) (string, error) {
-	for _, t := range d.registry() {
-		if t.Name != name {
-			continue
-		}
-		if t.LocalExec != nil && t.RequiresApproval {
-			var approval struct {
-				Approved bool `json:"approved"`
-			}
-			err := d.Conn.Request("tool.approve", map[string]any{
-				"callId":           callID,
-				"taskId":           taskID,
-				"name":             name,
-				"input":            input,
-				"requiresApproval": true,
-			}, &approval)
-			if err != nil {
-				return "", err
-			}
-			if !approval.Approved {
-				return "", fmt.Errorf("user rejected")
-			}
-		}
-		content, _, err := d.execToolNoApprovalGate(context.Background(), taskID, callID, t, input)
-		return content, err
-	}
-	return "", fmt.Errorf("unknown tool: %s", name)
 }
 
 func (d *Driver) registry() []tools.Tool {

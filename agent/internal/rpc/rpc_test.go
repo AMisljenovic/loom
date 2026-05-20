@@ -27,6 +27,31 @@ func TestRequestContextCancelRemovesPending(t *testing.T) {
 	}
 }
 
+func TestDispatchRecoversFromHandlerPanic(t *testing.T) {
+	var out bytes.Buffer
+	conn := New(bytes.NewReader(nil), &out)
+	conn.Handle("boom", func(_ json.RawMessage) (any, error) {
+		panic("kaboom")
+	})
+
+	id := json.RawMessage("42")
+	conn.dispatch(&Message{
+		JSONRPC: "2.0",
+		ID:      &id,
+		Method:  "boom",
+	})
+
+	// Peer must receive a JSON-RPC error response (internal error -32603)
+	// with the original request id — not a hung connection.
+	frame := out.String()
+	if !bytes.Contains([]byte(frame), []byte(`"code":-32603`)) {
+		t.Fatalf("expected internal-error response in frame, got %q", frame)
+	}
+	if !bytes.Contains([]byte(frame), []byte(`"id":42`)) {
+		t.Fatalf("expected id=42 in response frame, got %q", frame)
+	}
+}
+
 func TestLateResponseAfterCancelIsIgnored(t *testing.T) {
 	var out bytes.Buffer
 	conn := New(bytes.NewReader(nil), &out)

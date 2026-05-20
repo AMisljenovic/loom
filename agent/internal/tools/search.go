@@ -32,7 +32,16 @@ var (
 	rgPath string
 )
 
+// Search runs a content search without an external cancellation context.
+// Equivalent to SearchCtx(context.Background(), root, in); retained for
+// callers (notably internal/eval) that don't have a task ctx to thread.
 func Search(root string, in SearchInput) (string, error) {
+	return SearchCtx(context.Background(), root, in)
+}
+
+// SearchCtx is the cancellable variant. The ripgrep subprocess and the
+// directory walk both respect ctx so a user cancel propagates promptly.
+func SearchCtx(ctx context.Context, root string, in SearchInput) (string, error) {
 	if strings.TrimSpace(in.Query) == "" {
 		return "", errors.New("query is required")
 	}
@@ -46,9 +55,9 @@ func Search(root string, in SearchInput) (string, error) {
 		return "", err
 	}
 	if path := ripgrepPath(); path != "" {
-		return searchWithRipgrep(root, path, in)
+		return searchWithRipgrep(ctx, root, path, in)
 	}
-	return searchWithWalk(root, in)
+	return searchWithWalk(ctx, root, in)
 }
 
 func ripgrepPath() string {
@@ -85,8 +94,8 @@ func (a *searchAccumulator) done() string {
 	return b.String()
 }
 
-func searchWithRipgrep(root, rg string, in SearchInput) (string, error) {
-	ctx, cancel := context.WithCancel(context.Background())
+func searchWithRipgrep(parent context.Context, root, rg string, in SearchInput) (string, error) {
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
 	args := []string{"--json", fmt.Sprintf("--max-count=%d", in.MaxResults), "-e", in.Query}
@@ -160,7 +169,7 @@ func decodeRipgrep(r io.Reader, acc *searchAccumulator, maxResults int, cancel c
 	}
 }
 
-func searchWithWalk(root string, in SearchInput) (string, error) {
+func searchWithWalk(ctx context.Context, root string, in SearchInput) (string, error) {
 	re, err := regexp.Compile(in.Query)
 	if err != nil {
 		return "", err
@@ -172,6 +181,9 @@ func searchWithWalk(root string, in SearchInput) (string, error) {
 
 	acc := newSearchAccumulator()
 	walkErr := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err != nil {
 			return nil
 		}
@@ -199,6 +211,9 @@ func searchWithWalk(root string, in SearchInput) (string, error) {
 	})
 	if walkErr != nil && !errors.Is(walkErr, filepath.SkipAll) {
 		return "", walkErr
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 	return acc.done(), nil
 }
@@ -243,7 +258,7 @@ func searchFile(root, fullPath string, re *regexp.Regexp, acc *searchAccumulator
 func cleanRelativePath(root, rel string) (string, error) {
 	clean := filepath.Clean(rel)
 	if filepath.IsAbs(clean) {
-		return "", errors.New("path must be relative to workspace root")
+		return "", fmt.Errorf("path %q must be relative to workspace root", rel)
 	}
 	full := filepath.Join(root, clean)
 	rootAbs, err := filepath.Abs(root)
@@ -255,7 +270,7 @@ func cleanRelativePath(root, rel string) (string, error) {
 		return "", err
 	}
 	if fullAbs != rootAbs && !strings.HasPrefix(fullAbs, rootAbs+string(os.PathSeparator)) {
-		return "", errors.New("path escapes workspace root")
+		return "", fmt.Errorf("path %q escapes workspace root (resolves to %s, outside %s)", rel, fullAbs, rootAbs)
 	}
 	return fullAbs, nil
 }

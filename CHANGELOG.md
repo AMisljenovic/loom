@@ -1,5 +1,133 @@
 # Changelog
 
+## 0.5.5
+
+Loom 0.5.5 is a Go-backend hardening pass: a latent deadlock between the
+scratchpad tool and the per-task lock is gone, RPC handler panics no
+longer wedge the connection, user cancels now propagate into long-running
+tools, and the rules envelope tells the model the difference between a
+native CLAUDE.md and one picked up via the fallback chain.
+
+### Fixed
+
+- **`Entry.Lock()` held across the entire LLM stream.** The per-task lock
+  in `Driver.run()` wrapped every turn — including `LLM.Stream(...)` and
+  `maybeSummarize` — so any concurrent path that touched the same
+  conversation (notably `Store.Hydrate()` on session reload) blocked for
+  the lifetime of the task. Worse, the `scratchpad` interceptor took its
+  own `Entry.Lock()` from inside an errgroup child goroutine while the
+  parent goroutine sat in `errgroup.Wait()` holding the task lock — a
+  latent deadlock that would trip the first time the model called
+  `scratchpad` mid-turn. `conversation.Entry`'s mutating methods now
+  self-lock; the task lock is gone; `Hydrate` no longer blocks on a
+  running task and the scratchpad deadlock dissolves.
+  ([agent/internal/conversation/store.go](agent/internal/conversation/store.go),
+  [agent/internal/loop/loop.go](agent/internal/loop/loop.go))
+- **RPC dispatch goroutine died silently on handler panic.** A panicking
+  JSON-RPC handler killed the dispatch goroutine; `Serve()` kept reading
+  but the awaiting peer blocked forever waiting for a response that
+  would never come. `dispatch` now wraps the handler call in a recovery
+  shim that logs a stack to stderr and replies with a generic
+  internal-error (`-32603`) carrying the original request id, so the
+  connection stays usable.
+  ([agent/internal/rpc/rpc.go](agent/internal/rpc/rpc.go))
+- **RPC frame could desync on partial write.** The previous codec wrote
+  the `Content-Length` header and the body as two separate `Write`
+  calls; a failure between them left the peer reading `Content-Length: N`
+  followed by fewer than N bytes. The frame is now assembled into one
+  buffer and written in a single call.
+  ([agent/internal/rpc/rpc.go](agent/internal/rpc/rpc.go))
+- **User cancel didn't propagate into long-running tools.** `Tool.LocalExec`
+  had no `ctx` parameter, so `search`, `find_files`, `semantic_search`,
+  and every MCP tool internally used `context.Background()` and ran to
+  completion even after the task was cancelled. The signature now takes
+  `ctx`; the ripgrep subprocess, the directory walker, the embeddings
+  call, and `mcp.Manager.call` all honour it. A dead `Driver.ExecTool`
+  method (no callers) was removed.
+  ([agent/internal/tools/tools.go](agent/internal/tools/tools.go),
+  [agent/internal/tools/search.go](agent/internal/tools/search.go),
+  [agent/internal/tools/find_files.go](agent/internal/tools/find_files.go),
+  [agent/internal/mcp/manager.go](agent/internal/mcp/manager.go))
+- **MCP retry loops survived agent shutdown.** After a crashed MCP
+  server, `monitorRuntime`/`retryAfterFailure` slept on bare
+  `time.Sleep` and then called `startRuntime(context.Background(), ...)`,
+  so a `Close()` during the back-off would leave goroutines napping
+  through delays and trying to respawn subprocesses against a tearing
+  process. `Manager` now owns a `lifeCtx` that `Close()` cancels; a new
+  `sleepCtx` helper makes the retry waits short-circuit on shutdown and
+  all respawn paths use the same context.
+  ([agent/internal/mcp/manager.go](agent/internal/mcp/manager.go))
+- **Vector store silently truncated on iteration error.** The
+  `SELECT … FROM chunks JOIN vectors` loop in
+  `agent/internal/index/vector.go` decoded rows and skipped bad blobs,
+  but never called `rows.Err()` after iteration. A mid-stream DB error
+  was returned as a (possibly empty) partial result with no signal that
+  anything went wrong. Added `rows.Err()` and an early `ctx.Err()`
+  check before the unbounded post-loop sort so a cancelled query
+  doesn't waste CPU on results nobody will read.
+
+### Added
+
+- **Rules envelope tells the model what's native vs. fallback.** When a
+  workspace has only `CLAUDE.md` and Loom runs under OpenAI, the file
+  used to land as `<rule source="CLAUDE.md" origin="claude">` with no
+  hint that it came via the universal fallback chain — Claude-specific
+  prose ("you are Claude…") could leak into an OpenAI conversation as
+  authoritative. Per-rule tags now carry `loaded-as="fallback"` when the
+  origin doesn't match the active family, and the envelope adds a
+  one-line directive telling the model to apply the substance of those
+  rules and ignore any model-specific identity claims. Native bundles
+  are unaffected.
+  ([agent/internal/rules/rules.go](agent/internal/rules/rules.go))
+- **Content-dedup preserves source attribution.** When two rule files
+  shared identical normalised content (e.g. `CLAUDE.md` and a copilot
+  file with the same prose), the dedup silently dropped the second
+  path. The user couldn't see why their copilot rule "didn't apply" —
+  it had, just rendered as the first file. The kept block now carries
+  an `also="alt1,alt2"` attribute and the alias paths surface in
+  `Bundle.Sources`.
+  ([agent/internal/rules/rules.go](agent/internal/rules/rules.go))
+- **Copilot / Cursor `applyTo:` and `globs:` scope survives
+  frontmatter stripping.** A file scoped to `**/*.ts` used to land in
+  the prompt as a global rule because the whole YAML block was stripped.
+  `normalize.Rule` now parses the two scope fields (Copilot's `applyTo`
+  and Cursor's `globs`, both scalar or list) and prepends a leading
+  `> Scope: applies to **/*.ts` markdown blockquote so the model still
+  sees the intent.
+  ([agent/internal/normalize/normalize.go](agent/internal/normalize/normalize.go))
+- **`agent/internal/familycfg/` is now the canonical table mapping a
+  provider family to its convention directories.** The same
+  `switch family { … }` block was previously triplicated across
+  `rules.nativeCandidates` / `fallbackCandidates`,
+  `skills.nativeSkillsDir` / `fallbackSkillsDirs`, and
+  `loop.nativeAgentsDir` / `fallbackAgentsDirs`. Adding a fourth
+  provider family is now a single entry in `canonical`.
+- **`localInterceptor` map replaces the hard-coded special-case switch
+  for state-mutating tools.** `load_skill`, `scratchpad`, and
+  `spawn_subagent` used to live as three string-comparison branches in
+  `execOneTool`; they now register in a map (see
+  [agent/internal/loop/interceptors.go](agent/internal/loop/interceptors.go))
+  so adding another state-mutating tool doesn't touch the dispatcher.
+
+### Changed
+
+- **`normalize.Version` bumped 1 → 2.** Mixed unconditionally into
+  `Bundle.Hash`, so the deliberate envelope-shape changes above produce
+  a one-shot cache miss after upgrade and re-stabilise. See
+  [docs/prompt-changelog.md](docs/prompt-changelog.md) for the full
+  byte-level diff.
+- **`Tool.LocalExec` signature added a `ctx` parameter.** Internal
+  change; all in-tree tools, the MCP adapter, and any tests were
+  updated. Tools that don't need cancellation may continue to ignore
+  the parameter.
+- **`normalize.IsExternalOrigin` is the single source of truth for "is
+  this path a non-Loom convention?"** Replaces the same predicate
+  open-coded in `skills.IsExternalSource` and
+  `loop.isExternalPresetSource`.
+- **`cleanRelativePath` error messages now name the offending path** and
+  show where it resolved relative to the workspace root, so a user who
+  hits the "escapes workspace root" path gets enough context to fix it.
+
 ## 0.5.4
 
 Loom 0.5.4 stops Azure/OpenAI tasks from crashing after long context

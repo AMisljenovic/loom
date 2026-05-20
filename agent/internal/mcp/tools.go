@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -36,7 +37,7 @@ func PrefixedToolName(serverName, toolName string) string {
 	return "mcp__" + serverName + "__" + toolName
 }
 
-func ToTools(serverName string, remote []RemoteTool, call func(name string, input json.RawMessage) (string, error)) []tools.Tool {
+func ToTools(serverName string, remote []RemoteTool, call func(ctx context.Context, name string, input json.RawMessage) (string, error)) []tools.Tool {
 	out := make([]tools.Tool, 0, len(remote))
 	for _, rt := range remote {
 		rt := rt
@@ -59,8 +60,8 @@ func ToTools(serverName string, remote []RemoteTool, call func(name string, inpu
 			Description:      description,
 			InputSchema:      schema,
 			RequiresApproval: true,
-			LocalExec: func(_ string, input json.RawMessage) (string, error) {
-				return call(rt.Name, input)
+			LocalExec: func(ctx context.Context, _ string, input json.RawMessage) (string, error) {
+				return call(ctx, rt.Name, input)
 			},
 		})
 	}

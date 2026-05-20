@@ -181,16 +181,23 @@ handoff:
     start. `.loomrules` is always loaded first and declared top-precedence in
     the prompt envelope. Provider-native files come next: CLAUDE.md +
     `.claude/rules/*.md` for Anthropic, AGENTS.md + `.codex/rules/*.md` for
-    OpenAI, GEMINI.md + `.gemini/rules/*.md` for Gemini. Gemini family is
-    detected from the model id (any model whose name starts with `gemini`,
-    including `models/gemini-*`) regardless of which provider preset routed
-    it. When the provider's native files are absent, a universal fallback
-    chain picks up the other providers' files, then
-    `.github/copilot-instructions.md`, `.github/instructions/*.md`,
-    `.cursor/rules/*.md`, and `.cursorrules`, so Loom respects whichever
-    convention the workspace already uses. The bundle is capped at 32 KB,
-    deduped by content hash, and lives in the volatile tail of the system
-    prompt.
+    OpenAI, GEMINI.md + `.gemini/rules/*.md` for Gemini — the mapping lives
+    in `agent/internal/familycfg/familycfg.go` (the single source of truth
+    shared with the skills and presets loaders). Gemini family is detected
+    from the model id (any model whose name starts with `gemini`, including
+    `models/gemini-*`) regardless of which provider preset routed it. When
+    the provider's native files are absent, a universal fallback chain picks
+    up the other providers' files, then `.github/copilot-instructions.md`,
+    `.github/instructions/*.md`, `.cursor/rules/*.md`, and `.cursorrules`,
+    so Loom respects whichever convention the workspace already uses. Per
+    file the rule tag carries `loaded-as="fallback"` when the rule's origin
+    doesn't match the active family (and the envelope warns the model to
+    apply substance, not identity claims), and `also="alt1,alt2"` when
+    identical content collapsed several source paths into one rendered
+    entry. Copilot/Cursor frontmatter is stripped but `applyTo:` / `globs:`
+    survives as a leading `> Scope: applies to …` markdown blockquote. The
+    bundle is capped at 32 KB, deduped on normalised content hash, and
+    lives in the volatile tail of the system prompt.
 19. Skills, sub-agents, and commands are auto-imported with the same
     provider-family convention. Loom-native config (`builtin` plus
     `.loom/<kind>/`) wins; `.loom/<kind>/` overrides builtins, builtins

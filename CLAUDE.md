@@ -72,19 +72,38 @@ change to a message type must be made on both sides.
   detects the origin of each rule/skill/preset file (`loom`, `claude`,
   `codex`, `copilot`, `cursor`, `gemini`) and applies deterministic,
   idempotent transforms before content reaches the prompt: Copilot and
-  Cursor frontmatter is stripped, redundant `# CLAUDE.md` / `# AGENTS.md`
+  Cursor frontmatter is stripped (but `applyTo:` / `globs:` scope is
+  preserved as a leading `> Scope: applies to …` markdown blockquote so
+  file-glob scoping survives), redundant `# CLAUDE.md` / `# AGENTS.md`
   / `# GEMINI.md` H1s are dropped, and `.loomrules` / `.loom/` content
-  always passes through verbatim. The rules envelope wraps every included file in
-  `<rule source origin>…</rule>` blocks and advertises the deduped origin
-  list on the outer `<rules sources origins precedence>` tag. `normalize.Version`
-  is mixed into `Bundle.Hash` so bumping the constant deliberately
-  invalidates cached prefixes after a transform change. Bodies are
-  deduplicated on their *normalised* hash, so identical prose across
-  foreign formats collapses to one entry. `Skill.Origin` and
-  `Preset.Origin` carry the same identifier; `RenderLoaded()` adds
-  `origin="..."` to `<skill>` tags only for non-loom origins, keeping the
-  native-skill rendering byte-stable. Do not put origin in the catalogue
-  lines (`CatalogueLines()`) — that lives in the stable prefix.
+  always passes through verbatim. The rules envelope wraps every included
+  file in `<rule source origin>…</rule>` blocks, advertises the deduped
+  origin list on the outer `<rules sources origins precedence>` tag, and
+  adds two attributes when applicable: `loaded-as="fallback"` on rules
+  picked up via the universal chain whose origin doesn't match the active
+  family (and a one-line envelope sentence tells the model to ignore
+  identity claims), and `also="alt1,alt2"` on the kept block when
+  identical content collapsed multiple source paths into one rendered
+  entry (the alias paths still surface in the top-level `sources=` list).
+  `normalize.Version` is mixed into `Bundle.Hash` unconditionally so
+  bumping the constant deliberately invalidates cached prefixes after a
+  transform change. Bodies are deduplicated on their *normalised* hash,
+  so identical prose across foreign formats collapses to one entry.
+  `Skill.Origin` and `Preset.Origin` carry the same identifier;
+  `RenderLoaded()` adds `origin="..."` to `<skill>` tags only for
+  non-loom origins, keeping the native-skill rendering byte-stable. Do
+  not put origin in the catalogue lines (`CatalogueLines()`) — that
+  lives in the stable prefix.
+- **Provider-family routing lives in one place.**
+  `agent/internal/familycfg/` is the canonical table mapping family
+  ("anthropic" / "openai" / "gemini") to its native rules file, rules
+  directory, skills directory, and agents directory. Rules
+  (`rules.nativeCandidates` / `fallbackCandidates`), skills
+  (`skills.nativeSkillsDir` / `fallbackSkillsDirs`), and presets
+  (`loop.nativeAgentsDir` / `fallbackAgentsDirs`) all delegate here.
+  Adding a new provider family is one entry in `canonical`. The
+  fallback chain is derived from the same table, so its byte order is
+  guaranteed consistent across all three consumers.
 - **Skills are advertised in the prefix, loaded on demand.** The catalogue
   (id + synopsis) sits in the stable prefix; bodies are injected into the
   volatile tail only after the model calls `load_skill`. Builtin skills
@@ -292,6 +311,8 @@ change to a message type must be made on both sides.
 | MCP client/manager | `agent/internal/mcp/` |
 | Anthropic SDK wrapper | `agent/internal/llm/llm.go` |
 | Tool registry | `agent/internal/tools/tools.go` |
+| Local-state-mutating tool interceptors | `agent/internal/loop/interceptors.go` (load_skill, scratchpad, spawn_subagent) |
+| Provider-family directories (rules/skills/agents) | `agent/internal/familycfg/familycfg.go` |
 | Workspace symbol index | `agent/internal/index/` (CGO tree-sitter when available, pure-Go fallback) |
 | Embeddings providers | `agent/internal/embed/` (Ollama, Voyage) |
 | Vector store (SQLite) | `agent/internal/index/vector.go` (writes to `<workspace>/.loom/index.db`) |
@@ -388,10 +409,20 @@ genuinely needs no doc update (e.g. a typo fix in source).
 2. Add the tool definition to `agent/internal/tools/tools.go`. Include
    `InputSchema` and set `RequiresApproval` appropriately (writes and
    command execution always require approval).
-3. If Go-side: implement `LocalExec`.
+3. If Go-side: implement `LocalExec`. Its signature is
+   `func(ctx context.Context, workspaceRoot string, input json.RawMessage) (string, error)`
+   — honour `ctx` for any long-running work (network calls, large
+   walks) so a user cancel propagates. Pure synchronous file ops may
+   ignore it.
 4. If TS-side: leave `LocalExec` nil and add a case to the switch in
    `src/tools/index.ts`.
-5. Update the system prompt the loop sends to the model so it knows the tool
+5. If the tool needs to mutate conversation state (like `load_skill` or
+   `scratchpad`) or fan out new tasks (like `spawn_subagent`), leave
+   `LocalExec` nil and register a `localInterceptor` in
+   `agent/internal/loop/interceptors.go` — that's how the existing
+   three state-mutating tools are dispatched without expanding the
+   generic `LocalExec` signature.
+6. Update the system prompt the loop sends to the model so it knows the tool
    exists.
 
 ## What to do when asked to support a new LLM provider

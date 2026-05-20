@@ -142,15 +142,22 @@ newline-delimited JSON-RPC over stdio.
     start. `.loomrules` is always loaded first and declared top-precedence in
     the prompt envelope. Provider-native files are loaded next: CLAUDE.md +
     `.claude/rules/*.md` for Anthropic, AGENTS.md + `.codex/rules/*.md` for
-    OpenAI, GEMINI.md + `.gemini/rules/*.md` for Gemini. Gemini family is
-    detected from the model id (`gemini*`, including `models/gemini-*`)
-    regardless of which provider preset routed it. When the provider's
-    native files are absent, a universal fallback chain picks up the other
-    providers' files, then `.github/copilot-instructions.md`,
-    `.github/instructions/*.md`, `.cursor/rules/*.md`, and `.cursorrules`,
-    so Loom respects whatever convention the workspace already uses. The
-    whole bundle is capped at 32 KB, deduped by content hash, and lives in
-    the volatile tail of the system prompt.
+    OpenAI, GEMINI.md + `.gemini/rules/*.md` for Gemini — the directory
+    mapping is owned by `agent/internal/familycfg/familycfg.go` (one
+    canonical table shared with the skills and presets loaders). Gemini
+    family is detected from the model id (`gemini*`, including
+    `models/gemini-*`) regardless of which provider preset routed it. When
+    the provider's native files are absent, a universal fallback chain
+    picks up the other providers' files, then
+    `.github/copilot-instructions.md`, `.github/instructions/*.md`,
+    `.cursor/rules/*.md`, and `.cursorrules`. Per-rule tags carry
+    `loaded-as="fallback"` when a foreign-family file was picked up via
+    fallback (the envelope tells the model to apply substance, ignore
+    identity claims), and `also="..."` when content-dedup folded extra
+    source paths into one rendered block. Copilot/Cursor frontmatter is
+    stripped but `applyTo:` / `globs:` survives as a leading
+    `> Scope: applies to …` blockquote so file-glob scoping is preserved.
+    Bundle cap 32 KB; lives in the volatile tail.
 20. Skills, sub-agents, and commands are imported by provider family:
     Anthropic uses `.claude/<kind>/`; OpenAI, OpenAI-compatible, and local
     use `.codex/<kind>/`; Gemini uses `.gemini/<kind>/`. The other family

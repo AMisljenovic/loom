@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -126,17 +128,26 @@ func (c *Conn) dispatch(m *Message) {
 			if !ok {
 				resp.Error = &RPCError{Code: -32601, Message: "method not found"}
 			} else {
-				result, err := h(m.Params)
+				result, err := callHandler(m.Method, h, m.Params)
 				if err != nil {
-					resp.Error = &RPCError{Code: -32000, Message: err.Error()}
+					// Preserve a handler-supplied *RPCError (notably the
+					// internal-error from callHandler's panic recovery)
+					// instead of flattening every error to -32000.
+					if rpcErr, ok := err.(*RPCError); ok {
+						resp.Error = rpcErr
+					} else {
+						resp.Error = &RPCError{Code: -32000, Message: err.Error()}
+					}
 				} else {
 					resp.Result = mustMarshal(result)
 				}
 			}
 			_ = c.write(&resp)
 		} else if ok {
-			// notification
-			_, _ = h(m.Params)
+			// notification — no response, but still recover so a buggy
+			// notification handler can't bring the dispatch goroutine down
+			// without a trace.
+			_, _ = callHandler(m.Method, h, m.Params)
 		}
 		return
 	}
@@ -162,13 +173,33 @@ func (c *Conn) write(m *Message) error {
 	if err != nil {
 		return err
 	}
+	// Assemble header + body into one buffer so the peer can never observe
+	// a half-written frame between fields. Even though Write isn't atomic
+	// at the OS level, this minimises the partial-write window and means
+	// a marshal-after-header-write desync is impossible.
+	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(body))
+	frame := make([]byte, 0, len(header)+len(body))
+	frame = append(frame, header...)
+	frame = append(frame, body...)
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	if _, err := fmt.Fprintf(c.out, "Content-Length: %d\r\n\r\n", len(body)); err != nil {
-		return err
-	}
-	_, err = c.out.Write(body)
+	_, err = c.out.Write(frame)
 	return err
+}
+
+// callHandler invokes h while guarding against panics. A panicking handler
+// would otherwise kill the dispatch goroutine and leave the JSON-RPC caller
+// blocked forever waiting for a response. We log a stack to stderr for the
+// operator and surface a generic internal-error to the peer.
+func callHandler(method string, h Handler, params json.RawMessage) (result any, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "rpc: handler %q panicked: %v\n%s\n", method, r, debug.Stack())
+			err = &RPCError{Code: -32603, Message: fmt.Sprintf("internal error in %q", method)}
+			result = nil
+		}
+	}()
+	return h(params)
 }
 
 func (c *Conn) readMessage() (*Message, error) {

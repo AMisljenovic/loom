@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,7 +18,11 @@ type Tool struct {
 	RequiresApproval bool
 	// If LocalExec is non-nil, the agent executes it in-process.
 	// If nil, the agent asks the TS host to execute via tool.call RPC.
-	LocalExec func(workspaceRoot string, input json.RawMessage) (string, error)
+	//
+	// ctx is the task context — implementations should honour cancellation
+	// for any long-running work (network calls, large file scans) so the
+	// user's Cancel propagates promptly. Pure in-memory tools may ignore it.
+	LocalExec func(ctx context.Context, workspaceRoot string, input json.RawMessage) (string, error)
 }
 
 // Registry returns the static tool set. Each tool's `Description` is overlaid
@@ -37,7 +42,7 @@ func Registry() []Tool {
 				},
 				"required": []string{"path"},
 			},
-			LocalExec: func(root string, raw json.RawMessage) (string, error) {
+			LocalExec: func(_ context.Context, root string, raw json.RawMessage) (string, error) {
 				var in struct {
 					Path   string `json:"path"`
 					Offset int    `json:"offset"`
@@ -58,7 +63,7 @@ func Registry() []Tool {
 				},
 				"required": []string{"path"},
 			},
-			LocalExec: func(root string, raw json.RawMessage) (string, error) {
+			LocalExec: func(_ context.Context, root string, raw json.RawMessage) (string, error) {
 				var in struct {
 					Path string `json:"path"`
 				}
@@ -92,12 +97,12 @@ func Registry() []Tool {
 				},
 				"required": []string{"query"},
 			},
-			LocalExec: func(root string, raw json.RawMessage) (string, error) {
+			LocalExec: func(ctx context.Context, root string, raw json.RawMessage) (string, error) {
 				var in SearchInput
 				if err := json.Unmarshal(raw, &in); err != nil {
 					return "", err
 				}
-				return Search(root, in)
+				return SearchCtx(ctx, root, in)
 			},
 		},
 		{
@@ -111,12 +116,12 @@ func Registry() []Tool {
 				},
 				"required": []string{"pattern"},
 			},
-			LocalExec: func(root string, raw json.RawMessage) (string, error) {
+			LocalExec: func(ctx context.Context, root string, raw json.RawMessage) (string, error) {
 				var in FindFilesInput
 				if err := json.Unmarshal(raw, &in); err != nil {
 					return "", err
 				}
-				return FindFiles(root, in)
+				return FindFilesCtx(ctx, root, in)
 			},
 		},
 		{

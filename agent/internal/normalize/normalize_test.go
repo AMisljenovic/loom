@@ -32,8 +32,8 @@ func TestOrigin(t *testing.T) {
 	}
 }
 
-func TestRule_CopilotStripsFrontmatter(t *testing.T) {
-	raw := "---\napplyTo: \"**\"\ndescription: ignore me\n---\n# Use tabs.\nKeep PRs small.\n"
+func TestRule_CopilotStripsFrontmatterAndPreservesScope(t *testing.T) {
+	raw := "---\napplyTo: \"**/*.ts\"\ndescription: ignore me\n---\n# Use tabs.\nKeep PRs small.\n"
 	body, origin := Rule(".github/copilot-instructions.md", []byte(raw))
 	if origin != OriginCopilot {
 		t.Fatalf("origin = %q, want copilot", origin)
@@ -42,19 +42,40 @@ func TestRule_CopilotStripsFrontmatter(t *testing.T) {
 	if strings.Contains(got, "applyTo") {
 		t.Errorf("frontmatter not stripped:\n%s", got)
 	}
-	if !strings.HasPrefix(got, "# Use tabs.") {
-		t.Errorf("body should start with H1, got:\n%s", got)
+	// applyTo MUST be preserved as a leading scope line so the model
+	// honours the file-glob scoping instead of treating the rule as global.
+	if !strings.HasPrefix(got, "> Scope: applies to **/*.ts\n\n") {
+		t.Errorf("expected scope blockquote prefix, got:\n%s", got)
+	}
+	if !strings.Contains(got, "# Use tabs.") {
+		t.Errorf("body lost:\n%s", got)
 	}
 }
 
-func TestRule_CursorStripsFrontmatter(t *testing.T) {
-	raw := "---\ndescription: x\nglobs: [\"**/*.ts\"]\nalwaysApply: true\n---\nuse semicolons\n"
+func TestRule_CursorPreservesGlobsAsScope(t *testing.T) {
+	// Cursor uses `globs:` not `applyTo:`. Both fields collapse to the
+	// same "> Scope: ..." line so the model sees identical intent.
+	raw := "---\ndescription: x\nglobs: [\"**/*.ts\", \"**/*.tsx\"]\nalwaysApply: true\n---\nuse semicolons\n"
 	body, origin := Rule(".cursor/rules/style.md", []byte(raw))
 	if origin != OriginCursor {
 		t.Fatalf("origin = %q, want cursor", origin)
 	}
-	if string(body) != "use semicolons\n" {
-		t.Errorf("expected only body, got %q", string(body))
+	got := string(body)
+	if !strings.HasPrefix(got, "> Scope: applies to **/*.ts, **/*.tsx\n\n") {
+		t.Errorf("expected scope blockquote prefix, got:\n%s", got)
+	}
+	if !strings.HasSuffix(got, "use semicolons\n") {
+		t.Errorf("body lost:\n%s", got)
+	}
+}
+
+func TestRule_CopilotNoApplyToOmitsScopeLine(t *testing.T) {
+	// When the frontmatter has no scope field, the body is emitted as-is
+	// so the existing prompt bytes for those files don't change shape.
+	raw := "---\ndescription: x\n---\n# body\n"
+	body, _ := Rule(".github/copilot-instructions.md", []byte(raw))
+	if string(body) != "# body\n" {
+		t.Errorf("expected bare body, got %q", string(body))
 	}
 }
 
@@ -161,7 +182,7 @@ func TestRule_Idempotent(t *testing.T) {
 		"GEMINI.md":                       "# GEMINI.md\n\nrule body\n",
 		".gemini/rules/r.md":              "# GEMINI.md\n\nrule body\n",
 		".github/copilot-instructions.md": "---\napplyTo: \"**\"\n---\nbody\n",
-		".cursor/rules/r.md":              "---\nglobs: [\"*\"]\n---\ncursor body\n",
+		".cursor/rules/r.md":              "---\nglobs: [\"**/*.go\"]\n---\ncursor body\n",
 		".loomrules":                      "loom body\n",
 	}
 	for src, raw := range inputs {

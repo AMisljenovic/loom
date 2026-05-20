@@ -46,6 +46,8 @@ type Entry struct {
 // LoadSkills appends previously-unseen ids to LoadedSkills, preserving order
 // of first appearance. Returns the ids that were newly added (in order).
 func (e *Entry) LoadSkills(ids []string) []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	seen := make(map[string]bool, len(e.LoadedSkills))
 	for _, id := range e.LoadedSkills {
 		seen[id] = true
@@ -155,6 +157,11 @@ func healOrphanToolCalls(messages []llm.Message) []llm.Message {
 	return out
 }
 
+// Lock and Unlock expose the entry's mutex for callers that need an atomic
+// multi-step read-modify-write block (currently: scratchpad action handling
+// and the summarize-and-replace path). Single-method accessors lock
+// internally and should be preferred — only reach for these when a sequence
+// of field accesses must observe a consistent state.
 func (e *Entry) Lock() {
 	e.mu.Lock()
 }
@@ -164,10 +171,21 @@ func (e *Entry) Unlock() {
 }
 
 func (e *Entry) Append(messages ...llm.Message) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.Messages = append(e.Messages, messages...)
 }
 
 func (e *Entry) Snapshot() Snapshot {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.snapshotLocked()
+}
+
+// snapshotLocked is the lock-free body of Snapshot; callers must already
+// hold e.mu. Used by code paths that need to atomically read state and then
+// mutate without dropping the lock.
+func (e *Entry) snapshotLocked() Snapshot {
 	return Snapshot{
 		Messages:             cloneMessages(e.Messages),
 		CumulativeInput:      e.CumulativeInput,
@@ -180,12 +198,78 @@ func (e *Entry) Snapshot() Snapshot {
 }
 
 func (e *Entry) AddUsage(usage llm.TokenUsage) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.LastInputTokens = usage.InputTokens
 	e.LastOutputTokens = usage.OutputTokens
 	e.CumulativeInput += usage.InputTokens
 	e.CumulativeOutput += usage.OutputTokens
 	e.CumulativeCacheRead += usage.CacheReadTokens
 	e.CumulativeCacheWrite += usage.CacheCreationTokens
+}
+
+// SetRulesHash records the hash of the rules bundle captured at task start.
+// Frozen for the task lifetime; safe to read via RulesHashValue or by holding
+// the lock externally.
+func (e *Entry) SetRulesHash(hash string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.RulesHash = hash
+}
+
+// RulesHashValue returns the currently-captured rules-bundle hash.
+func (e *Entry) RulesHashValue() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.RulesHash
+}
+
+// MessagesCopy returns a defensive copy of the message log so callers can
+// pass it to the LLM without holding the lock for the duration of the call.
+func (e *Entry) MessagesCopy() []llm.Message {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return cloneMessages(e.Messages)
+}
+
+// LoadedSkillsCopy returns a defensive copy of the per-conversation
+// loaded-skill ids.
+func (e *Entry) LoadedSkillsCopy() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(e.LoadedSkills) == 0 {
+		return nil
+	}
+	out := make([]string, len(e.LoadedSkills))
+	copy(out, e.LoadedSkills)
+	return out
+}
+
+// UsageTotals is the locked view of cumulative + last-turn token counters
+// the loop consults to enforce token budgets between turns.
+type UsageTotals struct {
+	CumulativeInput      int64
+	CumulativeOutput     int64
+	CumulativeCacheRead  int64
+	CumulativeCacheWrite int64
+	LastInputTokens      int64
+	LastOutputTokens     int64
+	MessageCount         int
+}
+
+// Usage returns a consistent snapshot of the entry's token counters.
+func (e *Entry) Usage() UsageTotals {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return UsageTotals{
+		CumulativeInput:      e.CumulativeInput,
+		CumulativeOutput:     e.CumulativeOutput,
+		CumulativeCacheRead:  e.CumulativeCacheRead,
+		CumulativeCacheWrite: e.CumulativeCacheWrite,
+		LastInputTokens:      e.LastInputTokens,
+		LastOutputTokens:     e.LastOutputTokens,
+		MessageCount:         len(e.Messages),
+	}
 }
 
 func cloneMessages(messages []llm.Message) []llm.Message {

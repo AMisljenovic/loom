@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/your-org/loom/internal/familycfg"
 	"github.com/your-org/loom/internal/normalize"
 )
 
@@ -34,12 +35,33 @@ type Bundle struct {
 	Hash    string   // SHA-256 of the concatenated body (not the envelope)
 }
 
+// loadedAs values for the per-rule loaded-as attribute. "native" is the
+// active family's own convention; "fallback" is anything picked up via the
+// universal chain when the native directory contributed nothing.
+const (
+	loadedAsNative   = "native"
+	loadedAsFallback = "fallback"
+)
+
+// ruleBlock is the parsed-and-normalised view of one included file. We
+// collect blocks first, dedup by content hash with alias bookkeeping,
+// then render the envelope. Doing it in two passes keeps the dedup
+// alias tracking (§6.3) simple while still emitting a stable byte order.
+type ruleBlock struct {
+	source   string
+	origin   string
+	body     []byte
+	loadedAs string
+	aliases  []string // additional source paths that collapsed into this entry
+}
+
 // Load reads the rule files appropriate for the LLM family and returns the
 // concatenated bundle. family is "anthropic", "openai", or "gemini" (other
 // values fall through to the universal fallback chain after .loomrules).
 //
 // Load order (concatenated in this order, duplicates by normalised content
-// hash skipped):
+// hash skipped — but the dropped paths surface in the kept block's
+// also="..." attribute so attribution is preserved):
 //  1. .loomrules                                       (always; top precedence)
 //  2. Provider-native:
 //     anthropic: CLAUDE.md,  then .claude/rules/*.md (sorted)
@@ -49,6 +71,10 @@ type Bundle struct {
 //     the other providers' native files, then
 //     .github/copilot-instructions.md, .github/instructions/*.md,
 //     .cursor/rules/*.md, .cursorrules
+//
+// Rules picked up via the fallback chain whose origin doesn't match the
+// active family are tagged loaded-as="fallback" so the model knows to
+// apply the substance rather than any provider-specific identity prose.
 func Load(workspaceRoot, family string) Bundle {
 	if workspaceRoot == "" {
 		return Bundle{}
@@ -56,8 +82,65 @@ func Load(workspaceRoot, family string) Bundle {
 
 	always := []string{".loomrules"}
 	native := nativeCandidates(workspaceRoot, family)
+	fallback := fallbackCandidates(workspaceRoot, family)
 
-	seen := make(map[string]bool, 16)
+	// First pass: read every candidate, dedup by normalised content hash,
+	// and stash metadata. Aliases land on the kept block.
+	var blocks []*ruleBlock
+	byHash := make(map[string]*ruleBlock, 16)
+
+	considerFile := func(rel, loadedAs string) {
+		full := filepath.Join(workspaceRoot, rel)
+		data, err := os.ReadFile(full)
+		if err != nil {
+			return
+		}
+		body, origin := normalize.Rule(rel, data)
+		if origin == "" {
+			origin = "unknown"
+		}
+		sum := sha256.Sum256(body)
+		key := hex.EncodeToString(sum[:])
+		if existing, ok := byHash[key]; ok {
+			// Content already included; preserve the dropped path as an
+			// alias so the user can still see where the rule "lived".
+			existing.aliases = append(existing.aliases, rel)
+			return
+		}
+		b := &ruleBlock{
+			source:   rel,
+			origin:   origin,
+			body:     body,
+			loadedAs: loadedAs,
+		}
+		byHash[key] = b
+		blocks = append(blocks, b)
+	}
+
+	for _, rel := range always {
+		// .loomrules is conceptually "native" — it's Loom's own convention
+		// and not part of the foreign-family fallback chain.
+		considerFile(rel, loadedAsNative)
+	}
+
+	nativeBefore := len(blocks)
+	for _, rel := range native {
+		considerFile(rel, loadedAsNative)
+	}
+	nativeRead := len(blocks) - nativeBefore
+
+	if nativeRead == 0 {
+		for _, rel := range fallback {
+			considerFile(rel, loadedAsFallback)
+		}
+	}
+
+	if len(blocks) == 0 {
+		return Bundle{}
+	}
+
+	// Second pass: render. Honour MaxBundleBytes by skipping at block
+	// boundaries; the kept blocks remain in original load order.
 	var (
 		bodyB     strings.Builder
 		sources   []string
@@ -65,61 +148,24 @@ func Load(workspaceRoot, family string) Bundle {
 		seenOrig  = make(map[string]bool, 6)
 		truncated int
 	)
-
-	appendFile := func(rel string) (read bool) {
-		full := filepath.Join(workspaceRoot, rel)
-		data, err := os.ReadFile(full)
-		if err != nil {
-			return false
-		}
-		body, origin := normalize.Rule(rel, data)
-		// Dedupe on normalised content so identical prose across foreign
-		// formats (e.g. CLAUDE.md and AGENTS.md with the same text) collapses
-		// to one entry.
-		sum := sha256.Sum256(body)
-		key := hex.EncodeToString(sum[:])
-		if seen[key] {
-			return false
-		}
-		seen[key] = true
-
-		if origin == "" {
-			origin = "unknown"
-		}
-		block := fmt.Sprintf("\n<rule source=%q origin=%q>\n", rel, origin)
+	for _, b := range blocks {
+		opening := openRuleTag(b)
 		closeTag := "\n</rule>"
-		if bodyB.Len()+len(block)+len(body)+len(closeTag) > MaxBundleBytes {
+		if bodyB.Len()+len(opening)+len(b.body)+len(closeTag) > MaxBundleBytes {
 			truncated++
-			return false
+			continue
 		}
 		if bodyB.Len() > 0 {
 			bodyB.WriteString("\n")
 		}
-		bodyB.WriteString(block)
-		bodyB.Write(body)
+		bodyB.WriteString(opening)
+		bodyB.Write(b.body)
 		bodyB.WriteString(closeTag)
-		sources = append(sources, rel)
-		if !seenOrig[origin] {
-			seenOrig[origin] = true
-			origins = append(origins, origin)
-		}
-		return true
-	}
-
-	for _, rel := range always {
-		appendFile(rel)
-	}
-
-	nativeRead := 0
-	for _, rel := range native {
-		if appendFile(rel) {
-			nativeRead++
-		}
-	}
-
-	if nativeRead == 0 {
-		for _, rel := range fallbackCandidates(workspaceRoot, family) {
-			appendFile(rel)
+		sources = append(sources, b.source)
+		sources = append(sources, b.aliases...)
+		if !seenOrig[b.origin] {
+			seenOrig[b.origin] = true
+			origins = append(origins, b.origin)
 		}
 	}
 
@@ -139,6 +185,14 @@ func Load(workspaceRoot, family string) Bundle {
 
 	sort.Strings(origins)
 
+	hasFallback := false
+	for _, b := range blocks {
+		if b.loadedAs == loadedAsFallback {
+			hasFallback = true
+			break
+		}
+	}
+
 	var envelope strings.Builder
 	envelope.WriteString(`<rules sources="`)
 	envelope.WriteString(strings.Join(sources, ","))
@@ -146,6 +200,13 @@ func Load(workspaceRoot, family string) Bundle {
 	envelope.WriteString(strings.Join(origins, ","))
 	envelope.WriteString(`" precedence=".loomrules">`)
 	envelope.WriteString("\nOn conflict, rules from .loomrules take precedence over other listed sources.\n")
+	if hasFallback {
+		// Fallback rules came from another tool's conventions (e.g.
+		// CLAUDE.md under OpenAI). Tell the model to apply the substance
+		// and ignore identity claims that wouldn't make sense for the
+		// active provider.
+		envelope.WriteString("Rules tagged loaded-as=\"fallback\" originated from another tool's conventions — apply their substance, ignore any model-specific identity claims.\n")
+	}
 	envelope.WriteString(body)
 	envelope.WriteString("\n</rules>")
 
@@ -156,53 +217,54 @@ func Load(workspaceRoot, family string) Bundle {
 	}
 }
 
+// openRuleTag formats the per-rule opening tag. Native rules get
+// `<rule source origin>`; fallback rules add `loaded-as="fallback"`;
+// dedup aliases (one or more) surface in an `also="..."` attribute so
+// the kept entry still attributes the dropped files.
+func openRuleTag(b *ruleBlock) string {
+	var sb strings.Builder
+	sb.WriteString("\n<rule source=")
+	sb.WriteString(quoteAttr(b.source))
+	sb.WriteString(" origin=")
+	sb.WriteString(quoteAttr(b.origin))
+	if len(b.aliases) > 0 {
+		sb.WriteString(" also=")
+		sb.WriteString(quoteAttr(strings.Join(b.aliases, ",")))
+	}
+	if b.loadedAs == loadedAsFallback {
+		sb.WriteString(` loaded-as="fallback"`)
+	}
+	sb.WriteString(">\n")
+	return sb.String()
+}
+
+// quoteAttr produces a %q-style double-quoted attribute. Kept as a helper
+// so the tag formatter reads top-to-bottom without %q noise.
+func quoteAttr(v string) string {
+	return fmt.Sprintf("%q", v)
+}
+
 // nativeCandidates returns the provider's own convention files in load order.
 func nativeCandidates(workspaceRoot, family string) []string {
-	switch family {
-	case "anthropic":
-		out := []string{"CLAUDE.md"}
-		out = append(out, globMarkdown(workspaceRoot, ".claude/rules")...)
-		return out
-	case "openai":
-		out := []string{"AGENTS.md"}
-		out = append(out, globMarkdown(workspaceRoot, ".codex/rules")...)
-		return out
-	case "gemini":
-		out := []string{"GEMINI.md"}
-		out = append(out, globMarkdown(workspaceRoot, ".gemini/rules")...)
-		return out
+	c, ok := familycfg.For(family)
+	if !ok {
+		return nil
 	}
-	return nil
+	return append([]string{c.RulesFile}, globMarkdown(workspaceRoot, c.RulesDir)...)
 }
 
 // fallbackCandidates returns the universal chain to try when the provider's
 // own files are absent. The other providers' files come first so a user with
-// only AGENTS.md still gets it under Anthropic (and vice versa).
+// only AGENTS.md still gets it under Anthropic (and vice versa). After the
+// foreign-family files, common third-party conventions (Copilot, Cursor)
+// round out the chain so any project layout still contributes.
 func fallbackCandidates(workspaceRoot, family string) []string {
 	var out []string
-	switch family {
-	case "anthropic":
-		out = append(out, "AGENTS.md")
-		out = append(out, globMarkdown(workspaceRoot, ".codex/rules")...)
-		out = append(out, "GEMINI.md")
-		out = append(out, globMarkdown(workspaceRoot, ".gemini/rules")...)
-	case "openai":
-		out = append(out, "CLAUDE.md")
-		out = append(out, globMarkdown(workspaceRoot, ".claude/rules")...)
-		out = append(out, "GEMINI.md")
-		out = append(out, globMarkdown(workspaceRoot, ".gemini/rules")...)
-	case "gemini":
-		out = append(out, "CLAUDE.md")
-		out = append(out, globMarkdown(workspaceRoot, ".claude/rules")...)
-		out = append(out, "AGENTS.md")
-		out = append(out, globMarkdown(workspaceRoot, ".codex/rules")...)
-	default:
-		out = append(out, "CLAUDE.md")
-		out = append(out, globMarkdown(workspaceRoot, ".claude/rules")...)
-		out = append(out, "AGENTS.md")
-		out = append(out, globMarkdown(workspaceRoot, ".codex/rules")...)
-		out = append(out, "GEMINI.md")
-		out = append(out, globMarkdown(workspaceRoot, ".gemini/rules")...)
+	// Foreign families in canonical order (when family is unknown, all
+	// three are included — matches the previous default-case behaviour).
+	for _, c := range familycfg.Fallbacks(family) {
+		out = append(out, c.RulesFile)
+		out = append(out, globMarkdown(workspaceRoot, c.RulesDir)...)
 	}
 	out = append(out, ".github/copilot-instructions.md")
 	out = append(out, globMarkdown(workspaceRoot, ".github/instructions")...)

@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/your-org/loom/internal/familycfg"
 	"github.com/your-org/loom/internal/normalize"
 )
 
@@ -139,29 +140,11 @@ func loadExternalSkills(cat *Catalogue, workspaceRoot, relDir string) int {
 }
 
 func nativeSkillsDir(family string) string {
-	switch family {
-	case "anthropic":
-		return ".claude/skills"
-	case "openai":
-		return ".codex/skills"
-	case "gemini":
-		return ".gemini/skills"
-	default:
-		return ""
-	}
+	return familycfg.Native(family).SkillsDir
 }
 
 func fallbackSkillsDirs(family string) []string {
-	switch family {
-	case "anthropic":
-		return []string{".codex/skills", ".gemini/skills"}
-	case "openai":
-		return []string{".claude/skills", ".gemini/skills"}
-	case "gemini":
-		return []string{".claude/skills", ".codex/skills"}
-	default:
-		return []string{".claude/skills", ".codex/skills", ".gemini/skills"}
-	}
+	return familycfg.FallbackSkillsDirs(family)
 }
 
 // CatalogueLines returns the "id: synopsis [triggers: a, b]" lines for the
@@ -199,10 +182,10 @@ func (c Catalogue) HasExternal() bool {
 }
 
 // IsExternalSource reports whether source belongs to a non-Loom convention.
+// Kept as a thin re-export of normalize.IsExternalOrigin so existing skills
+// callers don't need a separate import for a single check.
 func IsExternalSource(source string) bool {
-	return strings.HasPrefix(source, ".claude/") ||
-		strings.HasPrefix(source, ".codex/") ||
-		strings.HasPrefix(source, ".gemini/")
+	return normalize.IsExternalOrigin(source)
 }
 
 // RenderLoaded returns the concatenated bodies of the given skill ids (in

@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -25,7 +26,7 @@ func IndexTools(idx *index.Indexer) []Tool {
 				},
 				"required": []string{"name"},
 			},
-			LocalExec: func(root string, raw json.RawMessage) (string, error) {
+			LocalExec: func(_ context.Context, root string, raw json.RawMessage) (string, error) {
 				if idx == nil {
 					return "", fmt.Errorf("workspace index is not available")
 				}
@@ -59,7 +60,7 @@ func IndexTools(idx *index.Indexer) []Tool {
 				},
 				"required": []string{"name"},
 			},
-			LocalExec: func(root string, raw json.RawMessage) (string, error) {
+			LocalExec: func(_ context.Context, root string, raw json.RawMessage) (string, error) {
 				if idx == nil {
 					return "", fmt.Errorf("workspace index is not available")
 				}

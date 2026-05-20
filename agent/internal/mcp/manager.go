@@ -33,6 +33,13 @@ type Manager struct {
 	servers  map[string]*serverRuntime
 	tools    []tools.Tool
 	onStatus StatusFunc
+
+	// lifeCtx is cancelled by Close; it bounds long-lived background work
+	// (server-crash retry loops, post-init refresh notifications) so the
+	// agent process can exit without leaving goroutines sleeping in retry
+	// timers or trying to re-spawn dead subprocesses.
+	lifeCtx    context.Context
+	lifeCancel context.CancelFunc
 }
 
 type serverRuntime struct {
@@ -51,10 +58,13 @@ type ioCloser interface {
 }
 
 func NewManager(onStatus StatusFunc) *Manager {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
-		cfg:      Config{Servers: map[string]ServerConfig{}},
-		servers:  map[string]*serverRuntime{},
-		onStatus: onStatus,
+		cfg:        Config{Servers: map[string]ServerConfig{}},
+		servers:    map[string]*serverRuntime{},
+		onStatus:   onStatus,
+		lifeCtx:    ctx,
+		lifeCancel: cancel,
 	}
 }
 
@@ -94,6 +104,13 @@ func (m *Manager) Tools() []tools.Tool {
 }
 
 func (m *Manager) Close() {
+	// Cancel the lifecycle context first so any in-flight retry sleeps,
+	// post-crash respawn attempts, and refresh notifications return
+	// immediately instead of trying to start fresh subprocesses during
+	// shutdown.
+	if m.lifeCancel != nil {
+		m.lifeCancel()
+	}
 	m.mu.Lock()
 	runtimes := make([]*serverRuntime, 0, len(m.servers))
 	for _, rt := range m.servers {
@@ -155,7 +172,7 @@ func (m *Manager) startRuntime(ctx context.Context, name string, cfg ServerConfi
 	client := NewClient(stdout, stdin, stdin.Close)
 	rt := &serverRuntime{name: name, cfg: cfg, client: client, cmd: cmd, stdin: stdin, done: make(chan struct{})}
 	client.OnNotification("notifications/tools/list_changed", func(json.RawMessage) {
-		if err := m.refreshTools(context.Background(), name); err != nil {
+		if err := m.refreshTools(m.lifeCtx, name); err != nil {
 			m.emit(ServerStatus{Server: name, State: "error", Message: err.Error()})
 		}
 	})
@@ -236,7 +253,9 @@ func (m *Manager) monitorRuntime(rt *serverRuntime, attempt int) {
 		m.emit(ServerStatus{Server: rt.name, State: "failed", Message: "retry limit reached", Attempt: attempt})
 		return
 	}
-	time.Sleep(delays[attempt-1])
+	if !sleepCtx(m.lifeCtx, delays[attempt-1]) {
+		return
+	}
 
 	m.mu.RLock()
 	cfg, stillConfigured := m.cfg.Servers[rt.name]
@@ -244,7 +263,7 @@ func (m *Manager) monitorRuntime(rt *serverRuntime, attempt int) {
 	if !stillConfigured {
 		return
 	}
-	if err := m.startRuntime(context.Background(), rt.name, cfg, attempt+1); err != nil {
+	if err := m.startRuntime(m.lifeCtx, rt.name, cfg, attempt+1); err != nil {
 		m.emit(ServerStatus{Server: rt.name, State: "error", Message: err.Error(), Attempt: attempt + 1})
 		go m.retryAfterFailure(rt.name, cfg, attempt+1)
 	}
@@ -256,16 +275,36 @@ func (m *Manager) retryAfterFailure(name string, cfg ServerConfig, attempt int) 
 		m.emit(ServerStatus{Server: name, State: "failed", Message: "retry limit reached", Attempt: attempt})
 		return
 	}
-	time.Sleep(delays[attempt-1])
+	if !sleepCtx(m.lifeCtx, delays[attempt-1]) {
+		return
+	}
 	m.mu.RLock()
 	current, stillConfigured := m.cfg.Servers[name]
 	m.mu.RUnlock()
 	if !stillConfigured || !reflect.DeepEqual(current, cfg) {
 		return
 	}
-	if err := m.startRuntime(context.Background(), name, cfg, attempt+1); err != nil {
+	if err := m.startRuntime(m.lifeCtx, name, cfg, attempt+1); err != nil {
 		m.emit(ServerStatus{Server: name, State: "error", Message: err.Error(), Attempt: attempt + 1})
 		go m.retryAfterFailure(name, cfg, attempt+1)
+	}
+}
+
+// sleepCtx blocks for d or until ctx is cancelled. Returns true if the
+// sleep completed normally, false if ctx fired first — callers use the
+// return value to bail out of retry loops on shutdown.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	if ctx == nil {
+		time.Sleep(d)
+		return true
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }
 
@@ -304,21 +343,23 @@ func (m *Manager) rebuildTools() {
 	sort.Strings(names)
 	for _, name := range names {
 		rt := m.servers[name]
-		all = append(all, ToTools(name, rt.tools, func(toolName string, input json.RawMessage) (string, error) {
-			return m.call(rt.name, toolName, input)
+		all = append(all, ToTools(name, rt.tools, func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
+			return m.call(ctx, rt.name, toolName, input)
 		})...)
 	}
 	m.tools = all
 }
 
-func (m *Manager) call(serverName, toolName string, input json.RawMessage) (string, error) {
+func (m *Manager) call(parent context.Context, serverName, toolName string, input json.RawMessage) (string, error) {
 	m.mu.RLock()
 	rt := m.servers[serverName]
 	m.mu.RUnlock()
 	if rt == nil || rt.client == nil {
 		return "", fmt.Errorf("MCP server %q is not available", serverName)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	// Overlay the 120s call timeout on top of the task ctx so a user cancel
+	// short-circuits before the timeout, and a hung server still bounces.
+	ctx, cancel := context.WithTimeout(parent, 120*time.Second)
 	defer cancel()
 	result, err := rt.client.CallTool(ctx, toolName, input)
 	if err != nil {

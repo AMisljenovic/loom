@@ -208,6 +208,12 @@ func (v *VectorStore) Search(ctx context.Context, query []float32, k int) ([]Sea
 			Path: path, StartLine: s, EndLine: e, Snippet: content, Score: score,
 		})
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	sort.Slice(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
 	if len(hits) > k {
 		hits = hits[:k]

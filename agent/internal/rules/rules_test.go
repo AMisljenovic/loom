@@ -97,6 +97,30 @@ func TestLoad_OppositeProviderUsedAsFallback(t *testing.T) {
 	if !containsExact(b.Sources, "AGENTS.md") {
 		t.Fatalf("expected AGENTS.md as fallback under anthropic, got %v", b.Sources)
 	}
+	// §6.2: cross-family fallback must surface loaded-as="fallback" on
+	// the rule tag and the envelope must instruct the model to ignore
+	// any identity claims that come with the foreign file.
+	if !strings.Contains(b.Text, `loaded-as="fallback"`) {
+		t.Fatalf("expected loaded-as=\"fallback\" on cross-family rule, got:\n%s", b.Text)
+	}
+	if !strings.Contains(b.Text, "ignore any model-specific identity claims") {
+		t.Fatalf("expected fallback envelope sentence, got:\n%s", b.Text)
+	}
+}
+
+func TestLoad_NativeRulesOmitLoadedAsAttribute(t *testing.T) {
+	// When the active family's own files are present, no rule should
+	// carry loaded-as="fallback" (it would mislead the model).
+	dir := t.TempDir()
+	writeFile(t, dir, "CLAUDE.md", "anthropic body")
+
+	b := Load(dir, "anthropic")
+	if strings.Contains(b.Text, `loaded-as="fallback"`) {
+		t.Fatalf("native rules must not carry loaded-as attribute, got:\n%s", b.Text)
+	}
+	if strings.Contains(b.Text, "ignore any model-specific identity claims") {
+		t.Fatalf("native-only bundle must not include the fallback warning sentence, got:\n%s", b.Text)
+	}
 }
 
 func TestLoad_GeminiNativePresent_FallbackSuppressed(t *testing.T) {
@@ -201,14 +225,22 @@ func TestLoad_DedupesByContentHash(t *testing.T) {
 
 	b := Load(dir, "anthropic")
 
-	if containsExact(b.Sources, "CLAUDE.md") {
-		t.Fatalf("expected CLAUDE.md to be deduped (matches .loomrules), got %v", b.Sources)
+	// The body must be rendered only once — the duplicate file gets
+	// folded into the kept block, not emitted as a second <rule>.
+	if got := strings.Count(b.Text, body); got != 1 {
+		t.Fatalf("expected shared body to appear once, got %d copies in:\n%s", got, b.Text)
 	}
-	if !containsExact(b.Sources, ".loomrules") {
-		t.Fatalf("expected .loomrules in sources, got %v", b.Sources)
+	// All three source paths must still surface in Sources (the dedup
+	// alias preservation contract added in §6.3) so attribution is not
+	// lost — the user can still see CLAUDE.md was on disk.
+	for _, want := range []string{".loomrules", "CLAUDE.md", ".claude/rules/a.md"} {
+		if !containsExact(b.Sources, want) {
+			t.Fatalf("expected %q in sources (alias preserved), got %v", want, b.Sources)
+		}
 	}
-	if !containsExact(b.Sources, ".claude/rules/a.md") {
-		t.Fatalf("expected unique .claude rule to load even after dedupe, got %v", b.Sources)
+	// The kept block must advertise the dedup alias via also="...".
+	if !strings.Contains(b.Text, `also="CLAUDE.md"`) {
+		t.Fatalf("expected also=\"CLAUDE.md\" on the kept block, got:\n%s", b.Text)
 	}
 }
 
@@ -295,20 +327,27 @@ func TestLoad_HashStableAcrossRuns(t *testing.T) {
 
 func TestLoad_DedupeOnNormalizedBody(t *testing.T) {
 	// .loomrules and a copilot file produce the same body after frontmatter
-	// stripping; the copilot entry should dedupe out.
+	// stripping (no applyTo, so no scope prefix is emitted); the copilot
+	// entry deduplicates into the loomrules block but its path is still
+	// surfaced via the also=" alias attribute (§6.3).
 	dir := t.TempDir()
 	body := "shared instructions"
 	writeFile(t, dir, ".loomrules", body)
 	writeFile(t, dir, ".github/copilot-instructions.md",
-		"---\napplyTo: \"**\"\n---\n"+body)
+		"---\ndescription: x\n---\n"+body)
 
 	b := Load(dir, "anthropic")
 
 	if !containsExact(b.Sources, ".loomrules") {
 		t.Fatalf("expected .loomrules in sources, got %v", b.Sources)
 	}
-	if containsExact(b.Sources, ".github/copilot-instructions.md") {
-		t.Fatalf("expected copilot entry to dedupe after normalisation, got %v", b.Sources)
+	// Alias-preservation contract: deduped path stays in Sources.
+	if !containsExact(b.Sources, ".github/copilot-instructions.md") {
+		t.Fatalf("expected copilot path to remain in sources (alias), got %v", b.Sources)
+	}
+	// But the body must appear only once in the rendered envelope.
+	if got := strings.Count(b.Text, body); got != 1 {
+		t.Fatalf("expected shared body to appear once, got %d copies", got)
 	}
 }
 

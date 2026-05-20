@@ -2,6 +2,53 @@
 
 Reverse-chronological notes for meaningful Loom prompt-layer changes.
 
+## 2026-05-20 - Rules envelope: fallback annotation, dedup aliases, Copilot/Cursor scope
+
+- Affected files: `agent/internal/normalize/normalize.go`,
+  `agent/internal/rules/rules.go`,
+  `agent/internal/normalize/normalize_test.go`,
+  `agent/internal/rules/rules_test.go`.
+- Rationale: three confusion vectors in the external-context normalization
+  pipeline — (1) `applyTo:` (Copilot) and `globs:` (Cursor) frontmatter
+  scoping was stripped wholesale, so a TS-only rule landed as a global
+  rule; (2) cross-family fallback rules (CLAUDE.md picked up under OpenAI)
+  had no signal telling the model to apply substance over identity; (3)
+  content-hash dedup silently dropped the second source path so users
+  couldn't see why their other file "didn't apply".
+- Envelope changes (deliberately byte-changing — `normalize.Version`
+  bumped 1 → 2 to invalidate cached prefixes cleanly):
+  - Per-rule `<rule>` tag may now carry `loaded-as="fallback"` when the
+    rule's origin doesn't match the active family.
+  - Per-rule `<rule>` tag may carry `also="alt1,alt2"` listing the paths
+    of files whose content deduplicated into this kept block.
+  - Top-level `<rules>` envelope gains a one-line "ignore identity
+    claims" guidance sentence iff at least one fallback rule is present.
+  - Copilot/Cursor frontmatter now contributes a leading
+    `> Scope: applies to <glob(s)>` markdown blockquote when `applyTo:`
+    or `globs:` is present; the rest of the frontmatter is still stripped.
+- Eval impact: one-shot cache miss on first turn after upgrade; bundle
+  hash is intentionally different. Native-only workspaces (no fallback,
+  no dedup, no scoped frontmatter) see no rendered bytes change beyond
+  the Version bump in the hash mix.
+
+## 2026-05-20 - LocalExec tool signature gains context.Context
+
+- Affected files: `agent/internal/tools/tools.go`,
+  `agent/internal/tools/search.go`, `agent/internal/tools/find_files.go`,
+  `agent/internal/tools/index_tools.go`,
+  `agent/internal/tools/embed_tools.go`,
+  `agent/internal/mcp/tools.go`, `agent/internal/mcp/manager.go`,
+  `agent/internal/loop/loop.go`.
+- Rationale: `tools.Tool.LocalExec` previously had signature
+  `func(workspaceRoot, input) (string, error)` — no ctx, so search,
+  find_files, semantic_search, and MCP tools dropped the task ctx and
+  used `context.Background()` internally. User cancels mid-tool didn't
+  propagate. Signature is now
+  `func(ctx, workspaceRoot, input) (string, error)`; all in-tree tools
+  and the MCP adapter were updated; the dead `Driver.ExecTool` method
+  (no callers) was removed.
+- Eval impact: none on prompt bytes. Improves cancellation latency.
+
 ## 2026-05-18 - Scratchpad tool for cross-turn working memory
 
 - Affected files: `agent/internal/tools/tools.go`,

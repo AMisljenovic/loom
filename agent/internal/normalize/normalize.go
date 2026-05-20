@@ -9,10 +9,15 @@ import (
 	"strings"
 )
 
-// Version is mixed into rule-bundle hashes when at least one non-loom origin
-// contributes content. Bump it to deliberately invalidate cached prefixes
-// after a normalization change.
-const Version = 1
+// Version is mixed into every rule-bundle hash (regardless of origin mix)
+// so a deliberate bump cleanly invalidates cached prompt prefixes after a
+// transform change. Bumped to 2 with:
+//   - preserve Copilot/Cursor `applyTo` scope as a leading "> Scope: ..."
+//     line so file-glob scoping survives frontmatter stripping
+//   - rules envelope: cross-family fallback rules now carry
+//     loaded-as="fallback", and content-deduped sources surface their alias
+//     paths via also="..."
+const Version = 2
 
 // Recognised origin identifiers. Empty string ("") means "unknown source".
 const (
@@ -23,6 +28,16 @@ const (
 	OriginCursor  = "cursor"
 	OriginGemini  = "gemini"
 )
+
+// IsExternalOrigin reports whether the given workspace-relative source path
+// belongs to a non-Loom convention (Claude/Codex/Cursor/Copilot/Gemini).
+// Used by the catalogue and envelope renderers to decide whether to surface
+// the origin annotation; previously duplicated as private predicates in
+// skills.IsExternalSource and loop.isExternalPresetSource.
+func IsExternalOrigin(source string) bool {
+	origin := Origin(source)
+	return origin != "" && origin != OriginLoom
+}
 
 // Origin maps a workspace-relative source path to one of the known origins.
 // Returns "" for paths the table doesn't recognise.
@@ -49,12 +64,21 @@ func Origin(source string) string {
 // transformed body and the detected origin (empty string when the origin is
 // unknown — in that case the raw bytes are returned unchanged).
 //
+// For Copilot/Cursor origins, the YAML frontmatter is stripped but the
+// `applyTo:` field (file-glob scoping) is preserved as a leading
+// "> Scope: applies to <glob(s)>" markdown blockquote so the model still
+// sees the intent rather than treating the rule as global.
+//
 // Transforms are idempotent: Rule(src, Rule(src, x)) == Rule(src, x).
 func Rule(source string, raw []byte) (body []byte, origin string) {
 	origin = Origin(source)
 	switch origin {
 	case OriginCopilot, OriginCursor:
-		return []byte(stripYAMLFrontmatter(string(raw))), origin
+		stripped, scope := stripYAMLFrontmatterPreservingScope(string(raw))
+		if scope != "" {
+			return []byte("> Scope: applies to " + scope + "\n\n" + stripped), origin
+		}
+		return []byte(stripped), origin
 	case OriginClaude:
 		return []byte(stripLeadingH1(string(raw), "CLAUDE.md")), origin
 	case OriginCodex:
@@ -87,26 +111,121 @@ func PresetBody(origin, body string) string {
 }
 
 // stripYAMLFrontmatter removes a leading `---\n…\n---\n` block if present.
-// Lines before the first `---` are preserved.
+// Lines before the first `---` are preserved. The scope-preserving variant
+// below is the production path; this name is kept for any external callers
+// that don't care about applyTo.
 func stripYAMLFrontmatter(s string) string {
+	body, _ := stripYAMLFrontmatterPreservingScope(s)
+	return body
+}
+
+// stripYAMLFrontmatterPreservingScope behaves like stripYAMLFrontmatter but
+// also returns the frontmatter's `applyTo:` field (Copilot/Cursor scope) if
+// present. The scope string is either a single glob (e.g. "**/*.ts") or a
+// comma-joined list when the field was a YAML sequence. Empty string when
+// the field is absent.
+//
+// We deliberately use a tiny line-based parser instead of pulling in a YAML
+// library — the field shape is constrained (string or simple list of
+// strings) and an idempotency guarantee is easier to keep this way.
+func stripYAMLFrontmatterPreservingScope(s string) (body, scope string) {
 	trimmed := strings.TrimLeft(s, "\r\n")
 	if !strings.HasPrefix(trimmed, "---\n") && !strings.HasPrefix(trimmed, "---\r\n") {
-		return s
+		return s, ""
 	}
-	// Find closing `---` on its own line.
 	rest := trimmed[strings.Index(trimmed, "\n")+1:]
+	var fmLines []string
 	for {
 		nl := strings.Index(rest, "\n")
 		if nl < 0 {
-			// No closing marker — leave untouched.
-			return s
+			// No closing marker — leave untouched and report no scope.
+			return s, ""
 		}
 		line := strings.TrimRight(rest[:nl], "\r")
 		if line == "---" {
-			return strings.TrimLeft(rest[nl+1:], "\r\n")
+			return strings.TrimLeft(rest[nl+1:], "\r\n"), parseApplyTo(fmLines)
 		}
+		fmLines = append(fmLines, line)
 		rest = rest[nl+1:]
 	}
+}
+
+// parseApplyTo extracts the file-scope from the given frontmatter lines.
+// Two field names are recognised so both Copilot and Cursor conventions
+// are honoured:
+//
+//   - `applyTo:` (Copilot)
+//   - `globs:`   (Cursor)
+//
+// Each supports a quoted scalar, an unquoted scalar, or a YAML list:
+//
+//	applyTo: "**/*.ts"
+//	globs:   ["**/*.ts", "**/*.tsx"]
+//	applyTo:
+//	  - "**/*.ts"
+//	  - "**/*.tsx"
+//
+// Returns the canonical scope string ("**/*.ts" or "**/*.ts, **/*.tsx") or
+// "" when neither field is present.
+func parseApplyTo(fmLines []string) string {
+	for i, line := range fmLines {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		var rest string
+		switch {
+		case strings.HasPrefix(lower, "applyto:"):
+			rest = strings.TrimSpace(trimmed[len("applyto:"):])
+		case strings.HasPrefix(lower, "globs:"):
+			rest = strings.TrimSpace(trimmed[len("globs:"):])
+		default:
+			continue
+		}
+		if rest != "" {
+			return parseScopeScalar(rest)
+		}
+		// Empty inline value — read following list-item lines until we
+		// hit a non-list line.
+		var items []string
+		for j := i + 1; j < len(fmLines); j++ {
+			item := strings.TrimSpace(fmLines[j])
+			if !strings.HasPrefix(item, "- ") {
+				break
+			}
+			items = append(items, trimYAMLString(strings.TrimSpace(item[2:])))
+		}
+		return strings.Join(items, ", ")
+	}
+	return ""
+}
+
+// parseScopeScalar handles both `["**/*.ts", "**/*.tsx"]` inline-list and
+// a single `"**/*.ts"` scalar. Returned format is a comma-separated string
+// suitable for the rendered "> Scope: applies to ..." line.
+func parseScopeScalar(v string) string {
+	if strings.HasPrefix(v, "[") && strings.HasSuffix(v, "]") {
+		inner := v[1 : len(v)-1]
+		parts := strings.Split(inner, ",")
+		out := make([]string, 0, len(parts))
+		for _, p := range parts {
+			p = trimYAMLString(strings.TrimSpace(p))
+			if p != "" {
+				out = append(out, p)
+			}
+		}
+		return strings.Join(out, ", ")
+	}
+	return trimYAMLString(v)
+}
+
+// trimYAMLString strips matching surrounding quotes from a YAML scalar.
+func trimYAMLString(v string) string {
+	if len(v) >= 2 {
+		first, last := v[0], v[len(v)-1]
+		if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+			return v[1 : len(v)-1]
+		}
+	}
+	return v
 }
 
 // stripLeadingH1 drops a leading `# <name>` H1 line iff it matches the given

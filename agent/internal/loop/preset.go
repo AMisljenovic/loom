@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/your-org/loom/internal/familycfg"
 	"github.com/your-org/loom/internal/normalize"
 	agentprompts "github.com/your-org/loom/internal/prompts"
 )
@@ -127,29 +128,11 @@ func loadExternalPresets(reg *Registry, workspaceRoot, relDir string) int {
 }
 
 func nativeAgentsDir(family string) string {
-	switch family {
-	case "anthropic":
-		return ".claude/agents"
-	case "openai":
-		return ".codex/agents"
-	case "gemini":
-		return ".gemini/agents"
-	default:
-		return ""
-	}
+	return familycfg.Native(family).AgentsDir
 }
 
 func fallbackAgentsDirs(family string) []string {
-	switch family {
-	case "anthropic":
-		return []string{".codex/agents", ".gemini/agents"}
-	case "openai":
-		return []string{".claude/agents", ".gemini/agents"}
-	case "gemini":
-		return []string{".claude/agents", ".codex/agents"}
-	default:
-		return []string{".claude/agents", ".codex/agents", ".gemini/agents"}
-	}
+	return familycfg.FallbackAgentsDirs(family)
 }
 
 func parseAgentPreset(text, source, defaultName string) (Preset, bool) {
@@ -227,9 +210,7 @@ func splitMarkdownFrontmatter(text string) (frontMatter, body string, ok bool) {
 }
 
 func isExternalPresetSource(source string) bool {
-	return strings.HasPrefix(source, ".claude/") ||
-		strings.HasPrefix(source, ".codex/") ||
-		strings.HasPrefix(source, ".gemini/")
+	return normalize.IsExternalOrigin(source)
 }
 
 func researchPreset() (Preset, error) {

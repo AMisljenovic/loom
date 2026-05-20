@@ -24,7 +24,16 @@ const defaultFindFilesMax = 200
 // FindFiles returns workspace-relative paths matching `pattern` under `path`
 // (defaulting to the workspace root). The pattern supports `*`, `?`, and `**`
 // (recursive). Results are sorted lexically and capped at MaxResults.
+//
+// Equivalent to FindFilesCtx(context.Background(), root, in); retained for
+// callers (notably internal/eval) that don't have a task ctx to thread.
 func FindFiles(root string, in FindFilesInput) (string, error) {
+	return FindFilesCtx(context.Background(), root, in)
+}
+
+// FindFilesCtx is the cancellable variant. The ripgrep subprocess and the
+// directory walk both respect ctx so a user cancel propagates promptly.
+func FindFilesCtx(ctx context.Context, root string, in FindFilesInput) (string, error) {
 	if strings.TrimSpace(in.Pattern) == "" {
 		return "", errors.New("pattern is required")
 	}
@@ -39,18 +48,18 @@ func FindFiles(root string, in FindFilesInput) (string, error) {
 	}
 
 	if rg := ripgrepPath(); rg != "" {
-		out, err := findFilesWithRipgrep(root, rg, in)
+		out, err := findFilesWithRipgrep(ctx, root, rg, in)
 		if err == nil {
 			return out, nil
 		}
 		// Fall through to walk on failure — ripgrep may not be available
 		// or may have bailed; the walker is a complete substitute.
 	}
-	return findFilesWithWalk(root, in)
+	return findFilesWithWalk(ctx, root, in)
 }
 
-func findFilesWithRipgrep(root, rg string, in FindFilesInput) (string, error) {
-	ctx, cancel := context.WithCancel(context.Background())
+func findFilesWithRipgrep(parent context.Context, root, rg string, in FindFilesInput) (string, error) {
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
 	args := []string{"--files", "-g", in.Pattern, in.Path}
@@ -97,7 +106,7 @@ func findFilesWithRipgrep(root, rg string, in FindFilesInput) (string, error) {
 	return renderFindFiles(paths, len(paths) >= in.MaxResults), nil
 }
 
-func findFilesWithWalk(root string, in FindFilesInput) (string, error) {
+func findFilesWithWalk(ctx context.Context, root string, in FindFilesInput) (string, error) {
 	base, err := cleanRelativePath(root, in.Path)
 	if err != nil {
 		return "", err
@@ -106,6 +115,9 @@ func findFilesWithWalk(root string, in FindFilesInput) (string, error) {
 	var paths []string
 	truncated := false
 	walkErr := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err != nil {
 			return nil
 		}

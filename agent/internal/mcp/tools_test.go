@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -40,7 +41,7 @@ func TestToolPrefixAndAdapter(t *testing.T) {
 		Name:        "read_file",
 		Description: "Read",
 		InputSchema: map[string]any{"type": "object"},
-	}}, func(name string, input json.RawMessage) (string, error) {
+	}}, func(_ context.Context, name string, input json.RawMessage) (string, error) {
 		if name != "read_file" {
 			t.Fatalf("name = %q", name)
 		}
@@ -55,7 +56,7 @@ func TestToolPrefixAndAdapter(t *testing.T) {
 	if !converted[0].RequiresApproval {
 		t.Fatal("MCP tools must require approval")
 	}
-	got, err := converted[0].LocalExec("", json.RawMessage(`{}`))
+	got, err := converted[0].LocalExec(context.Background(), "", json.RawMessage(`{}`))
 	if err != nil || got != "ok" {
 		t.Fatalf("LocalExec = %q, %v", got, err)
 	}
