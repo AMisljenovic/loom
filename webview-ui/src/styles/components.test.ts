@@ -28,6 +28,10 @@ describe("component layout CSS invariants", () => {
         expectDeclaration(thread, "min-height", "0");
         expectDeclaration(thread, "display", "flex");
         expectDeclaration(thread, "flex-direction", "column");
+
+        const sentinel = rule(".thread-bottom-sentinel");
+        expectDeclaration(sentinel, "flex-shrink", "0");
+        expectDeclaration(sentinel, "height", "1px");
     });
 
     it("prevents expanded tool cards from being flex-shrunk and clipped", () => {
@@ -110,6 +114,15 @@ describe("component layout CSS invariants", () => {
         const pre = rule(".markdown-body pre");
         expectDeclaration(pre, "min-width", "0");
         expectDeclaration(pre, "max-width", "100%");
+    });
+
+    it("renders diagnostics as a non-shrinking transcript card", () => {
+        const card = rule(".diagnostics-card");
+        expectDeclaration(card, "flex-shrink", "0");
+        expectDeclaration(card, "border-left-width", "3px");
+
+        const loc = rule(".diagnostics-loc");
+        expectDeclaration(loc, "overflow-wrap", "anywhere");
     });
 
     it("pins plan-handoff head and foot while scrolling the step list", () => {

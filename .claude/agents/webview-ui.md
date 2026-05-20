@@ -29,6 +29,13 @@ inside VS Code's webview panel.
    - `var(--vscode-editor-background)`
    - `var(--vscode-panel-border)`
    - `var(--vscode-button-background)`
+5. **Transcript is minimal-by-design.** All tools render through the
+   uniform `ToolCardMinimal` (header = friendly label + short description,
+   IN pane = one-line input summary, OUT pane = first ~3 lines truncated).
+   Do not re-introduce per-tool specialty body components. Assistant
+   deltas split on tool-call / question / progress boundaries into quiet
+   reasoning cards; the last non-empty assistant text before a
+   `task.done` with `reason === "completed"` promotes to a Summary card.
 
 ## Stack constraints
 
@@ -59,6 +66,12 @@ If the webview needs to send or receive a new kind of message:
   for v0.1
 - Avoid re-rendering the entire list on every token — append to the last
   assistant message only
+- Transcript auto-follow uses a ResizeObserver + MutationObserver pinned
+  in `Thread.tsx`; the scroll handler pins `scrollTop = scrollHeight` on
+  every size change while the user is within 32 px of the bottom. Do not
+  revert to keying the scroll effect on `[messages, pendingOutputs]` —
+  late markdown/code rendering grows content after React commit and the
+  length-effect approach falls behind.
 
 ## Build
 

@@ -1,0 +1,110 @@
+# Loom — top-precedence project rules
+
+This file is loaded for every provider family (Anthropic, OpenAI/Codex,
+Gemini, anything else) and wins on conflict with any other rules file.
+Keep it short, provider-neutral, and focused on invariants that hold
+regardless of which model is driving.
+
+## What this project is
+
+A VS Code extension that provides an AI coding agent. Three runtimes:
+
+1. **TypeScript extension host** (`src/`) — VS Code Node environment;
+   owns anything that touches the VS Code API (editor edits, terminal,
+   diagnostics, webview lifecycle).
+2. **React webview** (`webview-ui/`) — Vite build rendered in a VS Code
+   webview; talks to the host via `postMessage` only.
+3. **Go agent binary** (`agent/`) — spawned as a child process; owns
+   the agent loop, LLM client, pure-Go tools, and MCP client. Talks to
+   the extension over stdio with LSP-framed JSON-RPC 2.0.
+
+Wire types live in `src/shared/protocol.ts`. Any change to a message
+type must be mirrored on both sides.
+
+## Architectural invariants — do not violate without discussion
+
+- **Go owns the agent loop.** Do not move agent logic into TypeScript.
+  The TS side is a proxy.
+- **TS owns the VS Code API.** Go never calls VS Code APIs directly;
+  if it needs editor state, it asks via a `tool.call` RPC.
+- **Webview is dumb.** It renders state and forwards user input. No
+  business logic, no LLM calls, no file system access.
+- **JSON-RPC framing is LSP-style** (`Content-Length` header + body)
+  for the extension↔agent bridge. Newline-delimited JSON is only used
+  inside `agent/internal/mcp/` for external MCP servers.
+- **Prompt prefix must stay byte-stable.** The system prompt is split
+  into a stable prefix (mode + tools + skills catalogue) and a volatile
+  tail (workspace path + loaded-skill bodies + rules bundle). Anything
+  per-turn-variable goes in the tail. Tool list order is deterministic
+  (MCP tools sorted by name). Breaking byte-stability breaks the
+  Anthropic and OpenAI prompt caches.
+- **Parallel tools are the default.** The loop dispatches concurrent
+  tool calls via an errgroup (cap 8). Approvals batch into a single
+  `tool.approveBatch` RPC.
+- **Search-first, read narrowly.** Use `search` (content grep) and
+  `find_files` (filename glob) before reading. `read_file` supports
+  `offset`/`limit` and soft-caps very large files; do not slurp whole
+  files when a slice is enough.
+- **`apply_diff` over whole-file rewrites.** Two edit shapes — anchor
+  `{oldText, newText}` for small unique regions, range
+  `{startLine, endLine, newText}` for known line spans. On any
+  failure, use `search` to find the right slice and re-issue a tight
+  range edit. Never re-emit the whole file as a workaround.
+
+## Tool conventions
+
+- `newText` is always a JSON string. For multiline content use literal
+  `\n` between lines. To delete, pass an empty string `""`. Never pass
+  `null`, an array, or an object.
+- Approvals: any write or shell command requires approval; pure reads
+  do not.
+- Background work goes through `run_command_background` +
+  `read_process_output` + `kill_process` — `run_command` is one-shot
+  with a ≤120 s cap.
+
+## Provider-aware context
+
+Loom auto-loads instruction files based on the active provider family.
+Treat all of these as guidance about *this codebase*, not about your
+identity:
+
+- Anthropic family: `CLAUDE.md` + `.claude/rules/*.md`
+- OpenAI/Codex family: `AGENTS.md` + `.codex/rules/*.md`
+- Gemini family: `GEMINI.md` + `.gemini/rules/*.md`
+- Universal fallbacks (when the native file is absent): the other
+  families' files, then `.github/copilot-instructions.md`,
+  `.github/instructions/*.md`, `.cursor/rules/*.md`, `.cursorrules`.
+
+Fallback-loaded files are tagged `loaded-as="fallback"` in the rules
+envelope — apply their *substance*, ignore any model-specific identity
+prose ("you are Claude…", "you are Codex…"). `.loomrules` always wins
+on conflict.
+
+## Build, test, ship
+
+- `npm install` (also installs Husky pre-commit hooks).
+- `npm run build` — full build (TS extension + webview + Go agent).
+- `npm run test:ts` — vitest for the TS side.
+- From `agent/`: `go test ./...` and `go vet ./...`.
+- Pre-commit hook: when staged changes touch `src/`, `agent/`,
+  `webview-ui/src/`, `package.json`, `scripts/`, or
+  `.github/workflows/`, at least one of `README.md`, `CLAUDE.md`,
+  `AGENTS.md`, `.github/copilot-instructions.md` must also be staged.
+  Skip with `SKIP_DOCS_CHECK=1` only for genuinely doc-free changes.
+
+## Style
+
+- TS: strict mode; `unknown` + narrowing over `any`; `node:` prefix on
+  built-in imports; `await` over `.then()`; named exports.
+- Go: `gofmt` clean; `go vet` clean; wrap errors with
+  `fmt.Errorf("context: %w", err)`; prefer channels over shared state;
+  keep SDK-specific types inside `internal/llm/`.
+- React: function components only; `useState`/`useReducer` (no state
+  library); VS Code CSS variables for theming.
+
+## Cross-cutting
+
+- Cross-platform paths: `filepath.Join` in Go, `path.join` from
+  `node:path` in TS. Never string-concatenate paths.
+- Use `stderr` for Go logging — stdout is the RPC channel.
+- Webview CSP is strict: no inline scripts; bundle through Vite.

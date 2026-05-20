@@ -18,6 +18,7 @@ interface ThreadProps {
     onToggleToolExpanded: (callId: string) => void;
     onContinue: (prompt: string, nextMaxTurns?: number) => void;
     conversationId?: string;
+    pinSignal?: number;
 }
 
 // Default per-task turn cap mirrored from the Go loop. Each Continue press
@@ -30,9 +31,19 @@ export function nextTurnLimit(previous: number | undefined): number {
     return base * 2;
 }
 
-export function Thread({ messages, pendingDiffs, pendingOutputs, busy, onToggleToolExpanded, onContinue, conversationId }: ThreadProps) {
+export function isNearBottom(scrollHeight: number, scrollTop: number, clientHeight: number): boolean {
+    return scrollHeight - scrollTop - clientHeight < 32;
+}
+
+export function shouldAutoPin(stuck: boolean, userScrolledAway: boolean): boolean {
+    return stuck && !userScrolledAway;
+}
+
+export function Thread({ messages, pendingDiffs, pendingOutputs, busy, onToggleToolExpanded, onContinue, conversationId, pinSignal = 0 }: ThreadProps) {
     const threadRef = useRef<HTMLDivElement>(null);
+    const bottomRef = useRef<HTMLDivElement>(null);
     const stuckRef = useRef(true);
+    const userScrolledAwayRef = useRef(false);
     // Suppress the user-scroll detector for one scroll event whenever we
     // programmatically pin to the bottom. Otherwise the layout shift caused
     // by streaming content can briefly push scrollTop past the threshold and
@@ -47,12 +58,29 @@ export function Thread({ messages, pendingDiffs, pendingOutputs, busy, onToggleT
                 programmaticRef.current = false;
                 return;
             }
-            const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-            stuckRef.current = distance < 32;
+            const nearBottom = isNearBottom(el.scrollHeight, el.scrollTop, el.clientHeight);
+            stuckRef.current = nearBottom;
+            userScrolledAwayRef.current = !nearBottom;
         };
         el.addEventListener("scroll", onScroll, { passive: true });
         return () => el.removeEventListener("scroll", onScroll);
     }, []);
+
+    const pinToBottom = () => {
+        const el = threadRef.current;
+        if (!el || !shouldAutoPin(stuckRef.current, userScrolledAwayRef.current)) return;
+        programmaticRef.current = true;
+        if (bottomRef.current?.scrollIntoView) {
+            bottomRef.current.scrollIntoView({ block: "end" });
+        } else {
+            el.scrollTop = el.scrollHeight;
+        }
+        requestAnimationFrame(() => {
+            programmaticRef.current = false;
+            stuckRef.current = true;
+            userScrolledAwayRef.current = false;
+        });
+    };
 
     // Pin to bottom on every content size change (text deltas, markdown
     // rendering late, code blocks measuring, images loading, tool cards
@@ -65,12 +93,10 @@ export function Thread({ messages, pendingDiffs, pendingOutputs, busy, onToggleT
         if (!el || typeof ResizeObserver === "undefined") return;
         let raf = 0;
         const pin = () => {
-            if (!stuckRef.current) return;
+            if (!shouldAutoPin(stuckRef.current, userScrolledAwayRef.current)) return;
             cancelAnimationFrame(raf);
             raf = requestAnimationFrame(() => {
-                if (!stuckRef.current) return;
-                programmaticRef.current = true;
-                el.scrollTop = el.scrollHeight;
+                pinToBottom();
             });
         };
         const ro = new ResizeObserver(pin);
@@ -94,6 +120,10 @@ export function Thread({ messages, pendingDiffs, pendingOutputs, busy, onToggleT
             mo.disconnect();
         };
     }, []);
+
+    useEffect(() => {
+        requestAnimationFrame(pinToBottom);
+    }, [pinSignal]);
 
     return (
         <div className="thread" role="log" aria-live="polite" ref={threadRef}>
@@ -191,6 +221,7 @@ export function Thread({ messages, pendingDiffs, pendingOutputs, busy, onToggleT
                 }
                 return null;
             })}
+            <div className="thread-bottom-sentinel" ref={bottomRef} aria-hidden="true" />
         </div>
     );
 }
@@ -266,6 +297,10 @@ export function TodoCard({ msg }: { msg: Extract<Msg, { role: "todo" }> }) {
 export function IntentLine({ text, id }: { text: string; id?: string }) {
     const trimmed = text.trim();
     if (!trimmed) return null;
+    const diagnostics = parseDiagnosticErrors(trimmed);
+    if (diagnostics.length > 0) {
+        return <DiagnosticsCard diagnostics={diagnostics} rawText={trimmed} id={id} />;
+    }
     const copyText = stripStructuralTags(trimmed);
     return (
         <div className="intent-line">
@@ -284,6 +319,66 @@ export function IntentLine({ text, id }: { text: string; id?: string }) {
                     <CopyButton text={copyText} />
                 </div>
             )}
+        </div>
+    );
+}
+
+export interface DiagnosticItem {
+    file: string;
+    line: string;
+    column: string;
+    message: string;
+}
+
+export function parseDiagnosticErrors(text: string): DiagnosticItem[] {
+    const matches = Array.from(text.matchAll(/<error\s+file="([^"]+)"\s+line="([^"]+)"\s+column="([^"]+)"\s*>([\s\S]*?)<\/error>/g));
+    if (matches.length === 0) return [];
+    const withoutTags = text.replace(/<error\s+file="[^"]+"\s+line="[^"]+"\s+column="[^"]+"\s*>[\s\S]*?<\/error>/g, "").trim();
+    if (withoutTags) return [];
+    return matches.map((match) => ({
+        file: decodeXml(match[1]),
+        line: decodeXml(match[2]),
+        column: decodeXml(match[3]),
+        message: decodeXml(match[4].trim()),
+    }));
+}
+
+function decodeXml(value: string): string {
+    return value
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&amp;/g, "&");
+}
+
+export function DiagnosticsCard({ diagnostics, rawText, id }: { diagnostics: DiagnosticItem[]; rawText: string; id?: string }) {
+    return (
+        <div className="diagnostics-card" role="alert">
+            <div className="diagnostics-head">
+                <Ico.Warn size={12} />
+                <span>Diagnostics</span>
+                <span className="diagnostics-count">{diagnostics.length}</span>
+            </div>
+            <ul className="diagnostics-list">
+                {diagnostics.map((diagnostic, index) => (
+                    <li className="diagnostics-item" key={`${diagnostic.file}:${diagnostic.line}:${diagnostic.column}:${index}`}>
+                        <span className="diagnostics-loc">{diagnostic.file}:{diagnostic.line}:{diagnostic.column}</span>
+                        <span className="diagnostics-message">{diagnostic.message}</span>
+                    </li>
+                ))}
+            </ul>
+            <div className="msg-actions">
+                {id && (
+                    <OpenInEditorButton
+                        id={id}
+                        title="Loom diagnostics"
+                        content={rawText}
+                        language="xml"
+                    />
+                )}
+                <CopyButton text={rawText} />
+            </div>
         </div>
     );
 }

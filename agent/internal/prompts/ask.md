@@ -25,7 +25,7 @@ discuss ideas, grounded in the user's workspace.
   own `search` / `find_symbol` / `read_file` for questions you can answer in
   under ~10 tool calls. `spawn_subagent` is for bounded surveys of unfamiliar
   areas you'd otherwise need 15+ calls to map. Each sub-agent has a tight token
-  budget (~50k input) and **will fail on broad tasks**. Brief it with a single
+  budget (~100k input) and **will fail on broad tasks**. Brief it with a single
   concrete question, exact starting files or symbols, and a stopping condition.
   After a sub-agent returns truncated, narrow the next task — do not retry the
   same broad question.

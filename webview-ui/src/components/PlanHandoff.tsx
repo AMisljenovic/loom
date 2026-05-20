@@ -95,9 +95,35 @@ export function PlanHandoff({ markdown, onImplement, onDismiss }: PlanHandoffPro
 export function planStepsToTodos(steps: PlanStep[]): TodoItem[] {
     return steps.map((step) => ({
         id: `plan-step-${step.index + 1}`,
-        text: step.title,
+        text: todoTextForStep(step),
         status: "pending",
     }));
+}
+
+function todoTextForStep(step: PlanStep): string {
+    const body = firstBodyLine(step.body);
+    if (!body) return step.title;
+    if (step.title.length <= 32 && !/[.!?]$/.test(step.title)) {
+        return `${step.title}: ${body}`;
+    }
+    return step.title;
+}
+
+function firstBodyLine(body: string): string {
+    for (const raw of body.split(/\r?\n/)) {
+        if (!/^\s*(?:[-*+]\s+|\d+[.)]\s+)/.test(raw)) continue;
+        const line = raw
+            .trim()
+            .replace(/^(?:[-*+]\s+|\d+[.)]\s+)/, "")
+            .replace(/^\[[ xX]\]\s+/, "")
+            .replace(/`([^`]+)`/g, "$1")
+            .replace(/\*\*([^*]+)\*\*/g, "$1")
+            .replace(/\*([^*]+)\*/g, "$1")
+            .replace(/\s+/g, " ")
+            .trim();
+        if (line) return line;
+    }
+    return "";
 }
 
 function buildStepsPrompt(steps: PlanStep[]): string {

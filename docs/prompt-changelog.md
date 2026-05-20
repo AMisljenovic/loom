@@ -2,6 +2,72 @@
 
 Reverse-chronological notes for meaningful Loom prompt-layer changes.
 
+## 2026-05-20 - Larger sub-agent research budget and batch-overlap guidance
+
+- Affected files: `agent/internal/loop/preset.go`,
+  `agent/internal/prompts/code.md`, `agent/internal/prompts/debug.md`,
+  `agent/internal/prompts/ask.md`, `agent/internal/prompts/architect.md`,
+  `agent/internal/tools/descriptions/spawn_subagent.md`, `SUBAGENTS.md`.
+- Rationale: real multi-file handoffs were hitting the sub-agent budget early
+  and parent execution looked blocked when the model spawned a sub-agent as
+  the only tool in a turn. The built-in research preset now has a 45-turn /
+  100k-input-token budget, and prompts/tool docs explain that sub-agents
+  overlap with other tool calls emitted in the same batch while the next parent
+  model turn waits for that batch's results.
+- Eval impact: prompt snapshots change; loop tests assert the new built-in
+  preset budget.
+
+## 2026-05-20 - Proactive sub-agents and seeded implementation todos
+
+- Affected files: `agent/internal/prompts/code.md`,
+  `agent/internal/prompts/debug.md`, `agent/internal/prompts/architect.md`,
+  `agent/internal/tools/descriptions/update_todos.md`,
+  `agent/internal/eval/scenarios.go`.
+- Rationale: Code/Debug had drifted from proactive delegation after the
+  sub-agent guardrail pass, so multi-file read-only surveys often stayed in
+  the parent context. The prompts now strongly prefer focused sub-agents for
+  unfamiliar multi-file investigation while keeping the actual per-turn cap
+  at 3. Seeded plan handoff todos are also described as authoritative: the
+  agent should preserve IDs/text and update statuses only.
+- Eval impact: Code/Debug/Architect prompt snapshots and the `update_todos`
+  tool description change the stable prefix. Added an eval scenario requiring
+  a proactive sub-agent on a multi-file transcript-flow survey.
+
+## 2026-05-20 - apply_diff newText guidance + provider-parity assets
+
+- Affected files: `agent/internal/tools/tools.go`,
+  `agent/internal/tools/descriptions/apply_diff.md`, `.loomrules`,
+  `.codex/agents/*.md`, `.codex/commands/*.md`, `.gemini/agents/*.md`,
+  `.gemini/commands/*.md`, `.github/instructions/loom.instructions.md`.
+- Rationale: two recurring failure modes around `apply_diff`. (1) The
+  `newText` schema description (`"Replacement text. Required for both
+  edit modes."`) was too terse — models passed `null`, arrays of
+  lines, or `{text: "..."}` objects and got a generic
+  `newText must be a string` error with no recovery hint. The new
+  description spells out the JSON-string requirement, the multiline
+  `\n` convention, and the empty-string-for-delete convention, and
+  the TS validator now reports the actual JS type and a recovery
+  suffix on mismatch. (2) `oldText not found` recovery still steers
+  to range edits via `search`; the symmetric type-mismatch path now
+  follows the same shape so the model sees one consistent recovery
+  contract.
+- Companion change: cross-provider parity. The repo previously
+  shipped `.claude/agents/`, `.claude/commands/`, and Anthropic
+  identity prose in `CLAUDE.md` but had no equivalents for the
+  openai / codex or gemini families. Added `.loomrules` (universal,
+  top-precedence), `.codex/agents/*.md` + `.codex/commands/*.md`,
+  `.gemini/agents/*.md` + `.gemini/commands/*.md`, and
+  `.github/instructions/loom.instructions.md`. The rules loader and
+  sub-agent presets already routed per-family via `familycfg.go` —
+  this fills in the asset side so a codex- or gemini-driven session
+  on this repo sees its own family's content instead of falling back
+  to Claude-targeted prose.
+- Eval impact: `apply_diff` description changes are in the stable
+  system-prompt prefix (one cache invalidation, then stabilises).
+  `.loomrules` and per-family rules/agents land in the volatile
+  rules-bundle tail. Run `npm run eval` when provider credentials
+  are available.
+
 ## 2026-05-20 - Command shell compatibility guidance
 
 - Affected files: `agent/internal/tools/descriptions/run_command.md`,

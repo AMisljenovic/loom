@@ -971,6 +971,12 @@
     scrollbar-color: var(--border-strong) transparent;
 }
 
+.thread-bottom-sentinel {
+    flex-shrink: 0;
+    width: 100%;
+    height: 1px;
+}
+
 /* ---- Messages ---- */
 .msg {
     display: flex;
@@ -3879,6 +3885,64 @@ button.mcp-status:hover { color: var(--text-strong); }
 
 .summary-body>*:last-child {
     margin-bottom: 0;
+}
+
+.diagnostics-card {
+    margin: 10px 0;
+    padding: 10px 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--warn);
+    border-left-width: 3px;
+    border-radius: var(--r-3);
+    min-width: 0;
+    max-width: 100%;
+    flex-shrink: 0;
+}
+
+.diagnostics-head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--warn);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.diagnostics-count {
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+.diagnostics-list {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    padding: 0;
+    margin: 8px 0 0;
+    list-style: none;
+}
+
+.diagnostics-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.diagnostics-loc {
+    color: var(--text-muted);
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11.5px;
+    overflow-wrap: anywhere;
+}
+
+.diagnostics-message {
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
 }
 
 /* Error card: prominent, never hides. Used for any agent-side failure

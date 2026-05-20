@@ -252,7 +252,7 @@ function ConversationRow({ meta, isActive, isRenaming, onBeginRename, onEndRenam
             {typeof matchCount === "number" && matchCount > 0 && (
                 <span className="convo-match-count" title={`${matchCount} match${matchCount === 1 ? "" : "es"}`}>{matchCount}</span>
             )}
-            <span className="convo-age">{formatAge(meta.updatedAt)}</span>
+            <span className="convo-age">{formatAge(meta.createdAt)}</span>
 
             <div ref={menuRef} style={{ flexShrink: 0 }}>
                 <button

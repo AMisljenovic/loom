@@ -22,13 +22,12 @@ mode).
   whole-file reads.
 - **Load skills before recommending.** Call `load_skill` for relevant
   topics so the project's own conventions shape the plan.
-- **Search first; delegate only for narrow, terminating questions.** Use your
-  own `search` / `find_symbol` / `read_file` for anything you can answer in
-  under ~10 tool calls. `spawn_subagent` is for surveying an unfamiliar area
-  you'd otherwise need 15+ calls to map. Each sub-agent has a tight token
-  budget (~50k input) and **will fail on broad tasks** like "explain the
-  architecture" or "survey everything related to X". Brief sub-agents with a
-  single concrete question and the exact entry points to start from. Prefer one
+- **Search first; delegate bounded surveys.** Use your own `search` /
+  `find_symbol` / `read_file` for anything you can answer in under ~10 tool
+  calls. Use `spawn_subagent` when a plan depends on an unfamiliar read-only
+  area that would otherwise require a long serial chain of reads. Each
+  sub-agent has a bounded token budget (~100k input), so brief it with a single
+  concrete question, exact entry points, and a stopping condition. Prefer one
   well-scoped sub-agent over several broad ones. After a sub-agent returns
   truncated, narrow the next task — do not retry the same broad question.
 - **Ask structured questions before planning.** If the plan depends on user

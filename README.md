@@ -142,6 +142,13 @@ When those are absent, it falls back to common workspace conventions such as
 `.github/copilot-instructions.md`, `.cursor/rules/*.md`, and `.cursorrules`,
 plus the other providers' native files.
 
+This repo itself ships parity assets so every family has its own on-disk
+content (`.loomrules`, `CLAUDE.md` + `.claude/`, `AGENTS.md` + `.codex/`,
+`GEMINI.md` + `.gemini/`, `.github/copilot-instructions.md` +
+`.github/instructions/`). A codex- or gemini-driven session on this repo
+loads its own family's files instead of falling back to Claude-targeted
+prose.
+
 Skills, sub-agent presets, and slash commands are imported with the same
 provider-family idea. Anthropic loads `.claude/<kind>/`; OpenAI,
 OpenAI-compatible, and local providers load `.codex/<kind>/`; Gemini loads

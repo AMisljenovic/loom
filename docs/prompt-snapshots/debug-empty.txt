@@ -42,10 +42,17 @@ your workflow starts with reproduction, not editing.
 
 - `run_command_background` output is buffered; poll `read_process_output`
   with the returned cursor. Terminate with `kill_process`.
-- `spawn_subagent` is appropriate for surveying an unfamiliar failure area
-  ("where is auth state mutated") — brief it with the parent goal, what you
-  already know, and what to find. Don't delegate the core reproduction step
-  or trivial log reads.
+- Command tools default to the platform-native shell. If a failure looks like
+  shell syntax or shell startup mismatch, retry once with an equivalent
+  command using explicit `shell` or `cwd`; avoid broad automatic reruns.
+- `spawn_subagent` is the default for unfamiliar read-only failure surveys
+  that span more than ~2 files ("where is auth state mutated"). Strongly
+  prefer focused sub-agents over a long serial chain of parent reads; multiple
+  calls in the same turn run concurrently (per-turn cap 3). Brief each with
+  the parent goal, what you already know, what to find, and where to start.
+  Emit sub-agents in the same tool-call batch as any independent parent
+  diagnostics/searches so the work overlaps. Don't delegate the core
+  reproduction step or trivial log reads.
 
 # Safety
 
@@ -369,22 +376,23 @@ Errors only, for one file.
   - Anchor: `{ "oldText": "...", "newText": "..." }`
   - Range: `{ "startLine": N, "endLine": M, "newText": "..." }`
     (1-based, inclusive). For pure insert, set `endLine = startLine - 1`.
+- `newText` is **always a JSON string** — never `null`, array, or
+  object. Multiline: use literal `\n` (e.g. `"line1\nline2"`). Delete:
+  pass `""`.
 
 ## Behavior
 - Anchor `oldText` must match exactly and uniquely. Multi-match errors
-  list every matched line number — pick one and re-issue as a range edit,
-  or tighten `oldText`.
-- Range edits replace lines N..M. Line endings (`\r\n` or `\n`) are
-  preserved.
-- In one call: range edits apply first in descending `startLine` order so
-  earlier line numbers stay valid; anchor edits apply to the resulting
-  buffer.
-- On any failure, **do not re-emit the whole file**. Use `search` to find
-  the exact lines, then issue a tight range edit for the changed slice.
-- After a successful apply, the host re-fetches diagnostics (~750ms
-  settle) and replays new errors as a `<diagnostics-followup>` user
-  message. Do not pre-emptively call `get_diagnostics` on a just-edited
-  file.
+  list every matched line — pick one and re-issue as a range edit, or
+  tighten `oldText`.
+- Range edits replace lines N..M; `\r\n`/`\n` preserved.
+- In one call: range edits apply first in descending `startLine` order
+  so earlier line numbers stay valid; anchor edits apply after.
+- On any failure, **do not re-emit the whole file**. Use `search` to
+  find the exact lines, then issue a tight range edit for the changed
+  slice.
+- After a successful apply, the host re-fetches diagnostics (~750ms)
+  and replays new errors as a `<diagnostics-followup>` user message.
+  Do not pre-emptively call `get_diagnostics` on a just-edited file.
 - Requires user approval unless the `write` category is auto-approved.
 
 ## Examples
@@ -424,13 +432,22 @@ Create a new file.
 ## Input
 - `command` (string, required) — the exact command to run. No shell
   interpolation is done by the agent; the user's shell handles it.
+- `cwd` (string, optional) — workspace-relative working directory. Defaults
+  to the workspace root.
+- `shell` (string, optional) — one of `"auto"`, `"powershell"`, `"cmd"`,
+  `"bash"`, or `"sh"`. Defaults to `"auto"`.
 
 ## Behavior
 - Blocks until the command exits or 120 seconds elapse (whichever is first).
   A timeout returns the partial output and a non-zero exit code.
 - Exit code, stdout, and stderr are returned together. Read stderr — error
   messages often live there.
-- Runs in the workspace root unless the user's shell config changes that.
+- Runs in the workspace root unless `cwd` is provided.
+- Shell resolution is platform-aware: `"auto"` uses PowerShell on Windows,
+  `/bin/bash` on macOS/Linux when available, and `/bin/sh` otherwise.
+- If output shows shell-specific syntax or startup failure, do not repeat the
+  same command blindly. Retry once with an equivalent command and explicit
+  `shell` (or `cwd`) only when that addresses the failure.
 - Requires user approval unless the `execute` category is auto-approved.
 
 ## Examples
@@ -446,6 +463,12 @@ Run Go tests.
 ```
 
 Build the extension.
+
+```json
+{"command": "go test ./...", "cwd": "agent", "shell": "powershell"}
+```
+
+Run Go tests from `agent/` using PowerShell explicitly.
 
 ### run_command_background — Start a shell command as a background process and return immediately with a `processId`.
 
@@ -464,6 +487,8 @@ Build the extension.
 - `command` (string, required) — the command to start.
 - `cwd` (string, optional) — workspace-relative working directory. Defaults
   to the workspace root.
+- `shell` (string, optional) — one of `"auto"`, `"powershell"`, `"cmd"`,
+  `"bash"`, or `"sh"`. Defaults to `"auto"`.
 
 ## Behavior
 - Returns immediately with `{processId}`. The command keeps running until you
@@ -472,6 +497,11 @@ Build the extension.
   minutes after exit. Poll `read_process_output` with the returned cursor.
 - The TS host owns the process; it survives across turns but not across
   extension restarts.
+- Shell resolution is platform-aware: `"auto"` uses PowerShell on Windows,
+  `/bin/bash` on macOS/Linux when available, and `/bin/sh` otherwise.
+- If a process fails immediately with shell-specific syntax or startup
+  failure, start a replacement once with an equivalent command and explicit
+  `shell` (or `cwd`) only when that addresses the failure.
 - Requires user approval unless the `execute` category is auto-approved.
 
 ## Examples
@@ -483,7 +513,7 @@ Build the extension.
 Start the TS watcher.
 
 ```json
-{"command": "go test ./... -watch", "cwd": "agent"}
+{"command": "go test ./... -watch", "cwd": "agent", "shell": "bash"}
 ```
 
 Run Go tests in watch mode from the agent directory.
@@ -663,6 +693,10 @@ JSON summary of selected option labels and any free-text answers.
   for this task.
 - Keep exactly one item `in_progress` while work is actively underway.
 - Use stable `id` values so items update in place.
+- If the task prompt includes `<implementation_todos>`, preserve those exact
+  item `id` and `text` values in the same order; update only `status`. Work
+  through every seeded item before the final response unless a blocker makes
+  an item impossible, in which case mark it `cancelled` and explain why.
 
 ## Examples
 
@@ -744,6 +778,8 @@ over several broad ones.
 ## When to use
 - You want to keep your main context focused while side investigations happen.
 - The investigation is well-scoped enough to brief in a few sentences.
+- You can emit `spawn_subagent` in the same tool-call batch as independent
+  parent-side reads/searches; those calls run concurrently.
 
 ## When NOT to use
 - For looking up a single known fact in a single known file; call `read_file`.
@@ -765,6 +801,8 @@ over several broad ones.
   allowlist. It returns a structured summary.
 - Multiple `spawn_subagent` calls in the same turn run concurrently up to the
   per-turn limit.
+- The parent gets the summary as a tool result, so the next model turn waits
+  for the batch. Start unrelated parent reads in the same batch.
 - Sub-agents cannot spawn more sub-agents.
 
 ## Example

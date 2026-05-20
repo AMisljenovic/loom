@@ -205,7 +205,14 @@ handoff:
     Anthropic loads `.claude/<kind>/`; OpenAI, OpenAI-compatible, and local
     providers load `.codex/<kind>/`; Gemini loads `.gemini/<kind>/`. The
     other providers' folders are consulted only when the family-native
-    folder contributes zero entries.
+    folder contributes zero entries. This repo ships parity assets so every
+    supported family has its own content: `.loomrules` (universal, top
+    precedence), `AGENTS.md` + `.codex/agents/` + `.codex/commands/`,
+    `CLAUDE.md` + `.claude/agents/` + `.claude/commands/`, `GEMINI.md` +
+    `.gemini/agents/` + `.gemini/commands/`, and
+    `.github/copilot-instructions.md` + `.github/instructions/`. A codex- or
+    gemini-driven session on this repo therefore reads its own family's
+    files instead of falling back to another tool's prose.
 20. `agent/internal/loop/maybeSummarize` must never cut mid-tool-batch.
     `safeCutBoundary` (`agent/internal/loop/summarize.go`) walks the cut
     back so the kept tail never begins with `RoleTool` and the summarized

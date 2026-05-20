@@ -130,4 +130,42 @@ describe("parseApplyDiffInput", () => {
   it("rejects empty edits array", () => {
     expect(() => parseApplyDiffInput({ path: "a.ts", edits: [] })).toThrow(/at least one edit/);
   });
+
+  // newText type-mismatch tests — the error message names the actual JS type
+  // and ends with a recovery line teaching the canonical string shape so the
+  // model can correct itself without another round-trip through search.
+  it("rejects newText: null with type-named recovery message", () => {
+    expect(() =>
+      parseApplyDiffInput({ path: "a.ts", edits: [{ oldText: "x", newText: null }] }),
+    ).toThrow(/newText must be a string \(got null\)[\s\S]*literal \\n between lines/);
+  });
+
+  it("rejects newText: array with 'got array' in the recovery message", () => {
+    expect(() =>
+      parseApplyDiffInput({ path: "a.ts", edits: [{ oldText: "x", newText: ["l1", "l2"] }] }),
+    ).toThrow(/got array[\s\S]*pass `newText` as a JSON string/);
+  });
+
+  it("rejects newText: object", () => {
+    expect(() =>
+      parseApplyDiffInput({ path: "a.ts", edits: [{ oldText: "x", newText: { text: "y" } }] }),
+    ).toThrow(/got object/);
+  });
+
+  it("rejects newText: number", () => {
+    expect(() =>
+      parseApplyDiffInput({ path: "a.ts", edits: [{ oldText: "x", newText: 42 }] }),
+    ).toThrow(/got number/);
+  });
+
+  it("rejects missing newText key as undefined", () => {
+    expect(() =>
+      parseApplyDiffInput({ path: "a.ts", edits: [{ oldText: "x" }] }),
+    ).toThrow(/got undefined/);
+  });
+
+  it("accepts empty string newText (delete)", () => {
+    const out = parseApplyDiffInput({ path: "a.ts", edits: [{ oldText: "x", newText: "" }] });
+    expect(out.edits[0]).toEqual({ kind: "anchor", oldText: "x", newText: "" });
+  });
 });

@@ -181,6 +181,22 @@ func Scenarios() []Scenario {
 				{Type: "subagent_context_nontrivial"},
 			},
 		},
+		{
+			Name: "code-proactive-subagent-survey",
+			Mode: "code",
+			Files: map[string]string{
+				"src/panel/ChatPanel.ts":               "export function postMessage() { return 'host'; }\n",
+				"webview-ui/src/App.tsx":               "export function handleMessage() { return 'webview'; }\n",
+				"webview-ui/src/components/Thread.tsx": "export function Thread() { return null; }\n",
+				"webview-ui/src/util/activity.ts":      "export function label() { return 'activity'; }\n",
+				"src/shared/protocol.ts":               "export interface Msg { role: string }\n",
+			},
+			Prompt: "Investigate how transcript messages flow from the extension host into the webview before changing anything. Summarize the relevant files and responsibilities; do not edit yet.",
+			Assertions: []Assertion{
+				{Type: "subagent_count_at_least", Count: 1},
+				{Type: "subagent_context_nontrivial"},
+			},
+		},
 	}
 }
 

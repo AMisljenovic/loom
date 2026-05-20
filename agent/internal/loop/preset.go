@@ -16,8 +16,8 @@ const (
 	subAgentMaxDepth       = 2
 	subAgentMaxPerTurn     = 3
 	subAgentMaxPerTaskTree = 30
-	subAgentMaxTurns       = 30
-	subAgentMaxInputTokens = int64(50000)
+	subAgentMaxTurns       = 45
+	subAgentMaxInputTokens = int64(100000)
 	taskTreeMaxInputTokens = int64(500000)
 )
 

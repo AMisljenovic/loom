@@ -162,7 +162,12 @@ newline-delimited JSON-RPC over stdio.
     Anthropic uses `.claude/<kind>/`; OpenAI, OpenAI-compatible, and local
     use `.codex/<kind>/`; Gemini uses `.gemini/<kind>/`. The other family
     folders are fallback-only. Loom-native entries win (`.loom/<kind>/`
-    over builtins, builtins over external).
+    over builtins, builtins over external). This repo ships parity assets
+    for every family: `.loomrules` (universal, top precedence), `CLAUDE.md`
+    + `.claude/agents/` + `.claude/commands/`, `AGENTS.md` +
+    `.codex/agents/` + `.codex/commands/`, `GEMINI.md` + `.gemini/agents/`
+    + `.gemini/commands/`, and `.github/copilot-instructions.md` +
+    `.github/instructions/`.
 21. `agent/internal/loop/maybeSummarize` never cuts mid-tool-batch.
     `safeCutBoundary` walks the proposed cut back so the kept tail never
     starts with `RoleTool` and the summarized prefix never ends on an

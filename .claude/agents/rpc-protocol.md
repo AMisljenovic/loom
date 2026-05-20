@@ -19,8 +19,11 @@ You own these files:
 
 1. **Symmetry.** Every message type in `protocol.ts` has a matching shape on
    the Go side. When adding a method, update both sides in the same change.
-2. **Framing consistency.** Both codecs use LSP-style `Content-Length` framing.
-   Never mix framing strategies.
+2. **Framing consistency.** Both codecs use LSP-style `Content-Length`
+   framing on the extension↔agent bridge. Never mix framing strategies
+   here. (MCP child processes use newline-delimited JSON-RPC, handled
+   separately in `agent/internal/mcp/`. Do not cross the streams — the
+   internal `agent/internal/rpc/` package is only for Loom's own bridge.)
 3. **No stdout pollution from Go.** All Go logging goes to stderr. A single
    stray `fmt.Println` desyncs the codec.
 4. **Request vs notification.** Requests have an `id` and expect a response.

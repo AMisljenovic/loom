@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { Msg } from "../../../../src/shared/protocol";
 import * as Ico from "../../brand/icons";
-import { peekLines, toolInputLine, toolLabel } from "../../util/activity";
+import { isEmptyDiagnosticsCall, peekLines, toolInputLine, toolLabel } from "../../util/activity";
 import { formatToolDisplayOutput } from "../../util/parseToolOutput";
 import { ApprovalActions } from "./ApprovalActions";
 import { OpenInEditorButton } from "./OpenInEditorButton";
@@ -89,7 +89,13 @@ export function ToolCardMinimal({ msg, pendingDiff, liveOutput, onToggleExpanded
     const expandedOutput = displayText || (isRunning ? "(running...)" : isPending ? "(awaiting approval)" : "(no output)");
     const { lines: outputPeek, more: hasMore } = peekLines(displayText, 3);
 
-    const showDuration = typeof msg.durationMs === "number" && msg.durationMs >= 100;
+    // Empty get_diagnostics calls render as a single quiet header line:
+    // no peek pane, no duration badge, no expandable body. Keeps the
+    // transcript clean when the model checked the workspace and found
+    // nothing actionable.
+    const isEmptyDiagnostics = isEmptyDiagnosticsCall(msg.name, displayText);
+
+    const showDuration = typeof msg.durationMs === "number" && msg.durationMs >= 100 && !isEmptyDiagnostics;
     const statusBadge = isPending
         ? "waiting"
         : isError
@@ -100,7 +106,10 @@ export function ToolCardMinimal({ msg, pendingDiff, liveOutput, onToggleExpanded
                     ? `${(msg.durationMs! / 1000).toFixed(1)}s`
                     : null;
 
-    const onHeaderClick = () => onToggleExpanded(msg.callId);
+    const onHeaderClick = () => {
+        if (isEmptyDiagnostics) return;
+        onToggleExpanded(msg.callId);
+    };
 
     useEffect(() => {
         if (!expanded) return;
@@ -111,37 +120,40 @@ export function ToolCardMinimal({ msg, pendingDiff, liveOutput, onToggleExpanded
     }, [expanded]);
 
     return (
-        <div className={`tc-mini tc-${msg.status}${expanded ? " expanded" : ""}${isError ? " errored" : ""}`}>
+        <div className={`tc-mini tc-${msg.status}${expanded ? " expanded" : ""}${isError ? " errored" : ""}${isEmptyDiagnostics ? " quiet" : ""}`}>
             <button
                 type="button"
                 className="tc-head"
                 onClick={onHeaderClick}
-                aria-expanded={expanded}
-                title={`${msg.name}${target ? `: ${target}` : ""}`}
+                aria-expanded={isEmptyDiagnostics ? undefined : expanded}
+                title={`${msg.name}${target ? `: ${target}` : ""}${isEmptyDiagnostics ? " — no diagnostics" : ""}`}
             >
                 <span className="tc-icon"><ToolIcon name={msg.name} /></span>
                 <span className={`tc-pip${isRunning ? " running" : ""}`} />
                 <span className="tc-label">{label}</span>
                 {description && <span className="tc-desc">{description}</span>}
+                {isEmptyDiagnostics && <span className="tc-desc">— no diagnostics</span>}
                 {statusBadge && (
                     <span className={`tc-status tc-status-${isPending ? "pending" : isError ? "error" : isRunning ? "running" : "done"}`}>
                         {statusBadge}
                     </span>
                 )}
-                <span className={`tc-chev${expanded ? " open" : ""}`}>
-                    <Ico.Chev size={10} />
-                </span>
+                {!isEmptyDiagnostics && (
+                    <span className={`tc-chev${expanded ? " open" : ""}`}>
+                        <Ico.Chev size={10} />
+                    </span>
+                )}
             </button>
 
             {/* Collapsed peek: only when not expanded and there's something to show. */}
-            {!expanded && outputPeek.length > 0 && (
+            {!expanded && !isEmptyDiagnostics && outputPeek.length > 0 && (
                 <div className="tc-pane tc-out">
                     <pre className="tc-pane-body">{outputPeek.join("\n")}{hasMore ? "\n…" : ""}</pre>
                 </div>
             )}
 
             {/* Expanded body: always visible new content — full output AND raw args. */}
-            {expanded && (
+            {expanded && !isEmptyDiagnostics && (
                 <div className="tc-expand" ref={expandRef}>
                     <div className="tc-pane tc-out">
                         <div className="tc-pane-label">

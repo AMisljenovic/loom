@@ -28,7 +28,7 @@ discuss ideas, grounded in the user's workspace.
   own `search` / `find_symbol` / `read_file` for questions you can answer in
   under ~10 tool calls. `spawn_subagent` is for bounded surveys of unfamiliar
   areas you'd otherwise need 15+ calls to map. Each sub-agent has a tight token
-  budget (~50k input) and **will fail on broad tasks**. Brief it with a single
+  budget (~100k input) and **will fail on broad tasks**. Brief it with a single
   concrete question, exact starting files or symbols, and a stopping condition.
   After a sub-agent returns truncated, narrow the next task — do not retry the
   same broad question.
@@ -333,6 +333,8 @@ over several broad ones.
 ## When to use
 - You want to keep your main context focused while side investigations happen.
 - The investigation is well-scoped enough to brief in a few sentences.
+- You can emit `spawn_subagent` in the same tool-call batch as independent
+  parent-side reads/searches; those calls run concurrently.
 
 ## When NOT to use
 - For looking up a single known fact in a single known file; call `read_file`.
@@ -354,6 +356,8 @@ over several broad ones.
   allowlist. It returns a structured summary.
 - Multiple `spawn_subagent` calls in the same turn run concurrently up to the
   per-turn limit.
+- The parent gets the summary as a tool result, so the next model turn waits
+  for the batch. Start unrelated parent reads in the same batch.
 - Sub-agents cannot spawn more sub-agents.
 
 ## Example

@@ -2,7 +2,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Msg } from "../../../../src/shared/protocol";
-import { nextTurnLimit, StopCard, TodoCard } from "./Thread";
+import { IntentLine, isNearBottom, nextTurnLimit, parseDiagnosticErrors, shouldAutoPin, StopCard, Thread, TodoCard } from "./Thread";
 
 describe("TodoCard", () => {
     it("renders live todo status compactly", () => {
@@ -62,6 +62,67 @@ describe("StopCard", () => {
         expect(html).toContain("cap 64");
     });
 
+});
+
+describe("Thread auto-follow helpers", () => {
+    it("detects the bottom threshold used by auto-follow", () => {
+        expect(isNearBottom(1000, 970, 20)).toBe(true);
+        expect(isNearBottom(1000, 900, 20)).toBe(false);
+    });
+
+    it("respects deliberate manual scroll-away", () => {
+        expect(shouldAutoPin(true, false)).toBe(true);
+        expect(shouldAutoPin(true, true)).toBe(false);
+        expect(shouldAutoPin(false, false)).toBe(false);
+    });
+
+    it("renders a bottom sentinel for completion pinning", () => {
+        const html = renderToStaticMarkup(
+            <Thread
+                messages={[{ role: "assistant", text: "Done", kind: "summary" }]}
+                pendingDiffs={new Map()}
+                pendingOutputs={new Map()}
+                busy={false}
+                onToggleToolExpanded={() => { }}
+                onContinue={() => { }}
+                pinSignal={1}
+            />,
+        );
+
+        expect(html).toContain("thread-bottom-sentinel");
+        expect(html).toContain("Summary");
+    });
+});
+
+describe("diagnostics rendering", () => {
+    const raw = '<error file="radio_player/gui.py" line="26" column="1">Expected class body after class definition</error> <error file="radio_player/gui_parts/actions.py" line="13" column="5">&quot;search_stations&quot; is not defined</error>';
+
+    it("parses raw diagnostic error tags", () => {
+        expect(parseDiagnosticErrors(raw)).toEqual([
+            {
+                file: "radio_player/gui.py",
+                line: "26",
+                column: "1",
+                message: "Expected class body after class definition",
+            },
+            {
+                file: "radio_player/gui_parts/actions.py",
+                line: "13",
+                column: "5",
+                message: '"search_stations" is not defined',
+            },
+        ]);
+    });
+
+    it("renders raw diagnostic tags as a diagnostics card instead of reasoning text", () => {
+        const html = renderToStaticMarkup(<IntentLine text={raw} id="assistant-1" />);
+
+        expect(html).toContain("diagnostics-card");
+        expect(html).toContain("Diagnostics");
+        expect(html).toContain("radio_player/gui.py:26:1");
+        expect(html).toContain("Expected class body after class definition");
+        expect(html).not.toContain("intent-tag");
+    });
 });
 
 describe("nextTurnLimit", () => {

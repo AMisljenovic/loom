@@ -69,6 +69,45 @@ func TestLoad_AnthropicFallbackToCopilot(t *testing.T) {
 	}
 }
 
+func TestLoad_OpenAINativePresent_FallbackSuppressed(t *testing.T) {
+	// Symmetric to TestLoad_AnthropicNativePresent_FallbackSuppressed:
+	// when the openai family's native files exist (AGENTS.md and/or
+	// .codex/rules), the loader must not pull CLAUDE.md, GEMINI.md, or
+	// .github/copilot-instructions.md into the bundle — even though
+	// they're all on disk. Without this guarantee, a codex user pays
+	// for tokens describing another tool's conventions on every turn.
+	dir := t.TempDir()
+	writeFile(t, dir, "AGENTS.md", "agents body")
+	writeFile(t, dir, ".codex/rules/style.md", "codex style rules")
+	writeFile(t, dir, "CLAUDE.md", "claude body")
+	writeFile(t, dir, "GEMINI.md", "gemini body")
+	writeFile(t, dir, ".github/copilot-instructions.md", "copilot body")
+	writeFile(t, dir, ".cursorrules", "cursor body")
+
+	b := Load(dir, "openai")
+
+	for _, want := range []string{"AGENTS.md", ".codex/rules/style.md"} {
+		if !containsExact(b.Sources, want) {
+			t.Fatalf("expected %s in sources under openai family, got %v", want, b.Sources)
+		}
+	}
+	for _, forbidden := range []string{
+		"CLAUDE.md",
+		"GEMINI.md",
+		".github/copilot-instructions.md",
+		".cursorrules",
+	} {
+		if containsExact(b.Sources, forbidden) {
+			t.Fatalf("fallback should be suppressed when AGENTS.md / .codex/rules are present; got %s in sources %v", forbidden, b.Sources)
+		}
+	}
+	// Native-only bundle must not carry the fallback identity-claim
+	// disclaimer — the model's own family wrote these files.
+	if strings.Contains(b.Text, `loaded-as="fallback"`) {
+		t.Fatalf("native openai bundle must not carry loaded-as=\"fallback\", got:\n%s", b.Text)
+	}
+}
+
 func TestLoad_OpenAIFallbackToCursorAndGemini(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, ".cursor/rules/style.md", "cursor style rules")

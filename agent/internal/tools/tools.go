@@ -149,7 +149,7 @@ func Registry() []Tool {
 							"type": "object",
 							"properties": map[string]any{
 								"oldText":   map[string]any{"type": "string", "description": "Anchor mode: exact, unique text in the file. Required for anchor edits."},
-								"newText":   map[string]any{"type": "string", "description": "Replacement text. Required for both edit modes."},
+								"newText":   map[string]any{"type": "string", "description": "Replacement text as a JSON string (required). For multiline content, use literal \\n between lines (e.g. \"line1\\nline2\"). Pass \"\" to delete. Do not pass null, an array, or an object."},
 								"startLine": map[string]any{"type": "number", "description": "Range mode: 1-based inclusive start line. Required with endLine."},
 								"endLine":   map[string]any{"type": "number", "description": "Range mode: 1-based inclusive end line. Use startLine-1 for pure insert."},
 							},

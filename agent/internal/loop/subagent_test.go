@@ -29,6 +29,19 @@ func TestResearchPresetAllowedTools(t *testing.T) {
 	}
 }
 
+func TestResearchPresetBudgets(t *testing.T) {
+	preset, err := LoadPresets("", "").For("research")
+	if err != nil {
+		t.Fatalf("For(research): %v", err)
+	}
+	if preset.MaxTurns != 45 {
+		t.Fatalf("MaxTurns = %d, want 45", preset.MaxTurns)
+	}
+	if preset.MaxInputTokens != 100000 {
+		t.Fatalf("MaxInputTokens = %d, want 100000", preset.MaxInputTokens)
+	}
+}
+
 func TestTaskRegistryCancelCancelsChildren(t *testing.T) {
 	registry := NewTaskRegistry()
 	rootCtx, rootCancel := context.WithCancel(context.Background())

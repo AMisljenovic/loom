@@ -25,13 +25,12 @@ mode).
   whole-file reads.
 - **Load skills before recommending.** Call `load_skill` for relevant
   topics so the project's own conventions shape the plan.
-- **Search first; delegate only for narrow, terminating questions.** Use your
-  own `search` / `find_symbol` / `read_file` for anything you can answer in
-  under ~10 tool calls. `spawn_subagent` is for surveying an unfamiliar area
-  you'd otherwise need 15+ calls to map. Each sub-agent has a tight token
-  budget (~50k input) and **will fail on broad tasks** like "explain the
-  architecture" or "survey everything related to X". Brief sub-agents with a
-  single concrete question and the exact entry points to start from. Prefer one
+- **Search first; delegate bounded surveys.** Use your own `search` /
+  `find_symbol` / `read_file` for anything you can answer in under ~10 tool
+  calls. Use `spawn_subagent` when a plan depends on an unfamiliar read-only
+  area that would otherwise require a long serial chain of reads. Each
+  sub-agent has a bounded token budget (~100k input), so brief it with a single
+  concrete question, exact entry points, and a stopping condition. Prefer one
   well-scoped sub-agent over several broad ones. After a sub-agent returns
   truncated, narrow the next task — do not retry the same broad question.
 - **Ask structured questions before planning.** If the plan depends on user
@@ -506,6 +505,10 @@ JSON summary of selected option labels and any free-text answers.
   for this task.
 - Keep exactly one item `in_progress` while work is actively underway.
 - Use stable `id` values so items update in place.
+- If the task prompt includes `<implementation_todos>`, preserve those exact
+  item `id` and `text` values in the same order; update only `status`. Work
+  through every seeded item before the final response unless a blocker makes
+  an item impossible, in which case mark it `cancelled` and explain why.
 
 ## Examples
 
@@ -587,6 +590,8 @@ over several broad ones.
 ## When to use
 - You want to keep your main context focused while side investigations happen.
 - The investigation is well-scoped enough to brief in a few sentences.
+- You can emit `spawn_subagent` in the same tool-call batch as independent
+  parent-side reads/searches; those calls run concurrently.
 
 ## When NOT to use
 - For looking up a single known fact in a single known file; call `read_file`.
@@ -608,6 +613,8 @@ over several broad ones.
   allowlist. It returns a structured summary.
 - Multiple `spawn_subagent` calls in the same turn run concurrently up to the
   per-turn limit.
+- The parent gets the summary as a tool result, so the next model turn waits
+  for the batch. Start unrelated parent reads in the same batch.
 - Sub-agents cannot spawn more sub-agents.
 
 ## Example

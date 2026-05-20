@@ -70,14 +70,17 @@ v0.2 task.
 - Semver: `0.MINOR.PATCH` during 0.x, then `MAJOR.MINOR.PATCH`
 - Bump in `package.json`. Go binary inherits via `-ldflags="-X main.version=..."`
   (not wired yet; add when needed)
-- Tag releases: `v0.1.0`, `v0.1.1`, etc.
+- Tag releases: `v0.5.0`, `v0.5.1`, etc.
 
 ## Marketplace publishing
 
 ```bash
-npx vsce publish --target darwin-arm64 --packagePath dist/loom-darwin-arm64.vsix
+npx vsce publish --packagePath dist/loom-darwin-arm64.vsix
 # repeat per target
 ```
+
+Do **not** pass `--target` to `vsce publish` — the target is encoded in
+the VSIX manifest (see commit `4bdf9ac`).
 
 Requires `VSCE_PAT` (Marketplace personal access token) in environment.
 

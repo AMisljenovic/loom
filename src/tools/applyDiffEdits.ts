@@ -1,4 +1,4 @@
-import { recoverableApplyDiffError } from "./applyDiffRecovery";
+import { recoverableApplyDiffError, recoverableNewTextTypeError } from "./applyDiffRecovery";
 
 export type ApplyDiffEdit =
   | { kind: "anchor"; oldText: string; newText: string }
@@ -24,7 +24,7 @@ export function parseApplyDiffInput(input: unknown): ApplyDiffInput {
 function parseApplyDiffEdit(raw: unknown, editNumber: number): ApplyDiffEdit {
   const e = raw as { oldText?: unknown; newText?: unknown; startLine?: unknown; endLine?: unknown };
   if (typeof e.newText !== "string") {
-    throw new Error(`edit ${editNumber}: newText must be a string`);
+    throw new Error(recoverableNewTextTypeError(editNumber, e.newText));
   }
   const hasAnchor = typeof e.oldText === "string";
   const hasRange = typeof e.startLine === "number" || typeof e.endLine === "number";

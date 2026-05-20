@@ -143,6 +143,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private activeSubAgents = new Map<string, { parentTaskId: string; type: string; task: string }>();
   private toolCallTasks = new Map<string, string>();
   private activeToolCalls = new Map<string, ToolCall>();
+  private seededTodosByTask = new Map<string, TodoItem[]>();
   private cancelledTaskIds = new Set<string>();
   private pendingQuestions = new Map<string, {
     request: AskQuestionsInput;
@@ -598,6 +599,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.schedulePersist();
     const normalizedSeedTodos = seedTodos ? normalizeTodoItems(seedTodos.items) : [];
     if (normalizedSeedTodos.length > 0) {
+      this.seededTodosByTask.set(taskId, normalizedSeedTodos);
       this.post({
         type: "todoUpdate",
         taskId,
@@ -613,7 +615,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       await this.agent?.startTask({
         taskId,
         conversationId: this.state.conversationId,
-        prompt: preparedPrompt,
+        prompt: appendSeedTodoInstruction(preparedPrompt, normalizedSeedTodos),
         workspaceRoot,
         cwd: workspaceRoot,
         mode: activeMode,
@@ -851,6 +853,17 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     if (items.length === 0) {
       return { callId: call.callId, ok: false, error: "update_todos requires at least one todo item" };
     }
+    const seeded = this.seededTodosByTask.get(call.taskId);
+    if (seeded) {
+      const mismatch = seededTodoMismatch(seeded, items);
+      if (mismatch) {
+        return {
+          callId: call.callId,
+          ok: false,
+          error: `seeded implementation todos must be preserved (${mismatch}); update statuses only`,
+        };
+      }
+    }
     this.post({
       type: "todoUpdate",
       taskId: call.taskId,
@@ -1043,6 +1056,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.activeTaskModeId = undefined;
     this.activeTaskStartedAt = undefined;
     this.busy = false;
+    this.seededTodosByTask.delete(taskId);
     this.post({ type: "done", taskId, reason: "cancelled", durationMs });
     this.emitProgress("completed", "Task cancelled.");
     void this.agent?.cancel(taskId).catch((e: unknown) => {
@@ -1061,6 +1075,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       this.cancelPendingQuestions();
       this.cancelPendingApprovals();
     }
+    this.seededTodosByTask.delete(taskId);
     if (reason === "completed" && this.activeTaskModeId === "architect") {
       const assistant = this.assistantIndex === null ? undefined : this.state.messages[this.assistantIndex];
       if (assistant?.role === "assistant") {
@@ -1162,6 +1177,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.toolCallTasks.clear();
     this.activeToolCalls.clear();
     this.activeSubAgents.clear();
+    this.seededTodosByTask.clear();
     this.activeProgressKeys.clear();
     this.queuedReferences = undefined;
     this.queuedCommand = undefined;
@@ -2931,6 +2947,27 @@ function normalizeTodoStatus(status: unknown): TodoItem["status"] {
     default:
       return "pending";
   }
+}
+
+function appendSeedTodoInstruction(prompt: string, seededTodos: TodoItem[]): string {
+  if (seededTodos.length === 0) return prompt;
+  const items = seededTodos.map(({ id, text }) => ({ id, text }));
+  return `${prompt.trimEnd()}\n\n<implementation_todos>\nThe UI has already seeded the visible implementation checklist below. Treat this as the authoritative scope for the task. Work through every item before your final response. If the checklist spans multiple files or unfamiliar areas, spawn focused read-only sub-agent(s) before or alongside implementation research instead of doing a long serial parent-only survey. Emit sub-agent calls in the same tool-call batch as any independent parent search/read calls so the research overlaps. When you call update_todos, preserve exactly these ids and text values in this order; update only status values as work progresses. Do not finish with pending items unless a blocker makes an item impossible, and in that case mark it cancelled and explain the blocker.\n${JSON.stringify(items, null, 2)}\n</implementation_todos>`;
+}
+
+function seededTodoMismatch(seed: TodoItem[], next: TodoItem[]): string | undefined {
+  if (seed.length !== next.length) {
+    return `expected ${seed.length} items, got ${next.length}`;
+  }
+  for (let i = 0; i < seed.length; i++) {
+    if (seed[i].id !== next[i].id) {
+      return `item ${i + 1} id changed from "${seed[i].id}" to "${next[i].id}"`;
+    }
+    if (seed[i].text !== next[i].text) {
+      return `item ${i + 1} text changed`;
+    }
+  }
+  return undefined;
 }
 
 function upsertTodoMessage(messages: Msg[], taskId: string, title: string | undefined, items: TodoItem[]): Msg[] {

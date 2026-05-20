@@ -35,7 +35,10 @@ correct, minimal changes the user can ship.
   slice. Multi-match errors include every matched line number — pick the
   right one or tighten `oldText`.
 - Use `update_todos` when you have two or more concrete steps. Keep exactly
-  one item `in_progress`, and update the checklist as items complete.
+  one item `in_progress`, and update the checklist as items complete. If the
+  task starts from seeded implementation todos, work through every seeded item
+  before the final response; leave none pending unless a blocker makes it
+  impossible and you mark it `cancelled`.
 - Use `scratchpad` for private working notes that need to survive across
   turns — draft plans, findings, or hypotheses you'll re-read later. It is
   separate from `update_todos` (user-facing progress) and from skills
@@ -46,13 +49,16 @@ correct, minimal changes the user can ship.
 - Command tools default to the platform-native shell. If a command fails with
   shell-specific syntax or startup errors, do not repeat it blindly; retry
   once with an equivalent command using explicit `shell` or `cwd`.
-- `spawn_subagent` is the default for any read-only investigation that spans
-  more than ~2 files or covers unfamiliar territory. Multiple `spawn_subagent`
-  calls in the same turn run **concurrently** (cap 8) — prefer parallel
-  sub-agents over a long serial chain of reads. Pass an explicit `task`, the
+- `spawn_subagent` is the default for unfamiliar read-only investigation that
+  spans more than ~2 files. Strongly prefer one or more focused sub-agents
+  over a long serial chain of parent reads; multiple calls in the same turn
+  run **concurrently** (per-turn cap 3). Pass an explicit `task`, the
   `context` the sub-agent needs (parent goal, what you already know, what to
   find), and optional starting `files`. Skip it only for a single known fact
-  in a single known file.
+  in a single known file. When you spawn sub-agents, emit them in the same
+  tool-call batch as any independent parent `search` / `read_file` calls so
+  the work overlaps; the parent cannot start its next model turn until the
+  tool batch returns.
 
 # Safety
 

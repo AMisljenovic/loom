@@ -103,13 +103,16 @@ outside the registry.
 | Per-turn spawn cap (parent) | 3 | `subAgentMaxPerTurn` in [preset.go](agent/internal/loop/preset.go) |
 | Tree depth | 2 | `subAgentMaxDepth` |
 | Total sub-agents in a task tree | 30 | `subAgentMaxPerTaskTree` |
-| Sub-agent turn cap | 30 | `subAgentMaxTurns` |
-| Sub-agent input-token cap | 50,000 | `subAgentMaxInputTokens` |
+| Sub-agent turn cap | 45 | `subAgentMaxTurns` |
+| Sub-agent input-token cap | 100,000 | `subAgentMaxInputTokens` |
 | Task-tree input-token cap | 500,000 | `taskTreeMaxInputTokens` |
 | Errgroup concurrency cap | 8 | shared with regular parallel tools |
 
 Multiple `spawn_subagent` calls in the same turn run concurrently up to the
-per-turn spawn cap. Sub-agents cannot spawn further sub-agents.
+per-turn spawn cap, and they also overlap with other independent tools emitted
+in that same model turn. The parent receives sub-agent summaries as tool
+results, so its next model turn waits for the current tool batch to finish.
+Sub-agents cannot spawn further sub-agents.
 
 ## See also
 

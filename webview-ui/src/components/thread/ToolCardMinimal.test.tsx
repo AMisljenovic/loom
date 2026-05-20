@@ -81,4 +81,40 @@ describe("ToolCardMinimal", () => {
         expect(renderTool(tool({ input: { command: "npm test", shell: "cmd" } }))).toContain('<span class="tc-label">Command</span>');
         expect(renderTool(tool({ input: { command: "npm test", shell: "bash" } }))).toContain('<span class="tc-label">Bash</span>');
     });
+
+    it("disambiguates a severity-only get_diagnostics card with severity=<level>", () => {
+        const html = renderTool(tool({
+            name: "get_diagnostics",
+            input: { severity: "error" },
+            output: "src/foo.ts:10:1 [error] missing semicolon",
+            durationMs: 250,
+        }));
+
+        // The IN-summary must say "severity=error", not bare "error",
+        // so it doesn't collide visually with a real error-state badge.
+        expect(html).toContain('class="tc-desc">severity=error');
+        // A real diagnostics result still renders the duration badge and
+        // is fully expandable — no quiet-mode collapse.
+        expect(html).toContain("0.3s");
+        expect(html).not.toContain(" quiet"); // no quiet class
+        expect(html).toContain('class="tc-chev"');
+    });
+
+    it("renders an empty get_diagnostics check as a quiet single-line card", () => {
+        const html = renderTool(tool({
+            name: "get_diagnostics",
+            input: { severity: "error" },
+            output: "no diagnostics",
+            durationMs: 80,
+        }));
+
+        // Quiet class flips on; no chevron, no peek pane, no duration badge.
+        expect(html).toContain('class="tc-mini tc-done quiet"');
+        expect(html).not.toContain('class="tc-chev"');
+        expect(html).not.toContain('class="tc-pane tc-out"');
+        expect(html).not.toContain("0.1s");
+        // The "— no diagnostics" tag sits in the header so the user knows
+        // the tool actually ran and was empty.
+        expect(html).toContain("— no diagnostics");
+    });
 });

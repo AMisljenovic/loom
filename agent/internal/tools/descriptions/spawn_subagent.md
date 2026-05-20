@@ -8,8 +8,8 @@ requires_approval: false
 Delegate focused read-only research to a fresh sub-agent with isolated
 context.
 
-Sub-agents have a ~50k-token input budget and ~30-turn cap. Broad tasks will
-fail with `input token budget exceeded`. Brief with: (1) a single concrete
+Sub-agents have a ~100k-token input budget and ~45-turn cap. Broad tasks can
+still hit `input token budget exceeded`. Brief with: (1) a concrete
 question, (2) exact files or symbols to start from, (3) a stopping condition.
 Do not re-spawn after a truncation with the same task; narrow it first.
 
@@ -21,6 +21,8 @@ over several broad ones.
 ## When to use
 - You want to keep your main context focused while side investigations happen.
 - The investigation is well-scoped enough to brief in a few sentences.
+- You can emit `spawn_subagent` in the same tool-call batch as independent
+  parent-side reads/searches; those calls run concurrently.
 
 ## When NOT to use
 - For looking up a single known fact in a single known file; call `read_file`.
@@ -42,6 +44,8 @@ over several broad ones.
   allowlist. It returns a structured summary.
 - Multiple `spawn_subagent` calls in the same turn run concurrently up to the
   per-turn limit.
+- The parent gets the summary as a tool result, so the next model turn waits
+  for the batch. Start unrelated parent reads in the same batch.
 - Sub-agents cannot spawn more sub-agents.
 
 ## Example

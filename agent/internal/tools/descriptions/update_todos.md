@@ -28,6 +28,10 @@ Update the live todo checklist shown in the transcript for the current task.
   for this task.
 - Keep exactly one item `in_progress` while work is actively underway.
 - Use stable `id` values so items update in place.
+- If the task prompt includes `<implementation_todos>`, preserve those exact
+  item `id` and `text` values in the same order; update only `status`. Work
+  through every seeded item before the final response unless a blocker makes
+  an item impossible, in which case mark it `cancelled` and explain why.
 
 ## Examples
 

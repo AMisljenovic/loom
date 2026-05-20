@@ -120,6 +120,13 @@ change to a message type must be made on both sides.
   `.loom/<kind>/` overrides builtins, builtins override external entries, and
   external entries are additive only. Imported sub-agent presets trust their
   `tools:` field as written; write tools still flow through normal approval.
+  This repo itself ships parity assets so every supported family has its own
+  on-disk content: `.loomrules` (universal, top precedence), `CLAUDE.md` +
+  `.claude/agents/` + `.claude/commands/`, `AGENTS.md` + `.codex/agents/` +
+  `.codex/commands/`, `GEMINI.md` + `.gemini/agents/` + `.gemini/commands/`,
+  and `.github/copilot-instructions.md` + `.github/instructions/`. A
+  codex/gemini-driven session on this repo therefore loads its own family's
+  content instead of falling back to Claude-targeted prose.
 - **Search-first, read narrowly.** `read_file` accepts optional
   `offset`/`limit` (1-based line window) and soft-caps files over ~256 KB
   to the first 2000 lines when no `limit` is given — the header line

@@ -42,10 +42,14 @@ your workflow starts with reproduction, not editing.
 - Command tools default to the platform-native shell. If a failure looks like
   shell syntax or shell startup mismatch, retry once with an equivalent
   command using explicit `shell` or `cwd`; avoid broad automatic reruns.
-- `spawn_subagent` is appropriate for surveying an unfamiliar failure area
-  ("where is auth state mutated") — brief it with the parent goal, what you
-  already know, and what to find. Don't delegate the core reproduction step
-  or trivial log reads.
+- `spawn_subagent` is the default for unfamiliar read-only failure surveys
+  that span more than ~2 files ("where is auth state mutated"). Strongly
+  prefer focused sub-agents over a long serial chain of parent reads; multiple
+  calls in the same turn run concurrently (per-turn cap 3). Brief each with
+  the parent goal, what you already know, what to find, and where to start.
+  Emit sub-agents in the same tool-call batch as any independent parent
+  diagnostics/searches so the work overlaps. Don't delegate the core
+  reproduction step or trivial log reads.
 
 # Safety
 

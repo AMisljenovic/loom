@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.5.7
+
+Loom 0.5.7 is a plan-handoff, transcript, and sub-agent reliability pass:
+Architect-to-Code execution keeps the selected plan checklist intact,
+diagnostics render as proper transcript cards, session timestamps show creation
+age, and research sub-agents get more room plus clearer concurrency guidance.
+This release also includes provider-parity agent/command assets and sharper
+`apply_diff` recovery guidance.
+
+### Added
+
+- **Provider-parity rules, agent presets, and commands.** Added universal
+  `.loomrules`, Codex/Gemini provider assets, and GitHub instruction files so
+  OpenAI/Codex and Gemini sessions load family-native guidance instead of
+  falling back to Claude-targeted prose.
+  ([.codex/](.codex/), [.gemini/](.gemini/),
+  [.github/instructions/](.github/instructions/), [.loomrules](.loomrules))
+- **Diagnostics transcript cards.** Raw model-emitted `<error file=...>`
+  diagnostics now render as compact Diagnostics cards instead of leaking as
+  plain reasoning text.
+  ([webview-ui/src/components/thread/Thread.tsx](webview-ui/src/components/thread/Thread.tsx),
+  [webview-ui/src/styles/components.css](webview-ui/src/styles/components.css))
+- **Proactive sub-agent eval coverage.** Added an eval scenario that requires
+  Code mode to use a research sub-agent for a multi-file read-only survey.
+  ([agent/internal/eval/scenarios.go](agent/internal/eval/scenarios.go))
+
+### Changed
+
+- **Plan handoff todos are authoritative.** Implement-plan handoff now parses
+  only actionable top-level plan items, folds nested detail bullets into the
+  parent todo label, strips Markdown from labels, and injects hidden
+  `<implementation_todos>` guidance so Code mode updates statuses instead of
+  replacing the checklist.
+  ([src/shared/plans.ts](src/shared/plans.ts),
+  [webview-ui/src/components/PlanHandoff.tsx](webview-ui/src/components/PlanHandoff.tsx),
+  [src/panel/ChatPanel.ts](src/panel/ChatPanel.ts))
+- **Sub-agent budget and concurrency guidance.** The built-in research preset
+  now allows 45 turns and 100k input tokens, and prompts/tool docs explain
+  that sub-agents overlap with other tool calls emitted in the same model
+  turn while the parent waits for the batch result before its next turn.
+  ([agent/internal/loop/preset.go](agent/internal/loop/preset.go),
+  [agent/internal/tools/descriptions/spawn_subagent.md](agent/internal/tools/descriptions/spawn_subagent.md),
+  [SUBAGENTS.md](SUBAGENTS.md))
+- **Prompt guidance tightened.** Code/Debug prompts now push focused
+  sub-agent delegation for unfamiliar multi-file research, seeded todo
+  completion before final summaries, and clearer `apply_diff` recovery when
+  `newText` is malformed.
+  ([agent/internal/prompts/code.md](agent/internal/prompts/code.md),
+  [agent/internal/prompts/debug.md](agent/internal/prompts/debug.md),
+  [agent/internal/tools/descriptions/apply_diff.md](agent/internal/tools/descriptions/apply_diff.md))
+
+### Fixed
+
+- **Previous sessions showed "now" after opening.** Session rows still sort by
+  last activity, but the visible age now reflects `createdAt`.
+  ([webview-ui/src/components/conversations/ConversationList.tsx](webview-ui/src/components/conversations/ConversationList.tsx))
+- **Transcript could stop above the final summary.** The thread now uses a
+  bottom sentinel and completion/plan-ready pin signal so final summaries and
+  plan handoff UI stay in view unless the user intentionally scrolled away.
+  ([webview-ui/src/App.tsx](webview-ui/src/App.tsx),
+  [webview-ui/src/components/thread/Thread.tsx](webview-ui/src/components/thread/Thread.tsx))
+- **Tool cards leaked oversized/raw output.** Tool card rendering and activity
+  summaries were tightened so command output and tool details stay compact and
+  readable.
+  ([webview-ui/src/components/thread/ToolCardMinimal.tsx](webview-ui/src/components/thread/ToolCardMinimal.tsx),
+  [webview-ui/src/util/activity.ts](webview-ui/src/util/activity.ts))
+
 ## 0.5.6
 
 Loom 0.5.6 is a transcript-readability and command-execution pass:

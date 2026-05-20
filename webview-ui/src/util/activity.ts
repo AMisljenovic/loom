@@ -51,8 +51,13 @@ export function summarizeToolInput(name: string, input: unknown): string | undef
             if (Array.isArray(ids)) return compact(ids.filter((id) => typeof id === "string").join(", "));
             return undefined;
         }
-        case "get_diagnostics":
-            return pick("path") ?? pick("severity") ?? "workspace";
+        case "get_diagnostics": {
+            const path = pick("path");
+            if (path) return path;
+            const severity = pick("severity");
+            if (severity) return `severity=${severity}`;
+            return "workspace";
+        }
         case "update_todos":
             return pick("title");
         case "spawn_subagent":
@@ -144,6 +149,15 @@ export function toolInputLine(name: string, input: unknown): string {
     const summary = summarizeToolInput(name, input);
     if (summary) return summary;
     return name;
+}
+
+// True when a get_diagnostics tool call returned the canonical empty marker.
+// Used by ToolCardMinimal to suppress the expandable body and duration badge
+// so a "no diagnostics" check renders as a single quiet line instead of an
+// empty error-looking card.
+export function isEmptyDiagnosticsCall(name: string, output: string | undefined): boolean {
+    if (name !== "get_diagnostics" || !output) return false;
+    return output.trim() === "no diagnostics";
 }
 
 // First N lines of output for the OUT peek. Returns trimmed lines; the

@@ -481,6 +481,7 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [planHandoffArmed, setPlanHandoffArmed] = useState(false);
   const [planHandoffMarkdown, setPlanHandoffMarkdown] = useState<string>("");
+  const [threadPinSignal, setThreadPinSignal] = useState(0);
   const [references, setReferences] = useState<ReferenceAttachment[]>([]);
   const [referencePacks, setReferencePacks] = useState<ReferencePacksIndex>({ version: 1, order: [], packs: {} });
   const [sessionSearchHits, setSessionSearchHits] = useState<SessionSearchHit[]>([]);
@@ -673,6 +674,9 @@ export function App() {
         m.type === "progress"
       ) {
         assistantRef.current = null;
+      }
+      if ((m.type === "done" && m.reason === "completed") || m.type === "planReady") {
+        setThreadPinSignal((value) => value + 1);
       }
       setMessages((prev) => {
         let next = [...prev];
@@ -1039,6 +1043,7 @@ export function App() {
           onToggleToolExpanded={toggleToolExpandedForCall}
           onContinue={continueStoppedTask}
           conversationId={sessions?.activeId}
+          pinSignal={threadPinSignal}
         />
       )}
       {planHandoffArmed && !busy && (

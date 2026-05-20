@@ -35,14 +35,29 @@ If unsure, default to TS-side — easier to move to Go later than vice versa.
    - `RequiresApproval` — true for any write or side-effect
    - `LocalExec` — populate for Go-side, leave nil for TS-side
 3. **Implement the executor:**
-   - Go-side: write the `LocalExec` function. Validate input, return
-     `(string, error)`. The string is what the model sees as the result.
+   - Go-side: write the `LocalExec` function with signature
+     `func(ctx context.Context, workspaceRoot string, input json.RawMessage) (string, error)`.
+     Validate input, return `(string, error)`. Honour `ctx` for any
+     long-running work (network calls, large walks) so user cancel
+     propagates. Pure synchronous file ops may ignore it.
    - TS-side: add a case to the switch in `src/tools/index.ts`. Return a
      `ToolResult` with `ok`, `content` or `error`.
-4. **Update the system prompt** the loop sends to the model so it knows the
-   tool exists. This lives in `agent/internal/loop/loop.go`.
-5. **Test end-to-end** in the Extension Development Host. Verify approval
+   - **State-mutating tools** (like `load_skill`, `scratchpad`,
+     `spawn_subagent`) leave `LocalExec` nil and register a
+     `localInterceptor` in `agent/internal/loop/interceptors.go` — that's
+     how the existing three state-mutating tools dispatch without
+     expanding the generic `LocalExec` signature.
+4. **Add a description markdown file** at
+   `agent/internal/tools/descriptions/<tool>.md` — that's what the model
+   sees verbatim. Follow the existing files' frontmatter shape
+   (`name`, `category`, `requires_approval`) and keep the body under
+   the 400-word cap enforced by `descriptions_test.go`.
+5. **Update the system prompt** the loop sends to the model so it knows
+   the tool exists. This lives in `agent/internal/loop/loop.go`.
+6. **Test end-to-end** in the Extension Development Host. Verify approval
    prompts appear for `RequiresApproval: true` tools.
+7. **Record the prompt change** in `docs/prompt-changelog.md` — tool
+   descriptions are prompt-affecting, so they need an entry.
 
 ## Input schema conventions
 

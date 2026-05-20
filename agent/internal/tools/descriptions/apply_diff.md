@@ -26,22 +26,23 @@ Modify or create a file using one or more edits — anchor-matched
   - Anchor: `{ "oldText": "...", "newText": "..." }`
   - Range: `{ "startLine": N, "endLine": M, "newText": "..." }`
     (1-based, inclusive). For pure insert, set `endLine = startLine - 1`.
+- `newText` is **always a JSON string** — never `null`, array, or
+  object. Multiline: use literal `\n` (e.g. `"line1\nline2"`). Delete:
+  pass `""`.
 
 ## Behavior
 - Anchor `oldText` must match exactly and uniquely. Multi-match errors
-  list every matched line number — pick one and re-issue as a range edit,
-  or tighten `oldText`.
-- Range edits replace lines N..M. Line endings (`\r\n` or `\n`) are
-  preserved.
-- In one call: range edits apply first in descending `startLine` order so
-  earlier line numbers stay valid; anchor edits apply to the resulting
-  buffer.
-- On any failure, **do not re-emit the whole file**. Use `search` to find
-  the exact lines, then issue a tight range edit for the changed slice.
-- After a successful apply, the host re-fetches diagnostics (~750ms
-  settle) and replays new errors as a `<diagnostics-followup>` user
-  message. Do not pre-emptively call `get_diagnostics` on a just-edited
-  file.
+  list every matched line — pick one and re-issue as a range edit, or
+  tighten `oldText`.
+- Range edits replace lines N..M; `\r\n`/`\n` preserved.
+- In one call: range edits apply first in descending `startLine` order
+  so earlier line numbers stay valid; anchor edits apply after.
+- On any failure, **do not re-emit the whole file**. Use `search` to
+  find the exact lines, then issue a tight range edit for the changed
+  slice.
+- After a successful apply, the host re-fetches diagnostics (~750ms)
+  and replays new errors as a `<diagnostics-followup>` user message.
+  Do not pre-emptively call `get_diagnostics` on a just-edited file.
 - Requires user approval unless the `write` category is auto-approved.
 
 ## Examples
