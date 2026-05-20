@@ -1,36 +1,15 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { CommandCatalogueEntry, LlmProvider } from "../shared/protocol";
+import type { CommandCatalogueEntry } from "../shared/protocol";
 
-export type ProviderFamily = "anthropic" | "openai" | "";
-
-export function providerFamily(provider: LlmProvider): ProviderFamily {
-  return provider === "anthropic" ? "anthropic" : "openai";
-}
-
-export function scanCommands(workspaceRoot: string, family: ProviderFamily): CommandCatalogueEntry[] {
+// scanCommands reads slash commands from <workspace>/.loom/commands/*.md.
+// Foreign-format folders (.claude/commands, .codex/commands) are not read —
+// keep all commands under .loom/commands/.
+export function scanCommands(workspaceRoot: string): CommandCatalogueEntry[] {
   if (!workspaceRoot) return [];
   const byName = new Map<string, CommandCatalogueEntry>();
-  const nativeRead = loadCommandDir(byName, workspaceRoot, nativeCommandsDir(family));
-  if (nativeRead === 0) {
-    for (const dir of fallbackCommandsDirs(family)) {
-      loadCommandDir(byName, workspaceRoot, dir);
-    }
-  }
   loadCommandDir(byName, workspaceRoot, ".loom/commands");
   return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
-}
-
-function nativeCommandsDir(family: ProviderFamily): string {
-  if (family === "anthropic") return ".claude/commands";
-  if (family === "openai") return ".codex/commands";
-  return "";
-}
-
-function fallbackCommandsDirs(family: ProviderFamily): string[] {
-  if (family === "anthropic") return [".codex/commands"];
-  if (family === "openai") return [".claude/commands"];
-  return [".claude/commands", ".codex/commands"];
 }
 
 function loadCommandDir(byName: Map<string, CommandCatalogueEntry>, workspaceRoot: string, relDir: string): number {

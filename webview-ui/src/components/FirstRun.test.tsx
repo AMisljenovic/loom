@@ -1,4 +1,3 @@
-import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { FirstRunState, LlmProvider } from "../../../src/shared/protocol";
@@ -38,6 +37,7 @@ describe("FirstRun preset UI", () => {
         expect(html).toContain("OpenRouter");
         expect(html).toContain("Groq");
         expect(html).toContain("Cerebras");
+        expect(html).toContain("Google AI Studio (Gemini)");
         expect(html).toContain("Vercel AI Gateway");
         expect(html).toContain("LM Studio");
         expect(html).toContain("Generic (custom endpoint)");
@@ -55,21 +55,25 @@ describe("FirstRun preset UI", () => {
         expect(html).toMatch(/<option[^>]*value="generic"[^>]*selected/);
     });
 
-    it("shows the key-hint link when the active preset has one", () => {
+    it("shows a prominent preset console button when the active preset has one", () => {
         const html = render("openai-compatible", "https://openrouter.ai/api/v1");
         expect(html).toContain("https://openrouter.ai/keys");
-        expect(html).toContain("Get an OpenRouter key");
+        expect(html).toContain("Get an OpenRouter key →");
+        expect(html).toContain("provider-console-link");
+        expect(html).toContain("Sign in there, create a key, then paste it below.");
     });
 
-    it("omits the key-hint link for the Generic preset", () => {
+    it("omits the console button for the Generic preset", () => {
         const html = render("openai-compatible", "");
-        expect(html).not.toContain("Get an OpenRouter key");
-        expect(html).not.toContain("Get a Groq key");
+        expect(html).not.toContain("provider-console-link");
+        expect(html).not.toContain("Get an OpenRouter key →");
+        expect(html).not.toContain("Get a Groq key →");
     });
 
-    it("omits the key-hint link entirely for providers without a hint", () => {
+    it("shows the native Anthropic console button", () => {
         const html = render("anthropic");
-        expect(html).not.toContain("Get an OpenRouter key");
-        expect(html).not.toContain("Get a Cerebras key");
+        expect(html).toContain("https://console.anthropic.com/settings/keys");
+        expect(html).toContain("Open Anthropic Console →");
+        expect(html).toContain("Sign in there, create a key, then paste it below.");
     });
 });

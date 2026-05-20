@@ -93,20 +93,14 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 	if registry == nil {
 		registry = ApplyMode(d.registry(), p.Mode)
 	}
-	// Provider family decides which external conventions to autoload. Captured
-	// once per task; the stable prefix and rules hash are pinned to the task.
-	family := ""
-	if d.LLM != nil {
-		family = d.LLM.Family()
-	}
 	// Skills and sub-agent preset catalogues are workspace-scoped and frozen at
 	// task start so the stable prompt prefix advertises the same set all turn.
-	skillsCatalogue := skills.Load(p.WorkspaceRoot, family)
-	presetRegistry := LoadPresets(p.WorkspaceRoot, family)
+	skillsCatalogue := skills.Load(p.WorkspaceRoot)
+	presetRegistry := LoadPresets(p.WorkspaceRoot)
 	registry = withSubAgentPresetSchema(registry, presetRegistry.All())
 	toolDefs := buildToolDefs(registry)
 
-	rulesBundle := rules.Load(p.WorkspaceRoot, family)
+	rulesBundle := rules.Load(p.WorkspaceRoot)
 
 	entry := d.Conversations.Get(p.ConversationID)
 	entry.SetRulesHash(rulesBundle.Hash)
@@ -167,7 +161,7 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 			taskID: p.TaskID,
 		}
 
-		result, err := d.LLM.Stream(ctx, sysPrompt, entry.MessagesCopy(), toolDefs, h)
+		result, err := d.LLM.Stream(ctx, sysPrompt, wireMessages(entry.MessagesCopy()), toolDefs, h)
 		assistantText, toolCalls := h.finish()
 		if err != nil {
 			if ctx.Err() != nil {
@@ -1043,6 +1037,46 @@ func ApplyMode(registry []tools.Tool, mode *ModeDefinition) []tools.Tool {
 	return registry
 }
 
+// keepRecentToolResults is the number of most-recent RoleTool messages whose
+// content is kept verbatim when sending the message history to the LLM. Older
+// tool results that exceed minElideToolResultBytes are replaced with a short
+// placeholder so the wire payload doesn't grow with every turn. Full content
+// is still retained in the conversation Entry so the webview transcript can
+// display it on demand.
+const (
+	keepRecentToolResults    = 6
+	minElideToolResultBytes  = 1024
+	elidedToolResultTemplate = "<tool-result elided: original was %d bytes; full content visible in transcript>"
+)
+
+// wireMessages prepares the message slice for an LLM call. It elides the
+// content of older RoleTool messages so a long task's payload size stops
+// growing turn-over-turn. The original Entry is untouched — only the copy
+// passed to the provider is rewritten.
+func wireMessages(msgs []llm.Message) []llm.Message {
+	if len(msgs) == 0 {
+		return msgs
+	}
+	// Count from the tail; keep the last keepRecentToolResults RoleTool
+	// messages verbatim. Older RoleTool messages with sufficiently large
+	// content get elided.
+	kept := 0
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != llm.RoleTool {
+			continue
+		}
+		kept++
+		if kept <= keepRecentToolResults {
+			continue
+		}
+		if len(msgs[i].Content) < minElideToolResultBytes {
+			continue
+		}
+		msgs[i].Content = fmt.Sprintf(elidedToolResultTemplate, len(msgs[i].Content))
+	}
+	return msgs
+}
+
 // BuildStableSystem returns the cache-friendly prefix of the system prompt:
 // mode base prompt, shared output conventions, tool catalogue + per-tool
 // details, skills catalogue. Byte-identical across turns for a given
@@ -1078,57 +1112,23 @@ func BuildStableSystem(mode *ModeDefinition, registry []tools.Tool, cat skills.C
 		b.WriteString("No tools are available in this mode.\n")
 	}
 	if lines := cat.CatalogueLines(); len(lines) > 0 {
-		external := cat.HasExternal()
-		if external {
-			b.WriteString("\n<skills precedence=\"builtin,.loom/skills,external\">\n")
-			b.WriteString("On conflict, Loom builtin skills and .loom/skills take precedence over external skills; .loom/skills overrides builtins.\n")
-			b.WriteString("Available skills (load with the load_skill tool):\n")
-		} else {
-			b.WriteString("\nAvailable skills (load with the load_skill tool):\n")
-		}
+		b.WriteString("\nAvailable skills (load with the load_skill tool):\n")
 		for _, line := range lines {
 			b.WriteString(line)
 			b.WriteString("\n")
 		}
-		if external {
-			b.WriteString("</skills>\n")
-		}
 	}
 	if hasTool(registry, "spawn_subagent") && len(presets) > 0 {
-		external := presetsHaveExternal(presets)
-		if external {
-			b.WriteString("\n<subagents precedence=\"builtin,.loom/agents,external\">\n")
-			b.WriteString("On conflict, Loom builtin sub-agents and .loom/agents take precedence over external sub-agents; .loom/agents overrides builtins.\n")
-			b.WriteString("Available sub-agents (spawn with the spawn_subagent tool):\n")
-		} else {
-			b.WriteString("\nAvailable sub-agents (spawn with the spawn_subagent tool):\n")
-		}
+		b.WriteString("\nAvailable sub-agents (spawn with the spawn_subagent tool):\n")
 		for _, p := range presets {
 			desc := strings.ReplaceAll(p.Description, "\n", " ")
 			if desc == "" {
 				desc = "(no description)"
 			}
-			line := fmt.Sprintf("- %s: %s", p.Name, desc)
-			if external && p.Source != "" && p.Source != "builtin" {
-				line += fmt.Sprintf(" [source: %s]", p.Source)
-			}
-			b.WriteString(line)
-			b.WriteString("\n")
-		}
-		if external {
-			b.WriteString("</subagents>\n")
+			fmt.Fprintf(&b, "- %s: %s\n", p.Name, desc)
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
-}
-
-func presetsHaveExternal(presets []Preset) bool {
-	for _, p := range presets {
-		if isExternalPresetSource(p.Source) {
-			return true
-		}
-	}
-	return false
 }
 
 func hasTool(registry []tools.Tool, name string) bool {

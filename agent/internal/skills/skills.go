@@ -1,15 +1,13 @@
 // Package skills implements an on-demand context registry. Each skill has a
 // short synopsis (advertised in the system prompt) and a body (injected only
 // after the model calls the load_skill tool). Skills come from Loom-native
-// sources and provider-family external conventions:
+// sources only:
 //
 //   - builtin/*.md, embedded via embed.FS
 //   - <workspace>/.loom/skills/<id>/SKILL.md
-//   - <workspace>/.claude/skills/<id>/SKILL.md, .codex/skills/<id>/SKILL.md,
-//     or .gemini/skills/<id>/SKILL.md
 //
-// Loom-native entries win over external entries. Workspace .loom skills win
-// over builtins, preserving the existing user override behavior.
+// Workspace .loom skills override builtins of the same id. Foreign-format
+// skill folders (.claude/skills, .codex/skills, .gemini/skills) are not read.
 package skills
 
 import (
@@ -19,9 +17,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"github.com/your-org/loom/internal/familycfg"
-	"github.com/your-org/loom/internal/normalize"
 )
 
 //go:embed builtin/*.md
@@ -34,7 +29,6 @@ type Skill struct {
 	Triggers []string // optional: topics that suggest loading the skill
 	Body     string
 	Source   string // "builtin" or workspace-relative path
-	Origin   string // normalize.Origin* (loom/claude/codex/...); "loom" for builtins
 }
 
 // Catalogue holds the available skills, keyed by ID, plus the sorted order.
@@ -46,19 +40,9 @@ type Catalogue struct {
 // Load builds the catalogue for the workspace. workspaceRoot may be empty
 // (only builtins will be loaded). Errors reading individual files are
 // silently ignored; a malformed user skill should never break the agent.
-func Load(workspaceRoot, family string) Catalogue {
+func Load(workspaceRoot string) Catalogue {
 	cat := Catalogue{Skills: map[string]Skill{}}
 
-	if workspaceRoot != "" {
-		nativeRead := loadExternalSkills(&cat, workspaceRoot, nativeSkillsDir(family))
-		if nativeRead == 0 {
-			for _, dir := range fallbackSkillsDirs(family) {
-				loadExternalSkills(&cat, workspaceRoot, dir)
-			}
-		}
-	}
-
-	// Builtin skills override external skills of the same id.
 	entries, err := builtinFS.ReadDir("builtin")
 	if err == nil {
 		for _, e := range entries {
@@ -73,12 +57,10 @@ func Load(workspaceRoot, family string) Catalogue {
 			if !ok {
 				continue
 			}
-			s.Origin = normalize.OriginLoom
 			cat.Skills[s.ID] = s
 		}
 	}
 
-	// Workspace skills override builtins and external skills of the same id.
 	if workspaceRoot != "" {
 		base := filepath.Join(workspaceRoot, ".loom", "skills")
 		entries, err := os.ReadDir(base)
@@ -97,7 +79,6 @@ func Load(workspaceRoot, family string) Catalogue {
 				if !ok {
 					continue
 				}
-				s.Origin = normalize.OriginLoom
 				cat.Skills[s.ID] = s
 			}
 		}
@@ -110,48 +91,10 @@ func Load(workspaceRoot, family string) Catalogue {
 	return cat
 }
 
-func loadExternalSkills(cat *Catalogue, workspaceRoot, relDir string) int {
-	if relDir == "" {
-		return 0
-	}
-	base := filepath.Join(workspaceRoot, filepath.FromSlash(relDir))
-	entries, err := os.ReadDir(base)
-	if err != nil {
-		return 0
-	}
-	read := 0
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		rel := filepath.ToSlash(filepath.Join(relDir, e.Name(), "SKILL.md"))
-		data, err := os.ReadFile(filepath.Join(workspaceRoot, filepath.FromSlash(rel)))
-		if err != nil {
-			continue
-		}
-		s, ok := parseExternalSkill(string(data), rel)
-		if !ok {
-			continue
-		}
-		cat.Skills[s.ID] = s
-		read++
-	}
-	return read
-}
-
-func nativeSkillsDir(family string) string {
-	return familycfg.Native(family).SkillsDir
-}
-
-func fallbackSkillsDirs(family string) []string {
-	return familycfg.FallbackSkillsDirs(family)
-}
-
 // CatalogueLines returns the "id: synopsis [triggers: a, b]" lines for the
 // prompt prefix in stable (sorted) order. Triggers are appended only when
 // present so existing skills without them render unchanged.
 func (c Catalogue) CatalogueLines() []string {
-	withSource := c.HasExternal()
 	out := make([]string, 0, len(c.Order))
 	for _, id := range c.Order {
 		s := c.Skills[id]
@@ -163,29 +106,9 @@ func (c Catalogue) CatalogueLines() []string {
 		if len(s.Triggers) > 0 {
 			line += fmt.Sprintf(" [triggers: %s]", strings.Join(s.Triggers, ", "))
 		}
-		if withSource && s.Source != "" && s.Source != "builtin" {
-			line += fmt.Sprintf(" [source: %s]", s.Source)
-		}
 		out = append(out, line)
 	}
 	return out
-}
-
-// HasExternal reports whether the catalogue includes imported non-Loom skills.
-func (c Catalogue) HasExternal() bool {
-	for _, s := range c.Skills {
-		if IsExternalSource(s.Source) {
-			return true
-		}
-	}
-	return false
-}
-
-// IsExternalSource reports whether source belongs to a non-Loom convention.
-// Kept as a thin re-export of normalize.IsExternalOrigin so existing skills
-// callers don't need a separate import for a single check.
-func IsExternalSource(source string) bool {
-	return normalize.IsExternalOrigin(source)
 }
 
 // RenderLoaded returns the concatenated bodies of the given skill ids (in
@@ -212,11 +135,7 @@ func (c Catalogue) RenderLoaded(ids []string) string {
 			b.WriteString("\n\n")
 		}
 		s := c.Skills[id]
-		if s.Origin != "" && s.Origin != normalize.OriginLoom {
-			b.WriteString(fmt.Sprintf("<skill id=\"%s\" origin=\"%s\">\n", id, s.Origin))
-		} else {
-			b.WriteString(fmt.Sprintf("<skill id=\"%s\">\n", id))
-		}
+		fmt.Fprintf(&b, "<skill id=\"%s\">\n", id)
 		b.WriteString(strings.TrimSpace(s.Body))
 		b.WriteString("\n</skill>")
 	}
@@ -255,45 +174,6 @@ func parseSkill(text, source string) (Skill, bool) {
 		return Skill{}, false
 	}
 	return Skill{ID: id, Synopsis: synopsis, Triggers: triggers, Body: body, Source: source}, true
-}
-
-// parseExternalSkill parses Claude/Codex-format SKILL.md (name: → id,
-// description: → synopsis) and normalises the body for the detected origin.
-func parseExternalSkill(text, source string) (Skill, bool) {
-	frontMatter, body, ok := splitFrontmatter(text)
-	if !ok {
-		return Skill{}, false
-	}
-	var id, synopsis string
-	for _, line := range strings.Split(frontMatter, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		colon := strings.IndexByte(line, ':')
-		if colon < 0 {
-			continue
-		}
-		key := strings.TrimSpace(line[:colon])
-		val := strings.TrimSpace(line[colon+1:])
-		switch strings.ToLower(key) {
-		case "name":
-			id = val
-		case "description":
-			synopsis = val
-		}
-	}
-	if id == "" {
-		return Skill{}, false
-	}
-	origin := normalize.Origin(source)
-	return Skill{
-		ID:       id,
-		Synopsis: synopsis,
-		Body:     normalize.SkillBody(origin, body),
-		Source:   source,
-		Origin:   origin,
-	}, true
 }
 
 func splitFrontmatter(text string) (frontMatter, body string, ok bool) {

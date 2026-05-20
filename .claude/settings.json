@@ -55,7 +55,11 @@
       "WebFetch(domain:github.com)",
       "WebFetch(domain:developers.openai.com)",
       "Bash(npm install *)",
-      "Bash(awk '{print $9, $5}')"
+      "Bash(awk '{print $9, $5}')",
+      "Bash(Remove-Item -Recurse -Force c:\\\\Projects\\\\loom\\\\agent\\\\internal\\\\familycfg)",
+      "Bash(Remove-Item -Recurse -Force c:\\\\Projects\\\\loom\\\\agent\\\\internal\\\\normalize)",
+      "Bash(rmdir /s /q familycfg)",
+      "Bash(rmdir /s /q normalize)"
     ],
     "deny": [
       "Bash(rm -rf:*)",

@@ -5,33 +5,29 @@ import { describe, expect, it } from "vitest";
 import { scanCommands } from "./loader";
 
 describe("scanCommands", () => {
-  it("uses the active provider family", () => {
+  it("reads commands from .loom/commands", () => {
     const root = tempRoot();
-    writeCommand(root, ".claude/commands/review.md", "review", "Claude review");
-    writeCommand(root, ".codex/commands/check.md", "check", "Codex check");
+    writeCommand(root, ".loom/commands/review.md", "review", "Review changes");
 
-    expect(scanCommands(root, "anthropic").map((c) => c.name)).toEqual(["review"]);
-    expect(scanCommands(root, "openai").map((c) => c.name)).toEqual(["check"]);
+    const commands = scanCommands(root);
+    expect(commands.map((c) => c.name)).toEqual(["review"]);
+    expect(commands[0].source).toBe(".loom/commands/review.md");
+    expect(commands[0].description).toBe("Review changes");
   });
 
-  it(".loom commands override external commands", () => {
+  it("ignores foreign-format command folders", () => {
     const root = tempRoot();
-    writeCommand(root, ".claude/commands/review.md", "review", "External review");
+    writeCommand(root, ".claude/commands/foreign.md", "foreign", "Claude command");
+    writeCommand(root, ".codex/commands/another.md", "another", "Codex command");
     writeCommand(root, ".loom/commands/review.md", "review", "Loom review");
 
-    const [command] = scanCommands(root, "anthropic");
-    expect(command.name).toBe("review");
-    expect(command.description).toBe("Loom review");
-    expect(command.source).toBe(".loom/commands/review.md");
+    expect(scanCommands(root).map((c) => c.name)).toEqual(["review"]);
   });
 
-  it("falls back to the opposite family only when native is empty", () => {
+  it("returns empty when no .loom/commands exist", () => {
     const root = tempRoot();
-    writeCommand(root, ".codex/commands/check.md", "check", "Codex fallback");
-    expect(scanCommands(root, "anthropic").map((c) => c.name)).toEqual(["check"]);
-
-    writeCommand(root, ".claude/commands/review.md", "review", "Claude native");
-    expect(scanCommands(root, "anthropic").map((c) => c.name)).toEqual(["review"]);
+    writeCommand(root, ".claude/commands/foreign.md", "foreign", "Claude command");
+    expect(scanCommands(root)).toEqual([]);
   });
 });
 

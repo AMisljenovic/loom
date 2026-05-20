@@ -66,10 +66,9 @@ func (r Runner) Run(ctx context.Context, s Scenario) (RunResult, error) {
 	mode := modeDefinition(s.Mode)
 	registry := loop.ApplyMode(evalRegistry(), &mode)
 	toolDefs := toolDefs(registry)
-	family := r.Provider.Family()
-	cat := skills.Load(root, family)
-	presetRegistry := loop.LoadPresets(root, family)
-	bundle := rules.Load(root, family)
+	cat := skills.Load(root)
+	presetRegistry := loop.LoadPresets(root)
+	bundle := rules.Load(root)
 	stable := loop.BuildStableSystem(&mode, registry, cat, presetRegistry.All())
 	maxTurns := r.Options.MaxTurns
 	if maxTurns <= 0 {

@@ -119,9 +119,19 @@ func (p *openaiProvider) Stream(
 	tools []ToolDef,
 	h StreamHandler,
 ) (StreamResult, error) {
-	oaiMsgs := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages)+1)
-	if systemPrompt := system.String(); systemPrompt != "" {
-		oaiMsgs = append(oaiMsgs, openai.SystemMessage(systemPrompt))
+	// Split system into two messages — the stable prefix first, then the
+	// volatile tail — so OpenAI's automatic prefix-based prompt cache matches
+	// across turns within a task. Concatenating them into a single string
+	// would let small workspace/rules changes invalidate the cache. Providers
+	// that only have one system slot still see effectively the same prompt
+	// because the OpenAI Chat Completions API accepts multiple system messages
+	// and concatenates them internally.
+	oaiMsgs := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages)+2)
+	if system.Stable != "" {
+		oaiMsgs = append(oaiMsgs, openai.SystemMessage(system.Stable))
+	}
+	if system.Volatile != "" {
+		oaiMsgs = append(oaiMsgs, openai.SystemMessage(system.Volatile))
 	}
 	for _, m := range messages {
 		switch m.Role {

@@ -9,7 +9,7 @@ import (
 )
 
 func TestResearchPresetAllowedTools(t *testing.T) {
-	preset, err := LoadPresets("", "").For("research")
+	preset, err := LoadPresets("").For("research")
 	if err != nil {
 		t.Fatalf("For(research): %v", err)
 	}
@@ -30,7 +30,7 @@ func TestResearchPresetAllowedTools(t *testing.T) {
 }
 
 func TestResearchPresetBudgets(t *testing.T) {
-	preset, err := LoadPresets("", "").For("research")
+	preset, err := LoadPresets("").For("research")
 	if err != nil {
 		t.Fatalf("For(research): %v", err)
 	}
@@ -68,7 +68,7 @@ func TestSpawnSubAgentDepthLimit(t *testing.T) {
 
 	driver := &Driver{Tasks: registry}
 	input := mustJSON(t, spawnSubAgentInput{Type: "research", Task: "research x", Context: "context"})
-	out := driver.execSpawnSubAgent(context.Background(), "grandchild", "conv", input, LoadPresets("", ""))
+	out := driver.execSpawnSubAgent(context.Background(), "grandchild", "conv", input, LoadPresets(""))
 	if out.err == nil || !strings.Contains(out.err.Error(), "depth limit") {
 		t.Fatalf("expected depth limit error, got %#v", out.err)
 	}
@@ -79,12 +79,12 @@ func TestSpawnSubAgentRequiresTaskAndContext(t *testing.T) {
 	registry.Register("root", "", "main", "root", func() {})
 	driver := &Driver{Tasks: registry}
 
-	out := driver.execSpawnSubAgent(context.Background(), "root", "conv", mustJSON(t, map[string]string{"type": "research", "context": "ctx"}), LoadPresets("", ""))
+	out := driver.execSpawnSubAgent(context.Background(), "root", "conv", mustJSON(t, map[string]string{"type": "research", "context": "ctx"}), LoadPresets(""))
 	if out.err == nil || !strings.Contains(out.err.Error(), "task is required") {
 		t.Fatalf("expected task validation error, got %#v", out.err)
 	}
 
-	out = driver.execSpawnSubAgent(context.Background(), "root", "conv", mustJSON(t, map[string]string{"type": "research", "task": "task"}), LoadPresets("", ""))
+	out = driver.execSpawnSubAgent(context.Background(), "root", "conv", mustJSON(t, map[string]string{"type": "research", "task": "task"}), LoadPresets(""))
 	if out.err == nil || !strings.Contains(out.err.Error(), "context is required") {
 		t.Fatalf("expected context validation error, got %#v", out.err)
 	}

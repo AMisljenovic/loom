@@ -10,7 +10,7 @@ import (
 const MaxSkillBodyWords = 800
 
 func TestBuiltinSkillsLoad(t *testing.T) {
-	cat := Load("", "")
+	cat := Load("")
 	if len(cat.Order) == 0 {
 		t.Fatal("no skills loaded")
 	}
@@ -47,7 +47,7 @@ func TestBuiltinSkillsLoad(t *testing.T) {
 }
 
 func TestCatalogueLinesIncludeTriggers(t *testing.T) {
-	cat := Load("", "")
+	cat := Load("")
 	lines := cat.CatalogueLines()
 	for _, line := range lines {
 		if !strings.Contains(line, "[triggers:") {

@@ -5,7 +5,7 @@ import * as vscode from "vscode";
 import { AgentClient, AgentSpawnExtras, LlmConfig } from "../agentClient";
 import { DEFAULT_AUTO_APPROVE_CONFIG, migrateAutoApprove, normalizeAutoApprove } from "../approval/categories";
 import { consumeHostApprovalPolicy } from "../approval/hostPolicy";
-import { providerFamily, scanCommands } from "../commands/loader";
+import { scanCommands } from "../commands/loader";
 import { loadDotEnv } from "../env";
 import { resolveMcpConfig } from "../mcpConfig";
 import { BUILTIN_MODES, mergeModes } from "../modes";
@@ -202,13 +202,11 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     watcher.onDidChange(() => this.configureMcpSoon(), this, this.ctx.subscriptions);
     watcher.onDidDelete(() => this.configureMcpSoon(), this, this.ctx.subscriptions);
     this.ctx.subscriptions.push(watcher);
-    for (const pattern of ["**/.loom/commands/*.md", "**/.claude/commands/*.md", "**/.codex/commands/*.md"]) {
-      const commandWatcher = vscode.workspace.createFileSystemWatcher(pattern);
-      commandWatcher.onDidCreate(() => void this.postCommandsCatalogue(), this, this.ctx.subscriptions);
-      commandWatcher.onDidChange(() => void this.postCommandsCatalogue(), this, this.ctx.subscriptions);
-      commandWatcher.onDidDelete(() => void this.postCommandsCatalogue(), this, this.ctx.subscriptions);
-      this.ctx.subscriptions.push(commandWatcher);
-    }
+    const commandWatcher = vscode.workspace.createFileSystemWatcher("**/.loom/commands/*.md");
+    commandWatcher.onDidCreate(() => void this.postCommandsCatalogue(), this, this.ctx.subscriptions);
+    commandWatcher.onDidChange(() => void this.postCommandsCatalogue(), this, this.ctx.subscriptions);
+    commandWatcher.onDidDelete(() => void this.postCommandsCatalogue(), this, this.ctx.subscriptions);
+    this.ctx.subscriptions.push(commandWatcher);
     this.ctx.subscriptions.push(
       vscode.workspace.onDidCreateFiles(() => { this.refIndex = undefined; }),
       vscode.workspace.onDidDeleteFiles(() => { this.refIndex = undefined; }),
@@ -2443,9 +2441,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     await this.postCommandsCatalogue(llmConfig);
   }
 
-  private async postCommandsCatalogue(config?: LlmConfigView) {
-    const llmConfig = config ?? await this.currentLlmConfigView();
-    const commands = scanCommands(this.workspaceRoot(), providerFamily(llmConfig.provider));
+  private async postCommandsCatalogue(_config?: LlmConfigView) {
+    const commands = scanCommands(this.workspaceRoot());
     this.post({ type: "commandsCatalogue", commands }, false);
   }
 

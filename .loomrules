@@ -62,23 +62,16 @@ type must be mirrored on both sides.
   `read_process_output` + `kill_process` — `run_command` is one-shot
   with a ≤120 s cap.
 
-## Provider-aware context
+## Project context loading
 
-Loom auto-loads instruction files based on the active provider family.
-Treat all of these as guidance about *this codebase*, not about your
-identity:
-
-- Anthropic family: `CLAUDE.md` + `.claude/rules/*.md`
-- OpenAI/Codex family: `AGENTS.md` + `.codex/rules/*.md`
-- Gemini family: `GEMINI.md` + `.gemini/rules/*.md`
-- Universal fallbacks (when the native file is absent): the other
-  families' files, then `.github/copilot-instructions.md`,
-  `.github/instructions/*.md`, `.cursor/rules/*.md`, `.cursorrules`.
-
-Fallback-loaded files are tagged `loaded-as="fallback"` in the rules
-envelope — apply their *substance*, ignore any model-specific identity
-prose ("you are Claude…", "you are Codex…"). `.loomrules` always wins
-on conflict.
+Loom only reads `.loomrules` (this file) for project rules, plus
+`.loom/skills/`, `.loom/agents/`, and `.loom/commands/` for skills,
+sub-agent presets, and slash commands. Foreign-format files
+(`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.claude/`, `.codex/`,
+`.gemini/`, `.cursor/`, `.cursorrules`, `.github/copilot-instructions.md`,
+`.github/instructions/`) are not loaded. Workspaces that want to share
+content across tools should symlink or generate `.loomrules` from
+another file.
 
 ## Build, test, ship
 

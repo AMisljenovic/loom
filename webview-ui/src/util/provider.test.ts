@@ -8,6 +8,7 @@ import {
     detectPreset,
     modelSuggestions,
     presetById,
+    providerConsole,
     providerLabel,
     providerSubtitle,
 } from "./provider";
@@ -15,7 +16,7 @@ import {
 describe("OPENAI_COMPATIBLE_PRESETS", () => {
     it("includes the documented presets", () => {
         const ids = OPENAI_COMPATIBLE_PRESETS.map((p) => p.id);
-        expect(ids).toEqual(["openrouter", "groq", "cerebras", "vercel", "lmstudio", "generic"]);
+        expect(ids).toEqual(["openrouter", "groq", "cerebras", "google", "vercel", "lmstudio", "generic"]);
     });
 
     it("has a single Generic preset with empty baseUrl and no models", () => {
@@ -39,6 +40,7 @@ describe("detectPreset", () => {
         expect(detectPreset("https://openrouter.ai/api/v1").id).toBe("openrouter");
         expect(detectPreset("https://api.groq.com/openai/v1").id).toBe("groq");
         expect(detectPreset("https://api.cerebras.ai/v1").id).toBe("cerebras");
+        expect(detectPreset("https://generativelanguage.googleapis.com/v1beta/openai/").id).toBe("google");
         expect(detectPreset("https://ai-gateway.vercel.sh/v1").id).toBe("vercel");
         expect(detectPreset("http://localhost:1234/v1").id).toBe("lmstudio");
     });
@@ -58,6 +60,12 @@ describe("detectPreset", () => {
 describe("presetById", () => {
     it("returns the matching preset", () => {
         expect(presetById("groq").id).toBe("groq");
+    });
+
+    it("returns the Google AI Studio preset", () => {
+        const google = presetById("google");
+        expect(google.label).toBe("Google AI Studio (Gemini)");
+        expect(google.baseUrl).toBe("https://generativelanguage.googleapis.com/v1beta/openai/");
     });
 
     it("falls back to Generic for unknown ids", () => {
@@ -81,6 +89,11 @@ describe("modelSuggestions", () => {
     it("defaults to the openrouter preset when no presetId is given", () => {
         const def = modelSuggestions("openai-compatible");
         expect(def).toBe(presetById(defaultCompatiblePresetId()).models);
+    });
+
+    it("returns Gemini models for the Google AI Studio preset", () => {
+        const google = modelSuggestions("openai-compatible", "google");
+        expect(google.map((m) => m.label)).toEqual(["Gemini 3 Pro", "Gemini 2.5 Pro", "Gemini 2.5 Flash"]);
     });
 });
 
@@ -114,6 +127,20 @@ describe("providerLabel / providerSubtitle", () => {
     it("subtitle for openai-compatible hints at the preset list", () => {
         const sub = providerSubtitle("openai-compatible");
         expect(sub).toMatch(/OpenRouter|Groq/);
+        expect(sub).toContain("Gemini");
+    });
+});
+
+describe("providerConsole", () => {
+    it("returns the Anthropic console metadata", () => {
+        expect(providerConsole("anthropic")).toEqual({
+            url: "https://console.anthropic.com/settings/keys",
+            label: "Open Anthropic Console",
+        });
+    });
+
+    it("returns null for openai-compatible presets", () => {
+        expect(providerConsole("openai-compatible")).toBeNull();
     });
 });
 

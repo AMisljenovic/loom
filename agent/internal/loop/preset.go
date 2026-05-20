@@ -7,8 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/your-org/loom/internal/familycfg"
-	"github.com/your-org/loom/internal/normalize"
 	agentprompts "github.com/your-org/loom/internal/prompts"
 )
 
@@ -30,7 +28,6 @@ type Preset struct {
 	MaxTurns       int
 	MaxInputTokens int64
 	Source         string
-	Origin         string // normalize.Origin*; "loom" for builtins and .loom/agents
 }
 
 type Registry struct {
@@ -38,21 +35,16 @@ type Registry struct {
 	order  []string
 }
 
-func LoadPresets(workspaceRoot, family string) Registry {
+// LoadPresets builds the sub-agent preset registry: builtin "research" plus
+// any user-authored presets in <workspace>/.loom/agents/*.md. Foreign-format
+// folders (.claude/agents, .codex/agents, .gemini/agents) are not read.
+func LoadPresets(workspaceRoot string) Registry {
 	reg := Registry{byName: map[string]Preset{}}
-	if workspaceRoot != "" {
-		nativeRead := loadExternalPresets(&reg, workspaceRoot, nativeAgentsDir(family))
-		if nativeRead == 0 {
-			for _, dir := range fallbackAgentsDirs(family) {
-				loadExternalPresets(&reg, workspaceRoot, dir)
-			}
-		}
-	}
 	if p, err := researchPreset(); err == nil {
 		reg.add(p)
 	}
 	if workspaceRoot != "" {
-		loadExternalPresets(&reg, workspaceRoot, ".loom/agents")
+		loadLoomPresets(&reg, workspaceRoot, ".loom/agents")
 	}
 	reg.finalize()
 	return reg
@@ -73,15 +65,6 @@ func (r Registry) All() []Preset {
 	return out
 }
 
-func (r Registry) HasExternal() bool {
-	for _, p := range r.byName {
-		if isExternalPresetSource(p.Source) {
-			return true
-		}
-	}
-	return false
-}
-
 func (r *Registry) add(p Preset) {
 	if r.byName == nil {
 		r.byName = map[string]Preset{}
@@ -97,16 +80,12 @@ func (r *Registry) finalize() {
 	sort.Strings(r.order)
 }
 
-func loadExternalPresets(reg *Registry, workspaceRoot, relDir string) int {
-	if relDir == "" {
-		return 0
-	}
+func loadLoomPresets(reg *Registry, workspaceRoot, relDir string) {
 	base := filepath.Join(workspaceRoot, filepath.FromSlash(relDir))
 	entries, err := os.ReadDir(base)
 	if err != nil {
-		return 0
+		return
 	}
-	read := 0
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
 			continue
@@ -122,17 +101,7 @@ func loadExternalPresets(reg *Registry, workspaceRoot, relDir string) int {
 			continue
 		}
 		reg.add(p)
-		read++
 	}
-	return read
-}
-
-func nativeAgentsDir(family string) string {
-	return familycfg.Native(family).AgentsDir
-}
-
-func fallbackAgentsDirs(family string) []string {
-	return familycfg.FallbackAgentsDirs(family)
 }
 
 func parseAgentPreset(text, source, defaultName string) (Preset, bool) {
@@ -166,20 +135,15 @@ func parseAgentPreset(text, source, defaultName string) (Preset, bool) {
 	if name == "" || len(tools) == 0 {
 		return Preset{}, false
 	}
-	origin := normalize.Origin(source)
-	if origin == "" {
-		origin = normalize.OriginLoom
-	}
 	return Preset{
 		Name:           name,
 		Description:    description,
-		SystemPrompt:   normalize.PresetBody(origin, body),
+		SystemPrompt:   body,
 		AllowedTools:   tools,
 		AutoApprove:    nil,
 		MaxTurns:       subAgentMaxTurns,
 		MaxInputTokens: subAgentMaxInputTokens,
 		Source:         source,
-		Origin:         origin,
 	}, true
 }
 
@@ -209,10 +173,6 @@ func splitMarkdownFrontmatter(text string) (frontMatter, body string, ok bool) {
 	return rest[:end], strings.TrimLeft(rest[end+len(delim):], "\r\n"), true
 }
 
-func isExternalPresetSource(source string) bool {
-	return normalize.IsExternalOrigin(source)
-}
-
 func researchPreset() (Preset, error) {
 	prompt, err := agentprompts.Load("research")
 	if err != nil {
@@ -236,6 +196,5 @@ func researchPreset() (Preset, error) {
 		MaxTurns:       subAgentMaxTurns,
 		MaxInputTokens: subAgentMaxInputTokens,
 		Source:         "builtin",
-		Origin:         normalize.OriginLoom,
 	}, nil
 }

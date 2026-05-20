@@ -61,8 +61,8 @@ func main() {
 	}
 
 	// Empty workspace, no rules, no loaded skills — true "fresh task" baseline.
-	cat := skills.Load("", "")
-	presets := loop.LoadPresets("", "")
+	cat := skills.Load("")
+	presets := loop.LoadPresets("")
 	bundle := rules.Bundle{}
 
 	// Mode prompts.

@@ -69,8 +69,7 @@ and optional embeddings add semantic search through Ollama or Voyage.
 The built-in `research` sub-agent preset lets the main agent delegate focused
 investigations in parallel. Sub-agents use isolated conversation state and
 return structured Answer / Evidence / Unverified summaries. Workspaces can add
-provider-family presets under `.loom/agents/`, `.claude/agents/`, or
-`.codex/agents/`.
+custom presets under `.loom/agents/`.
 
 **Per-conversation scratchpad**
 
@@ -82,9 +81,8 @@ cards in the transcript. Survives reload, capped at 64 KB.
 
 **Slash commands**
 
-Workspace slash commands live in `.loom/commands/`, `.claude/commands/`, or
-`.codex/commands/`. Type `/` in the composer to expand a command into the user
-message before it is sent to the agent.
+Workspace slash commands live in `.loom/commands/`. Type `/` in the composer to
+expand a command into the user message before it is sent to the agent.
 
 **First-run setup**
 
@@ -125,6 +123,7 @@ Gatekeeper or Windows SmartScreen blocks an unsigned binary, see
 Important settings:
 
 - `loom.provider`: `anthropic`, `openai`, `openai-compatible`, or `local`
+- `openai-compatible` presets include OpenRouter, Groq, Cerebras, Google AI Studio (Gemini), Vercel AI Gateway, LM Studio, and custom endpoints; setup surfaces include an official console link for key creation
 - `loom.mcp.servers`: stdio MCP server configuration
 - `loom.embeddings.provider`: `disabled`, `ollama`, or `voyage`
 - `loom.telemetry.enabled`: opt-in telemetry, disabled by default
@@ -135,29 +134,16 @@ machine IDs.
 
 ## Project Instructions
 
-Loom automatically loads `.loomrules` first, then provider-native files:
-`CLAUDE.md` for Anthropic, `AGENTS.md` for OpenAI/OpenAI-compatible/local,
-and `GEMINI.md` for Gemini (detected from the model id, e.g. `gemini-2.5-pro`).
-When those are absent, it falls back to common workspace conventions such as
-`.github/copilot-instructions.md`, `.cursor/rules/*.md`, and `.cursorrules`,
-plus the other providers' native files.
+Loom only reads `.loomrules` for project rules and `.loom/skills/`,
+`.loom/agents/`, `.loom/commands/` for skills, sub-agent presets, and slash
+commands. Foreign-format files (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,
+`.claude/`, `.codex/`, `.gemini/`, `.cursor/`, `.cursorrules`,
+`.github/copilot-instructions.md`, `.github/instructions/`) are not loaded —
+this keeps the prompt prefix small and provider-neutral. Workspaces that want
+to share content across tools should symlink or generate `.loomrules` from
+their other instruction file.
 
-This repo itself ships parity assets so every family has its own on-disk
-content (`.loomrules`, `CLAUDE.md` + `.claude/`, `AGENTS.md` + `.codex/`,
-`GEMINI.md` + `.gemini/`, `.github/copilot-instructions.md` +
-`.github/instructions/`). A codex- or gemini-driven session on this repo
-loads its own family's files instead of falling back to Claude-targeted
-prose.
-
-Skills, sub-agent presets, and slash commands are imported with the same
-provider-family idea. Anthropic loads `.claude/<kind>/`; OpenAI,
-OpenAI-compatible, and local providers load `.codex/<kind>/`; Gemini loads
-`.gemini/<kind>/`; the other families are used only when the native folder
-is empty. Precedence: `.loom/<kind>/` wins over Loom builtins, Loom builtins
-win over external entries, and external entries are additive only.
-
-See [docs/loomrules.md](docs/loomrules.md) for precedence, size limits, and
-examples.
+See [docs/loomrules.md](docs/loomrules.md) for size limits and examples.
 
 ## Architecture
 

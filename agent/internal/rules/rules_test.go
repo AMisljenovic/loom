@@ -20,342 +20,97 @@ func writeFile(t *testing.T, root, rel, body string) {
 
 func TestLoad_EmptyWorkspaceProducesEmptyBundle(t *testing.T) {
 	dir := t.TempDir()
-	b := Load(dir, "anthropic")
+	b := Load(dir)
 	if b.Text != "" || b.Hash != "" || len(b.Sources) != 0 {
 		t.Fatalf("expected empty bundle, got %+v", b)
 	}
 }
 
 func TestLoad_EmptyRootStringReturnsEmpty(t *testing.T) {
-	if b := Load("", "anthropic"); b.Text != "" {
+	if b := Load(""); b.Text != "" {
 		t.Fatalf("expected empty bundle for empty root, got %+v", b)
 	}
 }
 
-func TestLoad_AnthropicNativePresent_FallbackSuppressed(t *testing.T) {
+func TestLoad_LoomrulesOnly(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "CLAUDE.md", "claude rules body")
-	writeFile(t, dir, ".github/copilot-instructions.md", "copilot body")
-	writeFile(t, dir, "GEMINI.md", "gemini body")
-	writeFile(t, dir, ".cursorrules", "cursor body")
-
-	b := Load(dir, "anthropic")
-
-	if !containsExact(b.Sources, "CLAUDE.md") {
-		t.Fatalf("expected CLAUDE.md in sources, got %v", b.Sources)
-	}
-	for _, forbidden := range []string{
-		".github/copilot-instructions.md",
-		"GEMINI.md",
-		".cursorrules",
-	} {
-		if containsExact(b.Sources, forbidden) {
-			t.Fatalf("fallback should be suppressed when CLAUDE.md is present; got %s in sources %v", forbidden, b.Sources)
-		}
-	}
-}
-
-func TestLoad_AnthropicFallbackToCopilot(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, ".github/copilot-instructions.md", "copilot body")
-
-	b := Load(dir, "anthropic")
-
-	if !containsExact(b.Sources, ".github/copilot-instructions.md") {
-		t.Fatalf("expected copilot-instructions fallback, got sources %v", b.Sources)
-	}
-	if !strings.Contains(b.Text, "copilot body") {
-		t.Fatalf("expected copilot body in bundle text, got:\n%s", b.Text)
-	}
-}
-
-func TestLoad_OpenAINativePresent_FallbackSuppressed(t *testing.T) {
-	// Symmetric to TestLoad_AnthropicNativePresent_FallbackSuppressed:
-	// when the openai family's native files exist (AGENTS.md and/or
-	// .codex/rules), the loader must not pull CLAUDE.md, GEMINI.md, or
-	// .github/copilot-instructions.md into the bundle — even though
-	// they're all on disk. Without this guarantee, a codex user pays
-	// for tokens describing another tool's conventions on every turn.
-	dir := t.TempDir()
-	writeFile(t, dir, "AGENTS.md", "agents body")
-	writeFile(t, dir, ".codex/rules/style.md", "codex style rules")
+	writeFile(t, dir, ".loomrules", "loom rules body")
+	// Foreign-format files exist but must be ignored.
 	writeFile(t, dir, "CLAUDE.md", "claude body")
+	writeFile(t, dir, "AGENTS.md", "agents body")
 	writeFile(t, dir, "GEMINI.md", "gemini body")
 	writeFile(t, dir, ".github/copilot-instructions.md", "copilot body")
 	writeFile(t, dir, ".cursorrules", "cursor body")
+	writeFile(t, dir, ".claude/rules/style.md", "claude style")
+	writeFile(t, dir, ".codex/rules/style.md", "codex style")
 
-	b := Load(dir, "openai")
+	b := Load(dir)
 
-	for _, want := range []string{"AGENTS.md", ".codex/rules/style.md"} {
-		if !containsExact(b.Sources, want) {
-			t.Fatalf("expected %s in sources under openai family, got %v", want, b.Sources)
-		}
+	if len(b.Sources) != 1 || b.Sources[0] != ".loomrules" {
+		t.Fatalf("expected only .loomrules in sources, got %v", b.Sources)
+	}
+	if !strings.Contains(b.Text, "loom rules body") {
+		t.Fatalf("expected loomrules body in bundle:\n%s", b.Text)
 	}
 	for _, forbidden := range []string{
-		"CLAUDE.md",
-		"GEMINI.md",
-		".github/copilot-instructions.md",
-		".cursorrules",
+		"claude body", "agents body", "gemini body",
+		"copilot body", "cursor body", "claude style", "codex style",
 	} {
-		if containsExact(b.Sources, forbidden) {
-			t.Fatalf("fallback should be suppressed when AGENTS.md / .codex/rules are present; got %s in sources %v", forbidden, b.Sources)
-		}
-	}
-	// Native-only bundle must not carry the fallback identity-claim
-	// disclaimer — the model's own family wrote these files.
-	if strings.Contains(b.Text, `loaded-as="fallback"`) {
-		t.Fatalf("native openai bundle must not carry loaded-as=\"fallback\", got:\n%s", b.Text)
-	}
-}
-
-func TestLoad_OpenAIFallbackToCursorAndGemini(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, ".cursor/rules/style.md", "cursor style rules")
-	writeFile(t, dir, ".cursorrules", "legacy cursor rules")
-	writeFile(t, dir, "GEMINI.md", "gemini rules")
-
-	b := Load(dir, "openai")
-
-	for _, want := range []string{
-		".cursor/rules/style.md",
-		".cursorrules",
-		"GEMINI.md",
-	} {
-		if !containsExact(b.Sources, want) {
-			t.Fatalf("expected %s in sources, got %v", want, b.Sources)
+		if strings.Contains(b.Text, forbidden) {
+			t.Fatalf("foreign content leaked into bundle: %q in:\n%s", forbidden, b.Text)
 		}
 	}
 }
 
-func TestLoad_OppositeProviderUsedAsFallback(t *testing.T) {
-	// Anthropic family but only AGENTS.md exists — fallback should pick it up.
+func TestLoad_NoLoomrulesReturnsEmpty(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "AGENTS.md", "agents body")
-
-	b := Load(dir, "anthropic")
-	if !containsExact(b.Sources, "AGENTS.md") {
-		t.Fatalf("expected AGENTS.md as fallback under anthropic, got %v", b.Sources)
-	}
-	// §6.2: cross-family fallback must surface loaded-as="fallback" on
-	// the rule tag and the envelope must instruct the model to ignore
-	// any identity claims that come with the foreign file.
-	if !strings.Contains(b.Text, `loaded-as="fallback"`) {
-		t.Fatalf("expected loaded-as=\"fallback\" on cross-family rule, got:\n%s", b.Text)
-	}
-	if !strings.Contains(b.Text, "ignore any model-specific identity claims") {
-		t.Fatalf("expected fallback envelope sentence, got:\n%s", b.Text)
-	}
-}
-
-func TestLoad_NativeRulesOmitLoadedAsAttribute(t *testing.T) {
-	// When the active family's own files are present, no rule should
-	// carry loaded-as="fallback" (it would mislead the model).
-	dir := t.TempDir()
-	writeFile(t, dir, "CLAUDE.md", "anthropic body")
-
-	b := Load(dir, "anthropic")
-	if strings.Contains(b.Text, `loaded-as="fallback"`) {
-		t.Fatalf("native rules must not carry loaded-as attribute, got:\n%s", b.Text)
-	}
-	if strings.Contains(b.Text, "ignore any model-specific identity claims") {
-		t.Fatalf("native-only bundle must not include the fallback warning sentence, got:\n%s", b.Text)
-	}
-}
-
-func TestLoad_GeminiNativePresent_FallbackSuppressed(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "GEMINI.md", "gemini rules body")
-	writeFile(t, dir, "CLAUDE.md", "claude rules body")
-	writeFile(t, dir, "AGENTS.md", "agents rules body")
-	writeFile(t, dir, ".github/copilot-instructions.md", "copilot body")
-
-	b := Load(dir, "gemini")
-
-	if !containsExact(b.Sources, "GEMINI.md") {
-		t.Fatalf("expected GEMINI.md in sources under gemini family, got %v", b.Sources)
-	}
-	for _, forbidden := range []string{"CLAUDE.md", "AGENTS.md", ".github/copilot-instructions.md"} {
-		if containsExact(b.Sources, forbidden) {
-			t.Fatalf("fallback should be suppressed when GEMINI.md present; got %s in sources %v", forbidden, b.Sources)
-		}
-	}
-}
-
-func TestLoad_GeminiFallbackPullsClaudeAndAgents(t *testing.T) {
-	// Gemini family but no GEMINI.md — the other providers' files come first
-	// in the fallback chain.
-	dir := t.TempDir()
+	// Foreign files alone do not produce a bundle.
 	writeFile(t, dir, "CLAUDE.md", "claude body")
 	writeFile(t, dir, "AGENTS.md", "agents body")
 
-	b := Load(dir, "gemini")
-	for _, want := range []string{"CLAUDE.md", "AGENTS.md"} {
-		if !containsExact(b.Sources, want) {
-			t.Fatalf("expected %s in fallback for gemini, got %v", want, b.Sources)
-		}
+	b := Load(dir)
+	if b.Text != "" || b.Hash != "" || len(b.Sources) != 0 {
+		t.Fatalf("expected empty bundle when .loomrules absent, got %+v", b)
 	}
 }
 
-func TestLoad_GeminiRulesDirCountsAsNative(t *testing.T) {
+func TestLoad_EnvelopeWrapsBody(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, ".gemini/rules/style.md", "gemini style rules")
-	writeFile(t, dir, "CLAUDE.md", "claude body")
+	writeFile(t, dir, ".loomrules", "body line 1\nbody line 2")
 
-	b := Load(dir, "gemini")
-	if !containsExact(b.Sources, ".gemini/rules/style.md") {
-		t.Fatalf("expected .gemini/rules entry, got %v", b.Sources)
+	b := Load(dir)
+	if !strings.HasPrefix(b.Text, `<rules source=".loomrules">`) {
+		t.Fatalf("expected envelope prefix, got:\n%s", b.Text)
 	}
-	if containsExact(b.Sources, "CLAUDE.md") {
-		t.Fatalf("fallback should be suppressed when .gemini/rules contributed; got %v", b.Sources)
+	if !strings.HasSuffix(b.Text, "</rules>") {
+		t.Fatalf("expected envelope suffix, got:\n%s", b.Text)
 	}
-}
-
-func TestLoad_LoomrulesAlwaysFirst(t *testing.T) {
-	for _, family := range []string{"anthropic", "openai", "gemini", "unknown"} {
-		t.Run(family, func(t *testing.T) {
-			dir := t.TempDir()
-			writeFile(t, dir, ".loomrules", "loom rules")
-			writeFile(t, dir, "CLAUDE.md", "claude rules")
-			writeFile(t, dir, "AGENTS.md", "agents rules")
-
-			b := Load(dir, family)
-			if len(b.Sources) == 0 || b.Sources[0] != ".loomrules" {
-				t.Fatalf("family=%s expected .loomrules first, got %v", family, b.Sources)
-			}
-		})
+	if !strings.Contains(b.Text, "body line 1\nbody line 2") {
+		t.Fatalf("expected body verbatim, got:\n%s", b.Text)
 	}
 }
 
-func TestLoad_EnvelopeContainsPrecedenceAttribute(t *testing.T) {
+func TestLoad_RespectsMaxBundleBytes(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, ".loomrules", "loom rules")
+	writeFile(t, dir, ".loomrules", strings.Repeat("x", MaxBundleBytes+1024))
 
-	b := Load(dir, "anthropic")
-	if !strings.Contains(b.Text, `precedence=".loomrules"`) {
-		t.Fatalf("expected precedence attribute in envelope:\n%s", b.Text)
-	}
-	if !strings.Contains(b.Text, "On conflict, rules from .loomrules take precedence") {
-		t.Fatalf("expected precedence note in envelope:\n%s", b.Text)
-	}
-}
-
-func TestLoad_RespectsMaxBundleBytesWithManyFallbacks(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, ".github/copilot-instructions.md", "a"+strings.Repeat("x", 20*1024))
-	writeFile(t, dir, "GEMINI.md", "b"+strings.Repeat("x", 20*1024))
-	writeFile(t, dir, ".cursorrules", "c"+strings.Repeat("x", 20*1024))
-
-	b := Load(dir, "anthropic")
-
-	if len(b.Text) > MaxBundleBytes+512 { // envelope overhead is small
-		t.Fatalf("bundle exceeded cap: len=%d", len(b.Text))
-	}
+	b := Load(dir)
 	if !strings.Contains(b.Text, "<truncated:") {
-		t.Fatalf("expected truncation marker when fallback chain overflows cap:\n%s", b.Text[:min(len(b.Text), 200)])
+		t.Fatalf("expected truncation marker when .loomrules exceeds cap")
 	}
-}
-
-func TestLoad_DedupesByContentHash(t *testing.T) {
-	dir := t.TempDir()
-	body := "shared body content"
-	writeFile(t, dir, ".loomrules", body)
-	writeFile(t, dir, "CLAUDE.md", body) // identical content
-	writeFile(t, dir, ".claude/rules/a.md", "unique rule")
-
-	b := Load(dir, "anthropic")
-
-	// The body must be rendered only once — the duplicate file gets
-	// folded into the kept block, not emitted as a second <rule>.
-	if got := strings.Count(b.Text, body); got != 1 {
-		t.Fatalf("expected shared body to appear once, got %d copies in:\n%s", got, b.Text)
-	}
-	// All three source paths must still surface in Sources (the dedup
-	// alias preservation contract added in §6.3) so attribution is not
-	// lost — the user can still see CLAUDE.md was on disk.
-	for _, want := range []string{".loomrules", "CLAUDE.md", ".claude/rules/a.md"} {
-		if !containsExact(b.Sources, want) {
-			t.Fatalf("expected %q in sources (alias preserved), got %v", want, b.Sources)
-		}
-	}
-	// The kept block must advertise the dedup alias via also="...".
-	if !strings.Contains(b.Text, `also="CLAUDE.md"`) {
-		t.Fatalf("expected also=\"CLAUDE.md\" on the kept block, got:\n%s", b.Text)
-	}
-}
-
-func TestLoad_ProviderNativeDirCountsAsNotEmpty(t *testing.T) {
-	// .claude/rules/x.md alone (no CLAUDE.md) should still count as native present
-	// and therefore suppress the fallback chain.
-	dir := t.TempDir()
-	writeFile(t, dir, ".claude/rules/style.md", "style rules")
-	writeFile(t, dir, ".github/copilot-instructions.md", "copilot body")
-
-	b := Load(dir, "anthropic")
-
-	if !containsExact(b.Sources, ".claude/rules/style.md") {
-		t.Fatalf("expected .claude rule loaded, got %v", b.Sources)
-	}
-	if containsExact(b.Sources, ".github/copilot-instructions.md") {
-		t.Fatalf("fallback should be suppressed when .claude/rules has content; got %v", b.Sources)
-	}
-}
-
-func TestLoad_CopilotFrontmatterStripped(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, ".github/copilot-instructions.md",
-		"---\napplyTo: \"**\"\ndescription: ignore me\n---\n# Use tabs.\n")
-
-	b := Load(dir, "anthropic")
-
-	if strings.Contains(b.Text, "applyTo") {
-		t.Fatalf("copilot frontmatter should be stripped:\n%s", b.Text)
-	}
-	if !strings.Contains(b.Text, "# Use tabs.") {
-		t.Fatalf("body lost during normalisation:\n%s", b.Text)
-	}
-	if !strings.Contains(b.Text, `origin="copilot"`) {
-		t.Fatalf("expected origin attribute, got:\n%s", b.Text)
-	}
-}
-
-func TestLoad_PerFileBlockReplacesTextMarker(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, ".loomrules", "loom body")
-
-	b := Load(dir, "anthropic")
-
-	if strings.Contains(b.Text, "--- .loomrules ---") {
-		t.Fatalf("legacy text marker should be gone:\n%s", b.Text)
-	}
-	if !strings.Contains(b.Text, `<rule source=".loomrules" origin="loom">`) {
-		t.Fatalf("expected per-file rule block, got:\n%s", b.Text)
-	}
-	if !strings.Contains(b.Text, "</rule>") {
-		t.Fatalf("expected closing tag, got:\n%s", b.Text)
-	}
-}
-
-func TestLoad_EnvelopeAdvertisesOrigins(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, ".loomrules", "loom body")
-	writeFile(t, dir, "CLAUDE.md", "claude body")
-
-	b := Load(dir, "anthropic")
-
-	if !strings.Contains(b.Text, `origins="claude,loom"`) {
-		t.Fatalf("expected sorted origins attribute, got:\n%s", b.Text)
+	// Envelope + body + truncation marker should be within a small overhead
+	// of the cap.
+	if len(b.Text) > MaxBundleBytes+256 {
+		t.Fatalf("bundle exceeded cap with overhead: len=%d", len(b.Text))
 	}
 }
 
 func TestLoad_HashStableAcrossRuns(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, ".loomrules", "loom body")
-	writeFile(t, dir, "CLAUDE.md", "claude body")
-	writeFile(t, dir, ".github/copilot-instructions.md",
-		"---\napplyTo: \"**\"\n---\ncopilot body\n")
+	writeFile(t, dir, ".loomrules", "stable body")
 
-	first := Load(dir, "anthropic")
-	second := Load(dir, "anthropic")
+	first := Load(dir)
+	second := Load(dir)
 	if first.Hash == "" || first.Hash != second.Hash {
 		t.Fatalf("hash unstable: %q vs %q", first.Hash, second.Hash)
 	}
@@ -364,44 +119,13 @@ func TestLoad_HashStableAcrossRuns(t *testing.T) {
 	}
 }
 
-func TestLoad_DedupeOnNormalizedBody(t *testing.T) {
-	// .loomrules and a copilot file produce the same body after frontmatter
-	// stripping (no applyTo, so no scope prefix is emitted); the copilot
-	// entry deduplicates into the loomrules block but its path is still
-	// surfaced via the also=" alias attribute (§6.3).
+func TestLoad_HashChangesWhenBodyChanges(t *testing.T) {
 	dir := t.TempDir()
-	body := "shared instructions"
-	writeFile(t, dir, ".loomrules", body)
-	writeFile(t, dir, ".github/copilot-instructions.md",
-		"---\ndescription: x\n---\n"+body)
-
-	b := Load(dir, "anthropic")
-
-	if !containsExact(b.Sources, ".loomrules") {
-		t.Fatalf("expected .loomrules in sources, got %v", b.Sources)
+	writeFile(t, dir, ".loomrules", "before")
+	a := Load(dir).Hash
+	writeFile(t, dir, ".loomrules", "after")
+	b := Load(dir).Hash
+	if a == b {
+		t.Fatalf("expected hash to change with body, both %q", a)
 	}
-	// Alias-preservation contract: deduped path stays in Sources.
-	if !containsExact(b.Sources, ".github/copilot-instructions.md") {
-		t.Fatalf("expected copilot path to remain in sources (alias), got %v", b.Sources)
-	}
-	// But the body must appear only once in the rendered envelope.
-	if got := strings.Count(b.Text, body); got != 1 {
-		t.Fatalf("expected shared body to appear once, got %d copies", got)
-	}
-}
-
-func containsExact(list []string, want string) bool {
-	for _, s := range list {
-		if s == want {
-			return true
-		}
-	}
-	return false
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

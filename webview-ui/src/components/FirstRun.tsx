@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import type { FirstRunState, LlmProvider } from "../../../src/shared/protocol";
 import { LoomMark } from "../brand/LoomMark";
 import * as Ico from "../brand/icons";
-import { post } from "../vscode";
 import {
     OPENAI_COMPATIBLE_PRESETS,
     defaultCompatiblePresetId,
@@ -10,10 +9,12 @@ import {
     detectPreset,
     modelSuggestions,
     presetById,
+    providerConsole,
     providerNeedsBaseUrl,
     providerNeedsKey,
     providerSubtitle,
 } from "../util/provider";
+import { post } from "../vscode";
 
 interface FirstRunProps {
     state: FirstRunState;
@@ -48,6 +49,9 @@ export function FirstRun({ state, onSample }: FirstRunProps) {
         [provider, presetId],
     );
     const activePreset = provider === "openai-compatible" ? presetById(presetId) : null;
+    const consoleLink = activePreset?.keyHintUrl
+        ? { url: activePreset.keyHintUrl, label: activePreset.keyHintLabel ?? "Get a key" }
+        : providerConsole(provider);
     const inSuggestions = suggestions.some((m) => m.value === model);
     const [selectMode, setSelectMode] = useState<"preset" | "other">(inSuggestions ? "preset" : "other");
     useEffect(() => {
@@ -171,30 +175,31 @@ export function FirstRun({ state, onSample }: FirstRunProps) {
                     </label>
                 )}
                 {needsKey && (
-                    <label>
-                        <span>
-                            API Key {hasKey ? "(set)" : "(required)"}
-                            {activePreset?.keyHintUrl && (
-                                <>
-                                    {" — "}
-                                    <a
-                                        href={activePreset.keyHintUrl}
-                                        target="_blank"
-                                        rel="noreferrer noopener"
-                                    >
-                                        {activePreset.keyHintLabel ?? "Get a key"} →
-                                    </a>
-                                </>
-                            )}
-                        </span>
-                        <input
-                            type="password"
-                            value={apiKey}
-                            onChange={(e) => setApiKey(e.target.value)}
-                            placeholder={hasKey ? "Leave blank to keep current key" : "Paste key"}
-                            autoComplete="off"
-                        />
-                    </label>
+                    <>
+                        {consoleLink && (
+                            <>
+                                <a
+                                    className="btn provider-console-link"
+                                    href={consoleLink.url}
+                                    target="_blank"
+                                    rel="noreferrer noopener"
+                                >
+                                    <span>{consoleLink.label} →</span>
+                                </a>
+                                <p className="provider-console-hint">Sign in there, create a key, then paste it below.</p>
+                            </>
+                        )}
+                        <label>
+                            <span>API Key {hasKey ? "(set)" : "(required)"}</span>
+                            <input
+                                type="password"
+                                value={apiKey}
+                                onChange={(e) => setApiKey(e.target.value)}
+                                placeholder={hasKey ? "Leave blank to keep current key" : "Paste key"}
+                                autoComplete="off"
+                            />
+                        </label>
+                    </>
                 )}
             </div>
 

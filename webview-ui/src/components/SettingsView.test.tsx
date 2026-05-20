@@ -1,4 +1,3 @@
-import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { LlmConfigView, LlmProvider } from "../../../src/shared/protocol";
@@ -36,6 +35,7 @@ describe("SettingsView preset UI", () => {
         const html = render("openai-compatible", "https://openrouter.ai/api/v1");
         expect(html).toContain(">Preset<");
         expect(html).toContain("OpenRouter");
+        expect(html).toContain("Google AI Studio (Gemini)");
         expect(html).toContain("Generic (custom endpoint)");
     });
 
@@ -44,10 +44,18 @@ describe("SettingsView preset UI", () => {
         expect(html).toMatch(/<option[^>]*value="cerebras"[^>]*selected/);
     });
 
-    it("shows the preset's key-hint link in the API Key label", () => {
+    it("shows the preset console button above the API key field", () => {
         const html = render("openai-compatible", "https://api.groq.com/openai/v1");
         expect(html).toContain("https://console.groq.com/keys");
-        expect(html).toContain("Get a Groq key");
+        expect(html).toContain("Get a Groq key →");
+        expect(html).toContain("provider-console-link");
+        expect(html).toContain("Sign in there, create a key, then paste it below.");
+    });
+
+    it("shows the native OpenAI console button", () => {
+        const html = render("openai");
+        expect(html).toContain("https://platform.openai.com/api-keys");
+        expect(html).toContain("Open OpenAI Platform →");
     });
 
     it("renders only current Anthropic model ids in the dropdown", () => {

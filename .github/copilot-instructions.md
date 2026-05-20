@@ -121,8 +121,7 @@ newline-delimited JSON-RPC over stdio.
 
 16. v0.1.4 sub-agents run in parallel within a turn. The built-in
     `research` preset is always available, exposed through `spawn_subagent`;
-    additional presets may be imported from `.loom/agents/`,
-    `.claude/agents/`, or `.codex/agents/`. Multiple
+    additional presets may be added under `.loom/agents/`. Multiple
     spawns emitted in one turn run concurrently through the same errgroup
     as other tools; each sub-agent is read-only, has isolated conversation
     state, and streams into its own webview sub-agent card. Depth, per-tree
@@ -138,36 +137,17 @@ newline-delimited JSON-RPC over stdio.
     smallest focused test command while iterating, then the broader suite
     before handoff (`go test ./...` from `agent/`, `npm run test:ts`, and
     `npm run build` when the extension surface is touched).
-19. Project rules are auto-loaded by `agent/internal/rules/` and frozen at task
-    start. `.loomrules` is always loaded first and declared top-precedence in
-    the prompt envelope. Provider-native files are loaded next: CLAUDE.md +
-    `.claude/rules/*.md` for Anthropic, AGENTS.md + `.codex/rules/*.md` for
-    OpenAI, GEMINI.md + `.gemini/rules/*.md` for Gemini — the directory
-    mapping is owned by `agent/internal/familycfg/familycfg.go` (one
-    canonical table shared with the skills and presets loaders). Gemini
-    family is detected from the model id (`gemini*`, including
-    `models/gemini-*`) regardless of which provider preset routed it. When
-    the provider's native files are absent, a universal fallback chain
-    picks up the other providers' files, then
-    `.github/copilot-instructions.md`, `.github/instructions/*.md`,
-    `.cursor/rules/*.md`, and `.cursorrules`. Per-rule tags carry
-    `loaded-as="fallback"` when a foreign-family file was picked up via
-    fallback (the envelope tells the model to apply substance, ignore
-    identity claims), and `also="..."` when content-dedup folded extra
-    source paths into one rendered block. Copilot/Cursor frontmatter is
-    stripped but `applyTo:` / `globs:` survives as a leading
-    `> Scope: applies to …` blockquote so file-glob scoping is preserved.
-    Bundle cap 32 KB; lives in the volatile tail.
-20. Skills, sub-agents, and commands are imported by provider family:
-    Anthropic uses `.claude/<kind>/`; OpenAI, OpenAI-compatible, and local
-    use `.codex/<kind>/`; Gemini uses `.gemini/<kind>/`. The other family
-    folders are fallback-only. Loom-native entries win (`.loom/<kind>/`
-    over builtins, builtins over external). This repo ships parity assets
-    for every family: `.loomrules` (universal, top precedence), `CLAUDE.md`
-    + `.claude/agents/` + `.claude/commands/`, `AGENTS.md` +
-    `.codex/agents/` + `.codex/commands/`, `GEMINI.md` + `.gemini/agents/`
-    + `.gemini/commands/`, and `.github/copilot-instructions.md` +
-    `.github/instructions/`.
+19. Project rules are read from `.loomrules` only by
+    `agent/internal/rules/`, frozen at task start, capped at 32 KB, and
+    rendered inside a `<rules source=".loomrules">…</rules>` envelope in
+    the volatile system tail. Foreign-format files (CLAUDE.md, AGENTS.md,
+    GEMINI.md, `.claude/`, `.codex/`, `.gemini/`, `.cursor/`,
+    `.cursorrules`, `.github/copilot-instructions.md`,
+    `.github/instructions/`) are not loaded.
+20. Skills, sub-agent presets, and slash commands are Loom-only. Skills:
+    builtins in `agent/internal/skills/builtin/*.md` plus
+    `.loom/skills/<id>/SKILL.md`. Presets: builtin `research` plus
+    `.loom/agents/*.md`. Commands: `.loom/commands/*.md`.
 21. `agent/internal/loop/maybeSummarize` never cuts mid-tool-batch.
     `safeCutBoundary` walks the proposed cut back so the kept tail never
     starts with `RoleTool` and the summarized prefix never ends on an

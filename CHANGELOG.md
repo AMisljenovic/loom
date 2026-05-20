@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.5.8
+
+Loom 0.5.8 is a token-spend and context-pollution pass. Loom now reads
+`.loomrules` and `.loom/<kind>/` only — foreign-format files (CLAUDE.md,
+AGENTS.md, GEMINI.md, `.claude/`, `.codex/`, `.gemini/`, `.cursor/`,
+`.cursorrules`, `.github/copilot-instructions.md`, `.github/instructions/`) are
+no longer loaded into the system prompt. On top of that, OpenAI-compatible
+providers now ship the stable prefix and volatile tail as separate system
+messages so prefix-based prompt caching hits across turns, and stale tool
+results are elided on the wire so per-turn payload size stops growing with
+task length.
+
+### Changed
+
+- **Project context is Loom-only.** `agent/internal/rules/` reads
+  `.loomrules` and nothing else; `agent/internal/skills/` reads builtin
+  skills plus `.loom/skills/<id>/SKILL.md`; `agent/internal/loop/preset.go`
+  reads the builtin `research` preset plus `.loom/agents/*.md`;
+  `src/commands/loader.ts` reads `.loom/commands/*.md`. Foreign-format
+  files are no longer parsed, normalised, or shipped in the prompt.
+  Workspaces that share content with other tools should symlink or
+  generate `.loomrules` from their other instruction file.
+  ([agent/internal/rules/rules.go](agent/internal/rules/rules.go),
+  [agent/internal/skills/skills.go](agent/internal/skills/skills.go),
+  [agent/internal/loop/preset.go](agent/internal/loop/preset.go),
+  [src/commands/loader.ts](src/commands/loader.ts))
+- **OpenAI-compatible providers now hit prefix cache.** The OpenAI adapter
+  sends `system.Stable` and `system.Volatile` as separate system messages
+  instead of concatenating them, so OpenAI/GPT-5's automatic prefix
+  caching matches across turns even when the volatile tail (workspace
+  path, loaded-skill bodies, `.loomrules`) shifts. Anthropic continues to
+  set explicit `cache_control` breakpoints. ([agent/internal/llm/openai.go](agent/internal/llm/openai.go))
+- **Stale tool results are elided on the wire.** Before each LLM call,
+  `wireMessages()` replaces the content of `RoleTool` messages older than
+  the most recent six (when the original exceeded 1 KB) with a short
+  placeholder. The conversation `Entry` still retains the full content so
+  the webview transcript shows the original output. Per-turn input tokens
+  stop growing with task length. ([agent/internal/loop/loop.go](agent/internal/loop/loop.go),
+  [agent/internal/loop/wire_test.go](agent/internal/loop/wire_test.go))
+- **Webview file watcher narrowed.** `ChatPanel` watches only
+  `**/.loom/commands/*.md` for command-catalogue invalidation. Foreign-
+  format command folders are no longer watched. ([src/panel/ChatPanel.ts](src/panel/ChatPanel.ts))
+
+### Removed
+
+- **`agent/internal/familycfg/` package.** The provider-family table
+  (anthropic/openai/gemini → file/dir mappings) is gone because no caller
+  needs it anymore.
+- **`agent/internal/normalize/` package.** Frontmatter strippers,
+  H1-strippers, and origin detection for Claude/Codex/Copilot/Cursor/
+  Gemini files are gone — there are no foreign files to normalise.
+- **`Skill.Origin` and `Preset.Origin` fields plus all "external"
+  bookkeeping** (`HasExternal`, `IsExternalSource`, `presetsHaveExternal`,
+  `loadExternalSkills`, `loadExternalPresets`, `nativeCommandsDir`,
+  `fallbackCommandsDirs`, `providerFamily`, the `<rules sources origins
+  precedence>` envelope attributes, `loaded-as="fallback"` per-rule tags,
+  `also="..."` alias attributes, `origin="..."` on `<skill>` tags). The
+  rules envelope is now the minimal `<rules source=".loomrules">…</rules>`.
+
 ## 0.5.7
 
 Loom 0.5.7 is a plan-handoff, transcript, and sub-agent reliability pass:

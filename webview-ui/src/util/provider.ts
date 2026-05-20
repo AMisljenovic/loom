@@ -77,6 +77,18 @@ export const OPENAI_COMPATIBLE_PRESETS: OpenAICompatiblePreset[] = [
         ],
     },
     {
+        id: "google",
+        label: "Google AI Studio (Gemini)",
+        baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
+        keyHintUrl: "https://aistudio.google.com/apikey",
+        keyHintLabel: "Get a Gemini key",
+        models: [
+            { label: "Gemini 3 Pro", value: "gemini-3-pro-preview" },
+            { label: "Gemini 2.5 Pro", value: "gemini-2.5-pro" },
+            { label: "Gemini 2.5 Flash", value: "gemini-2.5-flash" },
+        ],
+    },
+    {
         id: "vercel",
         label: "Vercel AI Gateway",
         baseUrl: "https://ai-gateway.vercel.sh/v1",
@@ -162,8 +174,26 @@ export function providerSubtitle(provider: LlmProvider): string {
     switch (provider) {
         case "anthropic": return "Claude Opus, Sonnet, Haiku";
         case "openai": return "GPT-5.1, o5 series";
-        case "openai-compatible": return "OpenRouter, Groq, Cerebras, Azure, vLLM…";
+        case "openai-compatible": return "OpenRouter, Groq, Cerebras, Gemini, Azure, vLLM…";
         case "local": return "Ollama on this machine";
+    }
+}
+
+export function providerConsole(provider: LlmProvider): { url: string; label: string } | null {
+    switch (provider) {
+        case "anthropic":
+            return {
+                url: "https://console.anthropic.com/settings/keys",
+                label: "Open Anthropic Console",
+            };
+        case "openai":
+            return {
+                url: "https://platform.openai.com/api-keys",
+                label: "Open OpenAI Platform",
+            };
+        case "openai-compatible":
+        case "local":
+            return null;
     }
 }
 

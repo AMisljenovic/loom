@@ -548,12 +548,26 @@
     border: 1px solid var(--border-faint);
 }
 
-.mcp-state-ready { color: var(--text-strong); border-color: var(--accent-ring); background: var(--accent-soft); }
-.mcp-state-stopped { color: var(--text-faint); }
+.mcp-state-ready {
+    color: var(--text-strong);
+    border-color: var(--accent-ring);
+    background: var(--accent-soft);
+}
+
+.mcp-state-stopped {
+    color: var(--text-faint);
+}
+
 .mcp-state-error,
 .mcp-state-crashed,
-.mcp-state-failed { color: #f88; border-color: #d44; }
-.mcp-state-starting { color: var(--text-muted); }
+.mcp-state-failed {
+    color: #f88;
+    border-color: #d44;
+}
+
+.mcp-state-starting {
+    color: var(--text-muted);
+}
 
 /* ---- Search panel ---- */
 .search-panel-row {
@@ -950,6 +964,23 @@
     box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+.provider-console-link {
+    width: 100%;
+    box-sizing: border-box;
+    justify-content: center;
+    text-decoration: none;
+}
+
+.provider-console-link:hover {
+    text-decoration: none;
+}
+
+.provider-console-hint {
+    margin: -4px 0 2px;
+    font-size: 11.5px;
+    color: var(--text-faint);
+}
+
 .first-run-actions {
     display: flex;
     flex-wrap: wrap;
@@ -1270,8 +1301,15 @@
 }
 
 @keyframes subagent-enter {
-    from { opacity: 0; transform: translateY(-4px); }
-    to   { opacity: 1; transform: translateY(0); }
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 .subagent-head {
@@ -2500,7 +2538,10 @@
     border: 0;
     cursor: pointer;
 }
-button.index-status:hover { color: var(--text-strong); }
+
+button.index-status:hover {
+    color: var(--text-strong);
+}
 
 .index-status .is-pip {
     width: 5px;
@@ -2525,7 +2566,10 @@ button.index-status:hover { color: var(--text-strong); }
     border: 0;
     cursor: pointer;
 }
-button.mcp-status:hover { color: var(--text-strong); }
+
+button.mcp-status:hover {
+    color: var(--text-strong);
+}
 
 .toggle-btn {
     display: inline-flex;
@@ -3832,9 +3876,12 @@ button.mcp-status:hover { color: var(--text-strong); }
 }
 
 @keyframes todoPulse {
-    0%, 100% {
+
+    0%,
+    100% {
         box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 28%, transparent);
     }
+
     50% {
         box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
     }

@@ -44,66 +44,34 @@ change to a message type must be made on both sides.
 - **Prompt prefix must stay byte-stable.** Anthropic and OpenAI prompt
   caching both rely on the system-prompt + tools prefix being identical
   across turns. The system prompt is split into a stable prefix (mode +
-  tools + skills catalogue, built by `buildStableSystem`) and a volatile
+  tools + skills catalogue, built by `BuildStableSystem`) and a volatile
   tail (workspace path + loaded-skill bodies + rules bundle, built by
-  `buildVolatileSystem`). Anthropic places its `cache_control` breakpoint
-  between the two blocks; OpenAI concatenates. When adding tools, ensure
-  list order is deterministic (MCP tools are sorted by name in
-  `Driver.registry()`). Never put per-turn-variable data in the stable
-  prefix — it will break the cache.
-- **Rules are auto-loaded, provider-aware, task-frozen.**
-  `agent/internal/rules/` reads `.loomrules` always, plus `CLAUDE.md` +
-  `.claude/rules/*.md` for Anthropic, `AGENTS.md` + `.codex/rules/*.md`
-  for OpenAI, or `GEMINI.md` + `.gemini/rules/*.md` for Gemini. Gemini
-  family is detected from the model id by `openaiProvider.Family()` — any
-  model whose name starts with `gemini` (including `models/gemini-*`)
-  routes to the gemini family regardless of which UI preset created the
-  config. When the provider's native files are absent, a universal
-  fallback chain picks up the other providers' files, then
-  `.github/copilot-instructions.md`, `.github/instructions/*.md`,
-  `.cursor/rules/*.md`, and `.cursorrules` — so Loom respects whatever
-  convention the workspace already uses without forcing duplication.
-  `.loomrules` is always loaded first and the envelope advertises it as
-  top precedence on conflict. The bundle hash is captured on the
-  conversation `Entry` at task start; mid-task file edits do not
-  invalidate the running cache. Provider family is reported by
-  `llm.Provider.Family()`.
-- **External context is normalised in-memory.** `agent/internal/normalize/`
-  detects the origin of each rule/skill/preset file (`loom`, `claude`,
-  `codex`, `copilot`, `cursor`, `gemini`) and applies deterministic,
-  idempotent transforms before content reaches the prompt: Copilot and
-  Cursor frontmatter is stripped (but `applyTo:` / `globs:` scope is
-  preserved as a leading `> Scope: applies to …` markdown blockquote so
-  file-glob scoping survives), redundant `# CLAUDE.md` / `# AGENTS.md`
-  / `# GEMINI.md` H1s are dropped, and `.loomrules` / `.loom/` content
-  always passes through verbatim. The rules envelope wraps every included
-  file in `<rule source origin>…</rule>` blocks, advertises the deduped
-  origin list on the outer `<rules sources origins precedence>` tag, and
-  adds two attributes when applicable: `loaded-as="fallback"` on rules
-  picked up via the universal chain whose origin doesn't match the active
-  family (and a one-line envelope sentence tells the model to ignore
-  identity claims), and `also="alt1,alt2"` on the kept block when
-  identical content collapsed multiple source paths into one rendered
-  entry (the alias paths still surface in the top-level `sources=` list).
-  `normalize.Version` is mixed into `Bundle.Hash` unconditionally so
-  bumping the constant deliberately invalidates cached prefixes after a
-  transform change. Bodies are deduplicated on their *normalised* hash,
-  so identical prose across foreign formats collapses to one entry.
-  `Skill.Origin` and `Preset.Origin` carry the same identifier;
-  `RenderLoaded()` adds `origin="..."` to `<skill>` tags only for
-  non-loom origins, keeping the native-skill rendering byte-stable. Do
-  not put origin in the catalogue lines (`CatalogueLines()`) — that
-  lives in the stable prefix.
-- **Provider-family routing lives in one place.**
-  `agent/internal/familycfg/` is the canonical table mapping family
-  ("anthropic" / "openai" / "gemini") to its native rules file, rules
-  directory, skills directory, and agents directory. Rules
-  (`rules.nativeCandidates` / `fallbackCandidates`), skills
-  (`skills.nativeSkillsDir` / `fallbackSkillsDirs`), and presets
-  (`loop.nativeAgentsDir` / `fallbackAgentsDirs`) all delegate here.
-  Adding a new provider family is one entry in `canonical`. The
-  fallback chain is derived from the same table, so its byte order is
-  guaranteed consistent across all three consumers.
+  `BuildVolatileSystem`). Both Anthropic and OpenAI adapters send these as
+  separate system blocks so the cached prefix matches across turns even
+  when the volatile tail shifts. Anthropic places explicit `cache_control`
+  breakpoints; OpenAI relies on automatic prefix-based caching. When
+  adding tools, ensure list order is deterministic (MCP tools are sorted
+  by name in `Driver.registry()`). Never put per-turn-variable data in the
+  stable prefix — it will break the cache.
+- **Project context is Loom-only.** `agent/internal/rules/` reads
+  `.loomrules` and nothing else. `agent/internal/skills/` and
+  `agent/internal/loop/preset.go` read `.loom/skills/` and `.loom/agents/`
+  (plus builtins). `src/commands/loader.ts` reads `.loom/commands/`.
+  Foreign-format files (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.claude/`,
+  `.codex/`, `.gemini/`, `.cursor/`, `.cursorrules`,
+  `.github/copilot-instructions.md`, `.github/instructions/`) are not
+  loaded — keeping the prompt prefix smaller and tools/provider-neutral.
+  The rules bundle hash is captured on the conversation `Entry` at task
+  start; mid-task file edits do not invalidate the running cache.
+- **Tool results are elided on the wire.** The conversation `Entry`
+  retains every tool result verbatim so the webview transcript can show
+  full output. Before each LLM call, `wireMessages()` in
+  [agent/internal/loop/loop.go](agent/internal/loop/loop.go) replaces the
+  content of `RoleTool` messages older than the most recent
+  `keepRecentToolResults` with a short placeholder when the original
+  exceeded `minElideToolResultBytes`. This prevents the per-turn payload
+  from growing quadratically with task length. If a tool needs its full
+  output revisited later, the model can re-run the tool.
 - **Skills are advertised in the prefix, loaded on demand.** The catalogue
   (id + synopsis) sits in the stable prefix; bodies are injected into the
   volatile tail only after the model calls `load_skill`. Builtin skills
@@ -111,22 +79,6 @@ change to a message type must be made on both sides.
   skills live in `.loom/skills/<id>/SKILL.md`. `load_skill` is intercepted
   in the loop (not a regular `LocalExec`) because it mutates
   `conversation.Entry.LoadedSkills`.
-- **Skills, sub-agents, and commands import external conventions.**
-  Provider family comes from `llm.Provider.Family()` in Go and from the active
-  `loom.provider` in the TS host. Anthropic loads `.claude/<kind>/`; OpenAI,
-  OpenAI-compatible, and local providers load `.codex/<kind>/`; Gemini loads
-  `.gemini/<kind>/`. The other family folders are fallbacks only when the
-  family-native folder contributes zero entries. Loom-native config wins:
-  `.loom/<kind>/` overrides builtins, builtins override external entries, and
-  external entries are additive only. Imported sub-agent presets trust their
-  `tools:` field as written; write tools still flow through normal approval.
-  This repo itself ships parity assets so every supported family has its own
-  on-disk content: `.loomrules` (universal, top precedence), `CLAUDE.md` +
-  `.claude/agents/` + `.claude/commands/`, `AGENTS.md` + `.codex/agents/` +
-  `.codex/commands/`, `GEMINI.md` + `.gemini/agents/` + `.gemini/commands/`,
-  and `.github/copilot-instructions.md` + `.github/instructions/`. A
-  codex/gemini-driven session on this repo therefore loads its own family's
-  content instead of falling back to Claude-targeted prose.
 - **Search-first, read narrowly.** `read_file` accepts optional
   `offset`/`limit` (1-based line window) and soft-caps files over ~256 KB
   to the first 2000 lines when no `limit` is given — the header line
@@ -255,9 +207,8 @@ change to a message type must be made on both sides.
   Limits are enforced atomically inside `TaskRegistry.Register` (depth,
   per-tree count, tree token ceiling) — do not re-introduce pre-checks
   outside the registry. Per-turn cap stays at `subAgentMaxPerTurn=3`. Custom
-  presets may be imported from `.loom/agents/`, `.claude/agents/`, or
-  `.codex/agents/`; do not add fire-and-forget orchestration or sub-agent
-  model routing without updating `SUBAGENTS.md`.
+  presets may be added under `.loom/agents/`; do not add fire-and-forget
+  orchestration or sub-agent model routing without updating `SUBAGENTS.md`.
 - **First-run setup is host-owned and global.** `ChatPanel.ts` stores
   `globalState["loom.firstRun.completed"]` and
   `globalState["loom.llm.advanced"]`, posts `firstRunState`, and keeps API
@@ -270,12 +221,16 @@ change to a message type must be made on both sides.
 - **Providers are flexible.** Four providers are exposed in the UI:
   `anthropic`, `openai`, `openai-compatible`, and `local` (Ollama preset).
   Picking `openai-compatible` reveals a Preset dropdown (OpenRouter, Groq,
-  Cerebras, Vercel AI Gateway, LM Studio, Generic) that pre-fills Base URL
-  and the curated model list; presets are a UI-only concept in
+  Cerebras, Google AI Studio (Gemini), Vercel AI Gateway, LM Studio,
+  Generic) that pre-fills Base URL and the curated model list; presets are a
+  UI-only concept in
   [webview-ui/src/util/provider.ts](webview-ui/src/util/provider.ts) — on
   the wire every preset still collapses to `openai-compatible` with an
-  explicit BaseURL. Model fields are combo-style — a curated dropdown plus
-  an `Other…` text input so any model id can be typed. The
+  explicit BaseURL. First Run and Settings surface a provider- or
+  preset-specific "Open … Console" button that sends the user to the
+  provider's official key page so they can sign in there, create a key, and
+  paste it back. Model fields are combo-style — a curated dropdown plus an
+  `Other…` text input so any model id can be typed. The
   full-pane Settings view
   ([webview-ui/src/components/SettingsView.tsx](webview-ui/src/components/SettingsView.tsx))
   exposes Advanced fields — max output tokens, context-window override,
@@ -319,7 +274,9 @@ change to a message type must be made on both sides.
 | Anthropic SDK wrapper | `agent/internal/llm/llm.go` |
 | Tool registry | `agent/internal/tools/tools.go` |
 | Local-state-mutating tool interceptors | `agent/internal/loop/interceptors.go` (load_skill, scratchpad, spawn_subagent) |
-| Provider-family directories (rules/skills/agents) | `agent/internal/familycfg/familycfg.go` |
+| Project rules loader (`.loomrules`) | `agent/internal/rules/rules.go` |
+| Workspace skills + builtins | `agent/internal/skills/` |
+| Sub-agent presets (builtin + `.loom/agents/`) | `agent/internal/loop/preset.go` |
 | Workspace symbol index | `agent/internal/index/` (CGO tree-sitter when available, pure-Go fallback) |
 | Embeddings providers | `agent/internal/embed/` (Ollama, Voyage) |
 | Vector store (SQLite) | `agent/internal/index/vector.go` (writes to `<workspace>/.loom/index.db`) |
