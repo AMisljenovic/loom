@@ -196,6 +196,12 @@ handoff:
     the tail. OpenAI/Azure rejects either shape with
     `messages.[N].role: tool must be a response to a preceding message with
     tool_calls`.
+20b. Before a new task streams to OpenAI/Azure, `Entry.HealOrphanToolCalls`
+    repairs any in-memory assistant `tool_calls` whose tool responses were
+    never appended because the previous task was cancelled, reloaded, or
+    otherwise interrupted mid-tool-batch. Keep this paired with the persisted
+    hydrate repair in `agent/internal/conversation/`; Continue must never send
+    an assistant tool-call message without one following `RoleTool` per id.
 21. Default per-task model/tool turn cap is 32 (`loop.go`). Continue on a
     `turn_limit` stop doubles the cap (32 → 64 → 128 → …): the stop card
     carries `maxTurns`, the Continue button posts `submit` with `maxTurns`

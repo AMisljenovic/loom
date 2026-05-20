@@ -414,6 +414,12 @@ multiple implementations.
   OpenAI/Azure rejects either shape with `messages.[N].role: tool must be
   a response to a preceding message with tool_calls`. If you change the
   compaction policy, preserve both invariants.
+- **Continue must heal interrupted tool batches.** `Entry.HealOrphanToolCalls`
+  in `agent/internal/conversation/` repairs assistant `tool_calls` that are
+  missing one or more following `RoleTool` responses, and `Driver.run` calls it
+  before streaming each new task. Keep that in-memory repair aligned with the
+  persisted hydrate repair so cancellation, reload, or interruption mid-batch
+  cannot poison the next OpenAI/Azure request.
 - **Cross-platform paths.** Use `filepath.Join` in Go and `path.join` from
   `node:path` in TS. Never string-concatenate paths.
 - **Binary permissions.** On Unix, the bundled Go binary needs the executable

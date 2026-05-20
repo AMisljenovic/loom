@@ -108,15 +108,29 @@ func (s *Store) Hydrate(id string, snap Snapshot) {
 	entry.LastOutputTokens = snap.LastOutputTokens
 }
 
+// HealOrphanToolCalls repairs the in-memory message log if the previous task
+// stopped after recording assistant tool_calls but before recording every tool
+// result. It returns true when the message log changed.
+func (e *Entry) HealOrphanToolCalls() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	healed := healOrphanToolCalls(cloneMessages(e.Messages))
+	if len(healed) == len(e.Messages) {
+		return false
+	}
+	e.Messages = healed
+	return true
+}
+
 // healOrphanToolCalls repairs persisted message sequences where an assistant
 // turn contains tool_calls but one or more matching tool responses are
-// missing. This happens when the user reloads the window while tools are
-// still executing: the loop pushes a conversation.updated as soon as the
-// assistant message is appended (loop.go around the "entry.Append(...
-// ToolCalls)" call), but tool results aren't appended until the parallel
-// dispatch finishes. Without this repair the OpenAI API rejects the next
-// turn with "tool_calls must be followed by tool messages responding to
-// each tool_call_id" and the conversation is stuck.
+// missing. This happens when the user reloads the window or cancels a task
+// while tools are still executing: the loop pushes a conversation.updated as
+// soon as the assistant message is appended (loop.go around the
+// "entry.Append(... ToolCalls)" call), but tool results aren't appended until
+// the parallel dispatch finishes. Without this repair the OpenAI API rejects
+// the next turn with "tool_calls must be followed by tool messages responding
+// to each tool_call_id" and the conversation is stuck.
 //
 // For every orphan tool_call_id, a synthetic tool message is appended
 // immediately after the existing tool responses for that assistant turn.
@@ -148,7 +162,7 @@ func healOrphanToolCalls(messages []llm.Message) []llm.Message {
 			}
 			out = append(out, llm.Message{
 				Role:       llm.RoleTool,
-				Content:    "[interrupted: tool execution did not complete before the session was reloaded]",
+				Content:    "[interrupted: tool execution did not complete before the next task started]",
 				ToolCallID: tc.ID,
 			})
 		}

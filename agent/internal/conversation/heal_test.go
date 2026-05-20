@@ -83,6 +83,41 @@ func TestHealKeepsSubsequentAssistantTurn(t *testing.T) {
 	}
 }
 
+func TestHealInsertsBeforeSubsequentUserTurn(t *testing.T) {
+	in := []llm.Message{
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "a"}, {ID: "b"}}},
+		{Role: llm.RoleUser, Content: "continue"},
+	}
+	got := healOrphanToolCalls(in)
+	if len(got) != 4 {
+		t.Fatalf("expected 4 messages, got %d", len(got))
+	}
+	if got[1].Role != llm.RoleTool || got[1].ToolCallID != "a" {
+		t.Fatalf("expected synthetic tool a before user, got role=%s id=%s", got[1].Role, got[1].ToolCallID)
+	}
+	if got[2].Role != llm.RoleTool || got[2].ToolCallID != "b" {
+		t.Fatalf("expected synthetic tool b before user, got role=%s id=%s", got[2].Role, got[2].ToolCallID)
+	}
+	if got[3].Role != llm.RoleUser || got[3].Content != "continue" {
+		t.Fatalf("expected user turn preserved after synthetic tools, got role=%s content=%q", got[3].Role, got[3].Content)
+	}
+}
+
+func TestEntryHealOrphanToolCallsReportsMutation(t *testing.T) {
+	e := &Entry{Messages: []llm.Message{
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "a"}}},
+	}}
+	if !e.HealOrphanToolCalls() {
+		t.Fatalf("expected repair to report a mutation")
+	}
+	if len(e.Messages) != 2 || e.Messages[1].Role != llm.RoleTool || e.Messages[1].ToolCallID != "a" {
+		t.Fatalf("expected synthetic tool result, got %#v", e.Messages)
+	}
+	if e.HealOrphanToolCalls() {
+		t.Fatalf("second repair should be a no-op")
+	}
+}
+
 func TestHydrateRunsHeal(t *testing.T) {
 	s := NewStore()
 	s.Hydrate("c1", Snapshot{

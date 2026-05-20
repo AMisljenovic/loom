@@ -117,6 +117,7 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 		userPrompt = strings.TrimSpace(userPrompt) + "\n\n" + referenceBlock
 	}
 	entry.Append(llm.Message{Role: llm.RoleUser, Content: userPrompt, Images: referenceImages})
+	entry.HealOrphanToolCalls()
 	d.notifyConversationUpdated(p.ConversationID, entry)
 
 	stableSystem := BuildStableSystem(p.Mode, registry, skillsCatalogue, presetRegistry.All())

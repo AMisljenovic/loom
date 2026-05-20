@@ -153,6 +153,10 @@ newline-delimited JSON-RPC over stdio.
     starts with `RoleTool` and the summarized prefix never ends on an
     `assistant(tool_calls)` whose results live in the tail. OpenAI/Azure
     rejects either shape.
+21b. `Entry.HealOrphanToolCalls` runs before a new task streams so Continue
+    repairs any in-memory assistant `tool_calls` left without matching
+    `RoleTool` messages by cancellation, reload, or interruption. Keep it
+    aligned with the persisted hydrate repair in `agent/internal/conversation/`.
 22. Default turn cap is 32. Continue on a `turn_limit` stop doubles it
     (32 → 64 → 128 → …) via `Msg.maxTurns` on the stop card →
     `submit.maxTurns` → `TaskStartParams.maxTurns` → `StartParams.MaxTurns`

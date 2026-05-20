@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.81
+
+Loom 0.5.81 fixes OpenAI/Azure task continuation after an interrupted tool
+batch. If a task stops after the assistant requests tools but before every
+tool result is recorded, Loom now repairs the transcript before the next model
+request so Continue no longer fails with a missing `tool_call_id` error.
+
+### Fixed
+
+- **OpenAI/Azure continuation after interrupted tools.** The conversation
+  store can now heal in-memory orphaned assistant `tool_calls`, and the loop
+  runs that repair before streaming a resumed task. Persisted-session healing
+  still works as before. ([agent/internal/conversation/store.go](agent/internal/conversation/store.go),
+  [agent/internal/loop/loop.go](agent/internal/loop/loop.go))
+
 ## 0.5.8
 
 Loom 0.5.8 is a token-spend and context-pollution pass. Loom now reads
