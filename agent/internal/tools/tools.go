@@ -31,6 +31,49 @@ type Tool struct {
 // means the build is wrong.
 func Registry() []Tool {
 	tools := []Tool{
+		// Read-family ordering steers the model toward "search first, read
+		// narrowly." `search` / `find_files` come first so the catalogue puts
+		// content/pattern navigation ahead of file reads; `list_dir` is last
+		// in the family because it's almost never the right first move.
+		{
+			Name: "search",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"query":      map[string]any{"type": "string"},
+					"path":       map[string]any{"type": "string"},
+					"globs":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"maxResults": map[string]any{"type": "number"},
+				},
+				"required": []string{"query"},
+			},
+			LocalExec: func(ctx context.Context, root string, raw json.RawMessage) (string, error) {
+				var in SearchInput
+				if err := json.Unmarshal(raw, &in); err != nil {
+					return "", err
+				}
+				return SearchCtx(ctx, root, in)
+			},
+		},
+		{
+			Name: "find_files",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"pattern":    map[string]any{"type": "string", "description": "Filename glob, e.g. \"**/*.tsx\" or \"src/**/loop.go\"."},
+					"path":       map[string]any{"type": "string", "description": "Optional workspace-relative root (defaults to workspace root)."},
+					"maxResults": map[string]any{"type": "number", "description": "Cap returned paths (default 200)."},
+				},
+				"required": []string{"pattern"},
+			},
+			LocalExec: func(ctx context.Context, root string, raw json.RawMessage) (string, error) {
+				var in FindFilesInput
+				if err := json.Unmarshal(raw, &in); err != nil {
+					return "", err
+				}
+				return FindFilesCtx(ctx, root, in)
+			},
+		},
 		{
 			Name: "read_file",
 			InputSchema: map[string]any{
@@ -83,45 +126,6 @@ func Registry() []Tool {
 					out += fmt.Sprintf("%s\t%s\n", kind, e.Name())
 				}
 				return out, nil
-			},
-		},
-		{
-			Name: "search",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"query":      map[string]any{"type": "string"},
-					"path":       map[string]any{"type": "string"},
-					"globs":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-					"maxResults": map[string]any{"type": "number"},
-				},
-				"required": []string{"query"},
-			},
-			LocalExec: func(ctx context.Context, root string, raw json.RawMessage) (string, error) {
-				var in SearchInput
-				if err := json.Unmarshal(raw, &in); err != nil {
-					return "", err
-				}
-				return SearchCtx(ctx, root, in)
-			},
-		},
-		{
-			Name: "find_files",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"pattern":    map[string]any{"type": "string", "description": "Filename glob, e.g. \"**/*.tsx\" or \"src/**/loop.go\"."},
-					"path":       map[string]any{"type": "string", "description": "Optional workspace-relative root (defaults to workspace root)."},
-					"maxResults": map[string]any{"type": "number", "description": "Cap returned paths (default 200)."},
-				},
-				"required": []string{"pattern"},
-			},
-			LocalExec: func(ctx context.Context, root string, raw json.RawMessage) (string, error) {
-				var in FindFilesInput
-				if err := json.Unmarshal(raw, &in); err != nil {
-					return "", err
-				}
-				return FindFilesCtx(ctx, root, in)
 			},
 		},
 		{
@@ -469,4 +473,18 @@ func overlayDescriptions(tools []Tool) error {
 		tools[i].Description = d.Purpose
 	}
 	return nil
+}
+
+// overlayOneDescription fills a dynamically-registered tool's Description
+// (and the corresponding body via DescriptionBodies) from the matching
+// `descriptions/<name>.md` file. Silent no-op if the description file is
+// missing — the inline literal stays, keeping the tool usable.
+func overlayOneDescription(t *Tool) {
+	descs, err := Descriptions()
+	if err != nil {
+		return
+	}
+	if d, ok := descs[t.Name]; ok {
+		t.Description = d.Purpose
+	}
 }

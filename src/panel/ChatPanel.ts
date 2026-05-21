@@ -2565,6 +2565,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       maxOutputTokens: advancedOpts.maxOutputTokens,
       contextWindow: advancedOpts.contextWindow,
       customHeaders: advancedOpts.customHeaders,
+      useResponsesAPI: advancedOpts.useResponsesAPI,
     } : undefined;
 
     if (provider === "openai") {
@@ -2852,6 +2853,9 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         headers.push({ name, value });
       }
       if (headers.length > 0) out.customHeaders = headers;
+    }
+    if (input.useResponsesAPI === true) {
+      out.useResponsesAPI = true;
     }
     return Object.keys(out).length > 0 ? out : undefined;
   }

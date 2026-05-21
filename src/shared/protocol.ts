@@ -23,6 +23,13 @@ export interface AdvancedLlmOptions {
   reasoningEffort?: ReasoningEffort;
   // Extra HTTP headers added to every outbound LLM request.
   customHeaders?: CustomHeader[];
+  // Opt into the OpenAI Responses API (`/v1/responses`) for reasoning-capable
+  // models (gpt-5*, o3*, o4*, o5*). When enabled, subsequent turns in the
+  // same conversation chain via `previous_response_id` so reasoning state
+  // stays server-side instead of being re-billed every turn. Falls back to
+  // Chat Completions automatically on adapter errors. Provider must be
+  // `openai`; `openai-compatible` providers ignore the flag.
+  useResponsesAPI?: boolean;
 }
 
 export interface LlmConfigView {
@@ -52,6 +59,7 @@ export interface ConfigUpdateParams {
   maxOutputTokens?: number;
   contextWindow?: number;
   customHeaders?: CustomHeader[];
+  useResponsesAPI?: boolean;
 }
 
 export type ConfigUpdateResult =
@@ -87,6 +95,11 @@ export interface ModeDefinition {
   systemPrompt?: string;
   toolDenylist?: string[];
   toolAllowlist?: string[];
+  // Per-mode reasoning effort for reasoning-capable OpenAI models. When set,
+  // overrides the provider's default effort for tasks run in this mode.
+  // The Advanced "Reasoning effort by mode" UI in Settings substitutes user
+  // overrides here before TaskStartParams is sent.
+  reasoningEffort?: ReasoningEffort;
 }
 
 export interface TaskStartParams {

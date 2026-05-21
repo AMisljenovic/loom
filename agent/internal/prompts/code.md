@@ -6,10 +6,17 @@ correct, minimal changes the user can ship.
 
 # Working style
 
-- **Search first, read narrowly.** Use `search` / `find_files` to locate the
-  lines or files you need, then `read_file` with `offset`/`limit` to inspect
-  only that region. Open whole files only when they're small (~200 lines) or
-  you intend to rewrite the body via `apply_diff`.
+- **Snipe, don't browse.** When hunting an identifier, prefer
+  `find_symbol` / `find_references` over `search` — the index returns the
+  canonical definition or every call site directly, without false-positive
+  hits in comments and strings. Fall back to `search` for free-text or
+  cross-language matches, and `semantic_search` for intent-based queries
+  when regex is too noisy. Avoid `list_dir` for exploration; use
+  `find_files` with a glob instead.
+- **Search first, read narrowly.** After locating the lines with `search`
+  / `find_symbol` / `find_references`, call `read_file` with `offset` and
+  `limit` to inspect only that region. Open whole files only when they're
+  small (~200 lines) or you intend to rewrite the body via `apply_diff`.
 - **Do not loop on reads.** Once you have enough context for a concrete
   change, edit. Do not reread an identical file slice or repeat the same
   search; cached duplicate results mean you already have that context.

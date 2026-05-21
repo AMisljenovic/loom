@@ -28,6 +28,11 @@ type Preset struct {
 	MaxTurns       int
 	MaxInputTokens int64
 	Source         string
+	// ReasoningEffort sets the OpenAI reasoning effort for tasks run under
+	// this preset. Empty means "use the provider default". Read-only
+	// inspection presets default to "low" — they walk known files, no need
+	// to burn high-reasoning chains.
+	ReasoningEffort string
 }
 
 type Registry struct {
@@ -120,6 +125,7 @@ func parseAgentPreset(text, source, defaultName string) (Preset, bool) {
 	}
 	name := defaultName
 	description := ""
+	reasoningEffort := ""
 	var tools []string
 	for _, line := range strings.Split(frontMatter, "\n") {
 		line = strings.TrimSpace(line)
@@ -139,20 +145,26 @@ func parseAgentPreset(text, source, defaultName string) (Preset, bool) {
 			description = val
 		case "tools":
 			tools = parsePresetTools(val)
+		case "reasoning_effort", "reasoning-effort", "reasoningeffort":
+			switch strings.ToLower(val) {
+			case "", "low", "medium", "high":
+				reasoningEffort = strings.ToLower(val)
+			}
 		}
 	}
 	if name == "" || len(tools) == 0 {
 		return Preset{}, false
 	}
 	return Preset{
-		Name:           name,
-		Description:    description,
-		SystemPrompt:   body,
-		AllowedTools:   tools,
-		AutoApprove:    nil,
-		MaxTurns:       subAgentMaxTurns,
-		MaxInputTokens: subAgentMaxInputTokens,
-		Source:         source,
+		Name:            name,
+		Description:     description,
+		SystemPrompt:    body,
+		AllowedTools:    tools,
+		AutoApprove:     nil,
+		MaxTurns:        subAgentMaxTurns,
+		MaxInputTokens:  subAgentMaxInputTokens,
+		ReasoningEffort: reasoningEffort,
+		Source:          source,
 	}, true
 }
 
@@ -227,13 +239,14 @@ func readOnlyBuiltinPreset(name, description, prompt string) Preset {
 		"load_skill",
 	}
 	return Preset{
-		Name:           name,
-		Description:    description,
-		SystemPrompt:   prompt,
-		AllowedTools:   append([]string(nil), allowed...),
-		AutoApprove:    append([]string(nil), allowed...),
-		MaxTurns:       subAgentMaxTurns,
-		MaxInputTokens: subAgentMaxInputTokens,
-		Source:         "builtin",
+		Name:            name,
+		Description:     description,
+		SystemPrompt:    prompt,
+		AllowedTools:    append([]string(nil), allowed...),
+		AutoApprove:     append([]string(nil), allowed...),
+		MaxTurns:        subAgentMaxTurns,
+		MaxInputTokens:  subAgentMaxInputTokens,
+		Source:          "builtin",
+		ReasoningEffort: "low",
 	}
 }

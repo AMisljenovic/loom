@@ -9,6 +9,9 @@ export const BUILTIN_MODES: ModeDefinition[] = [
         id: "code",
         label: "Code",
         // No allowlist or denylist → full registry.
+        // Default to "low" reasoning: most code-mode turns are mechanical
+        // (read narrow slice → apply_diff). Architect/research escalate.
+        reasoningEffort: "low",
     },
     {
         id: "architect",
@@ -22,6 +25,7 @@ export const BUILTIN_MODES: ModeDefinition[] = [
             "run_command_background",
             "kill_process",
         ],
+        reasoningEffort: "medium",
     },
     {
         id: "ask",
@@ -41,12 +45,14 @@ export const BUILTIN_MODES: ModeDefinition[] = [
             "ask_questions",
             "spawn_subagent",
         ],
+        reasoningEffort: "low",
     },
     {
         id: "debug",
         label: "Debug",
         // Full registry — debugging frequently needs writes (instrumentation
         // logging) and long-running processes (test watchers, dev servers).
+        reasoningEffort: "low",
     },
 ];
 

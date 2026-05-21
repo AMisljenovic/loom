@@ -2,6 +2,82 @@
 
 Reverse-chronological notes for meaningful Loom prompt-layer changes.
 
+## 2026-05-21 - OpenAI Responses API transport (opt-in)
+
+- Affected files: `agent/internal/llm/responses.go` (new),
+  `agent/internal/llm/openai.go` (Stream branching, fallback flag),
+  `agent/internal/llm/types.go` (`WithResponsesChain`,
+  `StreamResult.ResponseID`/`ConsumedMessageCount`),
+  `agent/internal/llm/llm.go` (`OPENAI_USE_RESPONSES` env),
+  `agent/internal/conversation/store.go` (`Entry.LastResponseID`,
+  `LastResponseConsumedCount`, `ResetResponseChain`, reset hooks on
+  Hydrate/Heal),
+  `agent/internal/loop/loop.go` (ctx tagging,
+  `MarkResponseStored`/`ResetResponseChain` on
+  success/mismatch/summarize),
+  `agent/cmd/agent/main.go` (`ConfigUpdateParams.UseResponsesAPI`),
+  `src/shared/protocol.ts` (`AdvancedLlmOptions.useResponsesAPI`,
+  `ConfigUpdateParams.useResponsesAPI`),
+  `src/agentClient.ts` (env wiring),
+  `src/panel/ChatPanel.ts` (forwarding + normalization),
+  `webview-ui/src/components/SettingsView.tsx` (checkbox + hint),
+  `CLAUDE.md`, `AGENTS.md`, `.github/copilot-instructions.md`,
+  `README.md`.
+- Rationale: gpt-5.x at medium/high reasoning effort emits large
+  reasoning blocks inside assistant messages. The Chat Completions
+  transport re-sends those blocks on every turn, re-billing tens of
+  thousands of input tokens. The Responses API retains state
+  server-side: chained calls reference the prior response via
+  `previous_response_id` and ship only the delta (new tool results,
+  new user message), typically cutting per-turn input by 60-80% on
+  high-reasoning workloads.
+- Behavior: Default off. Opt in via env `OPENAI_USE_RESPONSES=1` or
+  the Advanced "Use OpenAI Responses API" checkbox. Capability-scoped
+  to `provider=openai` + gpt-5* / o3* / o4* / o5* models;
+  `openai-compatible` providers always use Chat Completions. On any
+  404 (endpoint absent) or 400 referencing `previous_response_id`
+  (server lost the chain), a sticky in-memory fallback flag routes
+  the rest of the provider session through Chat Completions. The
+  chain is reset on `maybeSummarize`, `HealOrphanToolCalls`,
+  `Store.Hydrate`, and `Store.Reset` so the local history and server
+  view never desync.
+- Eval impact: prompt text itself unchanged (`instructions` on first
+  call concatenates the same stable + volatile system the Chat
+  Completions path emits). Only the wire transport differs. No
+  provider eval was run in this environment.
+
+## 2026-05-21 - Sharpen exploration + tighter context elision
+
+- Affected files: `agent/internal/tools/tools.go` (registry reorder),
+  `agent/internal/tools/index_tools.go`, `agent/internal/tools/embed_tools.go`
+  (use overlayOneDescription so dynamic tools pick up `.md` purpose),
+  new `agent/internal/tools/descriptions/find_symbol.md`,
+  new `agent/internal/tools/descriptions/find_references.md`,
+  new `agent/internal/tools/descriptions/semantic_search.md`,
+  `agent/internal/tools/descriptions/list_dir.md` (anti-browsing
+  guidance), `agent/internal/prompts/code.md`,
+  `agent/internal/prompts/debug.md`, `agent/internal/loop/loop.go`
+  (wireMessages overlap + search recency policy, read_file slice cap
+  lowered 25 → 10), `agent/internal/loop/wire_test.go`.
+- Rationale: cut tokens spent "shooting around" the codebase.
+  (1) Reorder the read-family registry so `search` / `find_files`
+  appear before `read_file`, and put `list_dir` last — steers the
+  catalogue toward navigation over browsing.
+  (2) Promote `find_symbol` / `find_references` / `semantic_search`
+  with first-class markdown descriptions; Code and Debug mode prompts
+  now lead with "snipe, don't browse" guidance that names the index
+  tools explicitly.
+  (3) Tighten the per-file read slice cap from 25 to 10 so the model
+  can't death-by-a-thousand-narrow-reads a single file.
+  (4) Extend `wireMessages` so an older `read_file` whose range is
+  fully covered by a later broader read on the same path collapses to
+  a short marker; and so only the 3 most-recent unique `search`
+  queries stay full (older unique queries collapse).
+- Eval impact: tool catalogue order changes; bodies for the three
+  index tools are now injected into the stable prefix when the indexer
+  is available; mode prompts gain a "snipe" paragraph. Re-run prompt
+  snapshots; no provider eval was run in this environment.
+
 ## 2026-05-21 - Add architecture-mapper sub-agent preset
 
 - Affected files: `agent/internal/prompts/architecture-mapper.md`,

@@ -137,6 +137,34 @@ Important settings:
 Telemetry never sends prompts, file contents, workspace paths, API keys, or raw
 machine IDs.
 
+### Responses API (experimental)
+
+For OpenAI reasoning-capable models (gpt-5*, o3*, o4*, o5*), enabling
+**Use OpenAI Responses API** in Settings Advanced (or
+`OPENAI_USE_RESPONSES=1`) routes calls through `/v1/responses` and chains
+turns via `previous_response_id`. The server retains reasoning state, so
+subsequent turns ship only the delta (new tool results + new user
+message) instead of re-billing the entire history. Falls back to Chat
+Completions automatically on errors. `openai-compatible` providers
+(OpenRouter, Groq, etc.) always use Chat Completions.
+
+### Reasoning effort
+
+For OpenAI reasoning-capable models, built-in modes ship sensible defaults so
+trivial turns don't burn budget on high reasoning chains:
+
+- **Code / Ask / Debug** → `low`
+- **Architect** → `medium`
+- Built-in read-only sub-agent presets (`research`, `review`, `test-scout`,
+  `architecture-mapper`) → `low`
+
+The mode default wins per turn. The Advanced "Reasoning effort" setting in
+Settings is the provider-wide fallback (used when a mode has no opinion).
+Define a custom mode under `loom.modes` (or add `reasoning_effort:` to a
+`.loom/agents/*.md` preset) to override per-mode. Unknown `gpt-5*` / `gpt-6*` /
+`o5*` model names now fall back to a 400K context ceiling instead of 200K,
+so summarization fires less aggressively on new variants.
+
 ## Project Instructions
 
 Loom only reads `.loomrules` for project rules and `.loom/skills/`,

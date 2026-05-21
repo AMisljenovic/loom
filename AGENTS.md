@@ -169,20 +169,43 @@ handoff:
     (`OPENAI_MAX_OUTPUT_TOKENS`, `OPENAI_CONTEXT_WINDOW`,
     `OPENAI_CUSTOM_HEADERS`). On the wire `openai-compatible` collapses to
     `openai` with an explicit `BaseURL`.
-14. Extension shutdown and update handling must cancel any active task, persist
+13b. OpenAI Responses API is an opt-in transport for reasoning-capable
+    models. `AdvancedLlmOptions.useResponsesAPI` (or
+    `OPENAI_USE_RESPONSES=1`) routes gpt-5* / o3* / o4* / o5* models
+    through `/v1/responses`. Subsequent turns chain via
+    `previous_response_id` (tracked on `Entry.LastResponseID` +
+    `LastResponseConsumedCount`) so the server retains reasoning state
+    and the adapter ships only the delta. The chain is reset on
+    `maybeSummarize`, `HealOrphanToolCalls`, `Store.Hydrate`, and
+    `Store.Reset`. On 404 or 400 referencing `previous_response_id`, a
+    sticky `responsesFallback` flag routes the rest of the provider
+    session through Chat Completions. `openai-compatible` providers
+    stay on Chat Completions regardless of the flag.
+14. Reasoning effort is per-mode. `ModeDefinition.reasoningEffort` (shared
+    protocol) carries an optional override. Built-ins default Code / Ask /
+    Debug → `low`, Architect → `medium`, read-only sub-agent presets → `low`,
+    so trivial code-mode turns don't inherit a globally-set "high". The loop
+    tags the LLM `context` via `llm.WithReasoningEffort`; the OpenAI adapter's
+    `resolveReasoningEffort` prefers the per-call override over the provider
+    default. `.loom/agents/*.md` presets may set `reasoning_effort:` in
+    frontmatter. `ModelContextLimit` ([agent/internal/llm/limits.go](agent/internal/llm/limits.go))
+    falls back to 400K for any unrecognized `gpt-5*` / `gpt-6*` / `o5*`
+    variant rather than the 200K default — keeps summarization from firing
+    too early on new model names.
+15. Extension shutdown and update handling must cancel any active task, persist
     the active session, and dispose the Go process deliberately. Keep cleanup
     in `ChatPanel.dispose()` / `AgentClient.dispose()`.
-15. Go task goroutines must recover panics, emit only sanitized opt-in
+16. Go task goroutines must recover panics, emit only sanitized opt-in
     telemetry metadata, notify the user with a generic error, and send
     `task.done` with reason `error`.
-16. Marketplace assets live in `assets/` and `media/`. Do not regenerate them
+17. Marketplace assets live in `assets/` and `media/`. Do not regenerate them
     from code when exported brand files already exist.
-17. Tool descriptions live in `agent/internal/tools/descriptions/*.md`, not in
+18. Tool descriptions live in `agent/internal/tools/descriptions/*.md`, not in
     Go prose literals. Shared output conventions live in
     `agent/internal/prompts/_output_conventions.md`. Prompt changes require
     updating `docs/prompt-changelog.md` and running `npm run eval` when
     provider credentials are available.
-18. Project rules are read from `.loomrules` only by
+19. Project rules are read from `.loomrules` only by
     `agent/internal/rules/`, frozen at task start, capped at 32 KB, and
     wrapped in a `<rules source=".loomrules">…</rules>` envelope in the
     volatile system tail. Foreign-format files (CLAUDE.md, AGENTS.md,

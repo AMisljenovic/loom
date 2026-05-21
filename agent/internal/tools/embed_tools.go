@@ -14,9 +14,8 @@ import (
 // embeddings provider and vector store. Either being nil disables the tool
 // with a clear error message so the LLM can fall back to plain search.
 func SemanticSearchTool(provider embed.Provider, store *index.VectorStore) Tool {
-	return Tool{
-		Name:        "semantic_search",
-		Description: "Semantic code search. Returns the top-k indexed chunks ranked by similarity to the query. Falls back to an error if embeddings are not configured.",
+	t := Tool{
+		Name: "semantic_search",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -59,6 +58,8 @@ func SemanticSearchTool(provider embed.Provider, store *index.VectorStore) Tool 
 			return b.String(), nil
 		},
 	}
+	overlayOneDescription(&t)
+	return t
 }
 
 func truncate(s string, n int) string {

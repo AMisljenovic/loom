@@ -105,14 +105,62 @@ output guidance above takes precedence on points it covers explicitly.
   Markdown heading in the final answer.
 
 Available tools:
+- search: Search the codebase with a regex query and return `path:line:snippet` matches.
 - read_file: Read a slice (or all) of a UTF-8 text file relative to the workspace root.
 - list_dir: List entries in a directory relative to the workspace root.
-- search: Search the codebase with a regex query and return `path:line:snippet` matches.
 - get_diagnostics: Get VS Code diagnostics (compiler/linter errors and warnings) for the whole workspace or a specific file.
 - load_skill: Load one or more skills by id. Skill bodies are short topic-specific guides that persist in your system prompt for the rest of the conversation.
 - spawn_subagent: Delegate focused read-only research to a fresh sub-agent with isolated context.
 
 ## Tool details
+### search — Search the codebase with a regex query and return `path:line:snippet` matches.
+
+## First tool for most navigation
+Reach for `search` before `read_file` when you don't already know exactly
+which lines you need. Combine `globs` to scope to a language or directory,
+then follow up with a narrow `read_file` slice on the lines that matched.
+
+## When to use
+- Locating string literals, symbol names, or patterns across many files.
+- Confirming where a function, constant, or import is referenced.
+- Quickly checking whether a feature exists before adding it.
+
+## When NOT to use
+- To find files by name pattern (no content match) — use `find_files`.
+- For semantic "find me code that does X" queries — use `semantic_search`
+  if available, or `find_references` when you have a specific symbol.
+- For inspecting a single known file — `read_file` is direct and faster.
+
+## Input
+- `query` (string, required) — regex pattern. Standard Go regex syntax.
+- `path` (string, optional) — workspace-relative path to restrict the search.
+  Defaults to the workspace root.
+- `globs` (array of strings, optional) — file include patterns
+  (e.g. `["*.ts", "*.tsx"]`).
+- `maxResults` (number, optional) — cap on returned lines. Use to bound noisy
+  queries.
+
+## Behavior
+- Returns one match per line as `path:line:snippet`. Snippets are trimmed
+  to a reasonable column count.
+- Hidden directories (`.git`, `node_modules`) are usually excluded by the
+  underlying searcher. Don't assume they are reachable.
+- Anchors (`^`, `$`) match per line, not per file.
+
+## Examples
+
+```json
+{"query": "buildStableSystem", "path": "agent"}
+```
+
+Find the prompt-build function inside the Go agent.
+
+```json
+{"query": "TODO|FIXME", "globs": ["*.ts", "*.tsx"], "maxResults": 50}
+```
+
+Scoped, capped query — typical first-step navigation before reading.
+
 ### read_file — Read a slice (or all) of a UTF-8 text file relative to the workspace root.
 
 ## Search first, read narrowly
@@ -164,16 +212,27 @@ Whole-file read. Acceptable here because you intend to follow up with
 
 ### list_dir — List entries in a directory relative to the workspace root.
 
+## Don't browse with this tool
+`list_dir` is for inspecting one specific directory you already have in
+mind — not for exploring the codebase. Reach for `search` (content),
+`find_files` (filename glob), `find_symbol` / `find_references` (symbol
+index), or `semantic_search` (intent) before falling back to `list_dir`.
+Recursive `list_dir` calls one level at a time waste turns; `find_files`
+with `**/*` covers the same ground in one call.
+
 ## When to use
-- You need to discover what's in a single directory before reading a file.
-- You are exploring an unfamiliar area of the workspace one level at a time.
+- You have a known directory path and want to see what's in it.
+- You're confirming the existence of a child folder a tool reported.
 
 ## When NOT to use
-- To find files by name pattern across the tree — use `find_files`.
+- To find files by name pattern across the tree — use `find_files` with
+  a glob.
 - For content search — use `search`.
-- For recursive listings — `find_files` with a `**` glob is the right tool.
+- For recursive listings — `find_files` with `**` is the right tool.
 - To check whether a single named file exists — just `read_file` it and
   handle the error.
+- For codebase exploration when you don't yet know which directory
+  matters — start with `search`, `find_symbol`, or `semantic_search`.
 
 ## Input
 - `path` (string, required) — workspace-relative directory path. Use `"."`
@@ -197,54 +256,6 @@ List the workspace root.
 ```
 
 List a subdirectory.
-
-### search — Search the codebase with a regex query and return `path:line:snippet` matches.
-
-## First tool for most navigation
-Reach for `search` before `read_file` when you don't already know exactly
-which lines you need. Combine `globs` to scope to a language or directory,
-then follow up with a narrow `read_file` slice on the lines that matched.
-
-## When to use
-- Locating string literals, symbol names, or patterns across many files.
-- Confirming where a function, constant, or import is referenced.
-- Quickly checking whether a feature exists before adding it.
-
-## When NOT to use
-- To find files by name pattern (no content match) — use `find_files`.
-- For semantic "find me code that does X" queries — use `semantic_search`
-  if available, or `find_references` when you have a specific symbol.
-- For inspecting a single known file — `read_file` is direct and faster.
-
-## Input
-- `query` (string, required) — regex pattern. Standard Go regex syntax.
-- `path` (string, optional) — workspace-relative path to restrict the search.
-  Defaults to the workspace root.
-- `globs` (array of strings, optional) — file include patterns
-  (e.g. `["*.ts", "*.tsx"]`).
-- `maxResults` (number, optional) — cap on returned lines. Use to bound noisy
-  queries.
-
-## Behavior
-- Returns one match per line as `path:line:snippet`. Snippets are trimmed
-  to a reasonable column count.
-- Hidden directories (`.git`, `node_modules`) are usually excluded by the
-  underlying searcher. Don't assume they are reachable.
-- Anchors (`^`, `$`) match per line, not per file.
-
-## Examples
-
-```json
-{"query": "buildStableSystem", "path": "agent"}
-```
-
-Find the prompt-build function inside the Go agent.
-
-```json
-{"query": "TODO|FIXME", "globs": ["*.ts", "*.tsx"], "maxResults": 50}
-```
-
-Scoped, capped query — typical first-step navigation before reading.
 
 ### get_diagnostics — Get VS Code diagnostics (compiler/linter errors and warnings) for the whole workspace or a specific file.
 

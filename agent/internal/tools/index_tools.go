@@ -13,10 +13,9 @@ import (
 // given indexer. If idx is nil the tools are registered but return a clear
 // error so the model knows they are unavailable.
 func IndexTools(idx *index.Indexer) []Tool {
-	return []Tool{
+	tools := []Tool{
 		{
-			Name:        "find_symbol",
-			Description: "Find symbol definitions (functions, methods, types, classes) across the indexed workspace by exact name. Optional kind filter (function|method|type|interface|class|variable|constant) and path prefix.",
+			Name: "find_symbol",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -50,8 +49,7 @@ func IndexTools(idx *index.Indexer) []Tool {
 			},
 		},
 		{
-			Name:        "find_references",
-			Description: "Find identifier occurrences across the indexed workspace by exact name (name-based, no semantic scoping). Optional path prefix filter.",
+			Name: "find_references",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -83,4 +81,8 @@ func IndexTools(idx *index.Indexer) []Tool {
 			},
 		},
 	}
+	for i := range tools {
+		overlayOneDescription(&tools[i])
+	}
+	return tools
 }

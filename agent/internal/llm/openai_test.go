@@ -9,6 +9,7 @@ import (
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
+	"github.com/openai/openai-go/shared"
 )
 
 type llmRoundTripFunc func(*http.Request) (*http.Response, error)
@@ -74,6 +75,33 @@ func TestOpenAIRequestOptionsKeepBearerAuthForNonAzureBaseURL(t *testing.T) {
 	}
 	if gotAPIKey != "" {
 		t.Fatalf("expected no api-key header, got %q", gotAPIKey)
+	}
+}
+
+func TestResolveReasoningEffortPrefersContextOverride(t *testing.T) {
+	ctx := WithReasoningEffort(context.Background(), "low")
+	if got := resolveReasoningEffort(ctx, shared.ReasoningEffortHigh); got != shared.ReasoningEffortLow {
+		t.Fatalf("context override should win over fallback: got %q, want %q", got, shared.ReasoningEffortLow)
+	}
+}
+
+func TestResolveReasoningEffortFallsBackWhenNoOverride(t *testing.T) {
+	if got := resolveReasoningEffort(context.Background(), shared.ReasoningEffortMedium); got != shared.ReasoningEffortMedium {
+		t.Fatalf("no override should yield fallback: got %q, want %q", got, shared.ReasoningEffortMedium)
+	}
+}
+
+func TestResolveReasoningEffortIgnoresInvalidOverride(t *testing.T) {
+	ctx := WithReasoningEffort(context.Background(), "ridiculous")
+	if got := resolveReasoningEffort(ctx, shared.ReasoningEffortHigh); got != shared.ReasoningEffortHigh {
+		t.Fatalf("invalid override should be ignored, falling back: got %q, want %q", got, shared.ReasoningEffortHigh)
+	}
+}
+
+func TestWithReasoningEffortIgnoresEmpty(t *testing.T) {
+	ctx := WithReasoningEffort(context.Background(), "")
+	if got := ReasoningEffortFromContext(ctx); got != "" {
+		t.Fatalf("empty effort should not be tagged: got %q", got)
 	}
 }
 

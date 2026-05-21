@@ -13,6 +13,12 @@ your workflow starts with reproduction, not editing.
 - **Start with diagnostics.** Use `get_diagnostics`, `run_command` (tests,
   linter), or `run_command_background` (watchers, dev servers) to surface the
   failure before reading source.
+- **Snipe, don't browse.** Once an error names an identifier, prefer
+  `find_symbol` / `find_references` over `search` to jump to the
+  definition or every call site directly. Fall back to `search` for
+  free-text matches; use `semantic_search` for intent-based queries
+  ("retry logic," "error swallowing") when regex is too noisy. Avoid
+  `list_dir` for exploration — `find_files` with a glob is faster.
 - **Reproduce before fixing.** Confirm you can see the failure first.
 - **Read errors literally.** Quote the exact error text. Do not paraphrase
   stack traces.
@@ -135,10 +141,10 @@ output guidance above takes precedence on points it covers explicitly.
   Markdown heading in the final answer.
 
 Available tools:
-- read_file: Read a slice (or all) of a UTF-8 text file relative to the workspace root.
-- list_dir: List entries in a directory relative to the workspace root.
 - search: Search the codebase with a regex query and return `path:line:snippet` matches.
 - find_files: List workspace files whose paths match a filename glob.
+- read_file: Read a slice (or all) of a UTF-8 text file relative to the workspace root.
+- list_dir: List entries in a directory relative to the workspace root.
 - get_diagnostics: Get VS Code diagnostics (compiler/linter errors and warnings) for the whole workspace or a specific file.
 - apply_diff: Modify or create a file using one or more edits — anchor-matched (`oldText`/`newText`) or line-range (`startLine`/`endLine`/`newText`).
 - run_command: Run a short, blocking shell command in the workspace terminal.
@@ -152,91 +158,6 @@ Available tools:
 - spawn_subagent: Delegate focused read-only research to a fresh sub-agent with isolated context.
 
 ## Tool details
-### read_file — Read a slice (or all) of a UTF-8 text file relative to the workspace root.
-
-## Search first, read narrowly
-This is **not** the right first tool for navigation. Use `search` to locate the
-relevant lines, then `read_file` with `offset` and `limit` to inspect just
-that region. Use `find_files` when you need to know where a file lives.
-Whole-file reads are appropriate only for short files (~200 lines), files you
-are about to fully rewrite via `apply_diff`, or when you genuinely need the
-entire body.
-
-## When to use
-- You have a specific file path and a known line region you need to inspect.
-- You are about to call `apply_diff` and need the current file body.
-
-## When NOT to use
-- For binary files (images, executables). The result will be unusable.
-- To list a directory — use `list_dir`.
-- To find files by name pattern — use `find_files`.
-- To search across many files — use `search`.
-
-## Input
-- `path` (string, required) — workspace-relative path. Absolute paths are
-  rejected. Forward slashes work cross-platform.
-- `offset` (number, optional) — 1-based starting line. Default 1.
-- `limit` (number, optional) — max lines to return. Default unlimited.
-
-## Behavior
-- Returns the requested slice with a header line of the form
-  `// Lines <start>-<end> of <total> in <path>`. When the slice is truncated
-  the header notes how to read more (raise `offset` or pass `limit`).
-- Files over ~256 KB are soft-capped to the first 2000 lines when no `limit`
-  is supplied. Pass an explicit `offset`/`limit` to walk a large file.
-- An error result means the file is missing, a directory, or unreadable.
-
-## Examples
-
-```json
-{"path": "src/extension.ts", "offset": 120, "limit": 60}
-```
-
-Read 60 lines starting at line 120 — exactly the region `search` pointed at.
-
-```json
-{"path": "agent/internal/loop/loop.go"}
-```
-
-Whole-file read. Acceptable here because you intend to follow up with
-`apply_diff`.
-
-### list_dir — List entries in a directory relative to the workspace root.
-
-## When to use
-- You need to discover what's in a single directory before reading a file.
-- You are exploring an unfamiliar area of the workspace one level at a time.
-
-## When NOT to use
-- To find files by name pattern across the tree — use `find_files`.
-- For content search — use `search`.
-- For recursive listings — `find_files` with a `**` glob is the right tool.
-- To check whether a single named file exists — just `read_file` it and
-  handle the error.
-
-## Input
-- `path` (string, required) — workspace-relative directory path. Use `"."`
-  for the workspace root.
-
-## Behavior
-- Returns entries as `kind<TAB>name` lines, where `kind` is `file` or `dir`.
-- Entries are not sorted in a guaranteed order. Sort client-side if needed.
-- Hidden files (dot-files) are included.
-
-## Examples
-
-```json
-{"path": "."}
-```
-
-List the workspace root.
-
-```json
-{"path": "src/components"}
-```
-
-List a subdirectory.
-
 ### search — Search the codebase with a regex query and return `path:line:snippet` matches.
 
 ## First tool for most navigation
@@ -325,6 +246,102 @@ Locate every TSX component file.
 ```
 
 Find all `loop*.go` files inside the Go agent tree.
+
+### read_file — Read a slice (or all) of a UTF-8 text file relative to the workspace root.
+
+## Search first, read narrowly
+This is **not** the right first tool for navigation. Use `search` to locate the
+relevant lines, then `read_file` with `offset` and `limit` to inspect just
+that region. Use `find_files` when you need to know where a file lives.
+Whole-file reads are appropriate only for short files (~200 lines), files you
+are about to fully rewrite via `apply_diff`, or when you genuinely need the
+entire body.
+
+## When to use
+- You have a specific file path and a known line region you need to inspect.
+- You are about to call `apply_diff` and need the current file body.
+
+## When NOT to use
+- For binary files (images, executables). The result will be unusable.
+- To list a directory — use `list_dir`.
+- To find files by name pattern — use `find_files`.
+- To search across many files — use `search`.
+
+## Input
+- `path` (string, required) — workspace-relative path. Absolute paths are
+  rejected. Forward slashes work cross-platform.
+- `offset` (number, optional) — 1-based starting line. Default 1.
+- `limit` (number, optional) — max lines to return. Default unlimited.
+
+## Behavior
+- Returns the requested slice with a header line of the form
+  `// Lines <start>-<end> of <total> in <path>`. When the slice is truncated
+  the header notes how to read more (raise `offset` or pass `limit`).
+- Files over ~256 KB are soft-capped to the first 2000 lines when no `limit`
+  is supplied. Pass an explicit `offset`/`limit` to walk a large file.
+- An error result means the file is missing, a directory, or unreadable.
+
+## Examples
+
+```json
+{"path": "src/extension.ts", "offset": 120, "limit": 60}
+```
+
+Read 60 lines starting at line 120 — exactly the region `search` pointed at.
+
+```json
+{"path": "agent/internal/loop/loop.go"}
+```
+
+Whole-file read. Acceptable here because you intend to follow up with
+`apply_diff`.
+
+### list_dir — List entries in a directory relative to the workspace root.
+
+## Don't browse with this tool
+`list_dir` is for inspecting one specific directory you already have in
+mind — not for exploring the codebase. Reach for `search` (content),
+`find_files` (filename glob), `find_symbol` / `find_references` (symbol
+index), or `semantic_search` (intent) before falling back to `list_dir`.
+Recursive `list_dir` calls one level at a time waste turns; `find_files`
+with `**/*` covers the same ground in one call.
+
+## When to use
+- You have a known directory path and want to see what's in it.
+- You're confirming the existence of a child folder a tool reported.
+
+## When NOT to use
+- To find files by name pattern across the tree — use `find_files` with
+  a glob.
+- For content search — use `search`.
+- For recursive listings — `find_files` with `**` is the right tool.
+- To check whether a single named file exists — just `read_file` it and
+  handle the error.
+- For codebase exploration when you don't yet know which directory
+  matters — start with `search`, `find_symbol`, or `semantic_search`.
+
+## Input
+- `path` (string, required) — workspace-relative directory path. Use `"."`
+  for the workspace root.
+
+## Behavior
+- Returns entries as `kind<TAB>name` lines, where `kind` is `file` or `dir`.
+- Entries are not sorted in a guaranteed order. Sort client-side if needed.
+- Hidden files (dot-files) are included.
+
+## Examples
+
+```json
+{"path": "."}
+```
+
+List the workspace root.
+
+```json
+{"path": "src/components"}
+```
+
+List a subdirectory.
 
 ### get_diagnostics — Get VS Code diagnostics (compiler/linter errors and warnings) for the whole workspace or a specific file.
 

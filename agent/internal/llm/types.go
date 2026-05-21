@@ -72,6 +72,76 @@ type TokenUsage struct {
 type StreamResult struct {
 	StopReason string     `json:"stopReason"`
 	Usage      TokenUsage `json:"usage"`
+	// ResponseID is set when the call went through the OpenAI Responses
+	// API. Empty for Chat Completions. The loop persists this on
+	// `Entry.LastResponseID` so the next turn can chain via
+	// `previous_response_id` and ship only the delta.
+	ResponseID string `json:"responseId,omitempty"`
+	// ConsumedMessageCount is the message-array index immediately after
+	// the assistant turn now reflected in ResponseID. The next chained
+	// call sends `messages[ConsumedMessageCount:]`. Only meaningful when
+	// `ResponseID != ""`.
+	ConsumedMessageCount int `json:"consumedMessageCount,omitempty"`
+}
+
+// reasoningEffortCtxKey is the context.Value key carrying a per-call override
+// of the OpenAI reasoning effort. Empty string or absence means "fall back to
+// the provider default". Anthropic ignores it.
+type reasoningEffortCtxKey struct{}
+
+// WithReasoningEffort returns ctx tagged with the given effort. Callers
+// (loop.run) use this to override the provider's default for a specific task
+// — typically because the task's mode opts down (code mode → "low") or up
+// (architect mode → "medium"). Effort values: "" | "low" | "medium" | "high".
+// Invalid values are ignored by the provider.
+func WithReasoningEffort(ctx context.Context, effort string) context.Context {
+	if effort == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, reasoningEffortCtxKey{}, effort)
+}
+
+// ReasoningEffortFromContext returns the per-call effort override, or "" if
+// none was set. Providers should fall back to their default when empty.
+func ReasoningEffortFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(reasoningEffortCtxKey{}).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// responsesChainCtxKey carries the per-call OpenAI Responses-API anchor.
+// The loop tags ctx with this before Stream when it has a valid
+// previous_response_id and corresponding consumed-message count; the
+// adapter reads it to decide whether to chain or send a "first" request.
+type responsesChainCtxKey struct{}
+
+// ResponsesChain is the per-call chain hint. PreviousResponseID is the
+// server-side anchor returned by the prior Responses call; DeltaStart is
+// the message-array index from which the new call's `input` is derived
+// (messages[DeltaStart:] are the items the server hasn't seen).
+type ResponsesChain struct {
+	PreviousResponseID string
+	DeltaStart         int
+}
+
+// WithResponsesChain tags ctx with a Responses-API chain anchor. An empty
+// PreviousResponseID is treated as "no chain" and the tag is not applied;
+// callers can pass either form without a guard.
+func WithResponsesChain(ctx context.Context, prevID string, deltaStart int) context.Context {
+	if prevID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, responsesChainCtxKey{}, ResponsesChain{
+		PreviousResponseID: prevID,
+		DeltaStart:         deltaStart,
+	})
+}
+
+// ResponsesChainFromContext returns the chain hint if one was set.
+func ResponsesChainFromContext(ctx context.Context) (ResponsesChain, bool) {
+	v, ok := ctx.Value(responsesChainCtxKey{}).(ResponsesChain)
+	return v, ok
 }
 
 // SystemPrompt carries a split system prompt for prompt caching. Stable is

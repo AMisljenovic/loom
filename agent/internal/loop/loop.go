@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -50,6 +52,11 @@ type ModeDefinition struct {
 	SystemPrompt     string   `json:"systemPrompt,omitempty"`
 	ToolDenylist     []string `json:"toolDenylist,omitempty"`
 	ToolAllowlist    []string `json:"toolAllowlist"`
+	// ReasoningEffort optionally overrides the provider's default reasoning
+	// effort for tasks run in this mode (OpenAI-only). Empty means "use the
+	// provider default". Resolved by the loop at task start and threaded into
+	// the LLM call via llm.WithReasoningEffort.
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
 }
 
 type StartParams struct {
@@ -174,7 +181,24 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 			taskID: p.TaskID,
 		}
 
-		result, err := d.LLM.Stream(ctx, sysPrompt, wireMessages(entry.MessagesCopy()), toolDefs, h)
+		streamCtx := ctx
+		if p.Mode != nil && p.Mode.ReasoningEffort != "" {
+			streamCtx = llm.WithReasoningEffort(streamCtx, p.Mode.ReasoningEffort)
+		}
+		// Carry the OpenAI Responses-API anchor when one is available so
+		// the adapter can chain via `previous_response_id` and ship only
+		// the delta (tool results / new user message since the last
+		// response). Empty chain → adapter sends a full first request.
+		prevResponseID, deltaStart := entry.ResponseChain()
+		if prevResponseID != "" {
+			streamCtx = llm.WithResponsesChain(streamCtx, prevResponseID, deltaStart)
+		}
+		// Snapshot the pre-call message count so we can validate the
+		// chain anchor returned by the adapter. If the count differs from
+		// expectations (off-by-one, late mutation), drop the chain
+		// rather than corrupt it.
+		preCallMessageCount := entry.Usage().MessageCount
+		result, err := d.LLM.Stream(streamCtx, sysPrompt, wireMessages(entry.MessagesCopy()), toolDefs, h)
 		assistantText, toolCalls := h.finish()
 		if err != nil {
 			if ctx.Err() != nil {
@@ -206,6 +230,21 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 			Content:   assistantText,
 			ToolCalls: toolCalls,
 		})
+		// Persist the Responses-API chain anchor only when the adapter
+		// signalled it AND the consumed count matches our pre-call
+		// snapshot + 1 (the assistant turn we just appended). A mismatch
+		// means the adapter or some other path mutated the entry
+		// concurrently; safer to drop the chain than ship a request the
+		// server will reject.
+		if result.ResponseID != "" {
+			expected := preCallMessageCount + 1
+			if result.ConsumedMessageCount == expected {
+				entry.MarkResponseStored(result.ResponseID, expected)
+			} else {
+				log.Printf("loop: responses chain mismatch (got %d, want %d); resetting", result.ConsumedMessageCount, expected)
+				entry.ResetResponseChain()
+			}
+		}
 		d.notifyConversationUpdated(p.ConversationID, entry)
 
 		if result.StopReason != "tool_calls" || len(toolCalls) == 0 {
@@ -321,6 +360,12 @@ func (d *Driver) maybeSummarize(ctx context.Context, taskID, conversationID, sys
 		Content: "<summary>\n" + strings.TrimSpace(summary),
 	}}, rest...)
 	entry.LastSummarizedLen = len(entry.Messages)
+	// Summarisation rewrites the local message log — the server's
+	// Responses chain (if any) no longer matches what we'd send as a
+	// delta. Drop the anchor so the next Responses call rebuilds from
+	// scratch with the new summarised history.
+	entry.LastResponseID = ""
+	entry.LastResponseConsumedCount = 0
 	entry.Unlock()
 	_ = d.Conn.Notify("task.summarized", map[string]any{
 		"taskId":         taskID,
@@ -418,8 +463,14 @@ type toolOutcome struct {
 }
 
 const (
-	readNavigationLoopLimit       = 120
-	readFileDistinctSlicesPerPath = 25
+	readNavigationLoopLimit = 120
+	// readFileDistinctSlicesPerPath caps how many distinct (offset,limit) reads
+	// the model can issue against one file before the guard forces it back to
+	// search. Lowered from 25 in v0.6.1 — large files split into many narrow
+	// slices was the dominant "shooting around" pattern. If a fix legitimately
+	// needs more reads from one file, prefer a wider window or a search-then-
+	// targeted-read pass.
+	readFileDistinctSlicesPerPath = 10
 )
 
 var readNavigationTools = map[string]bool{
@@ -489,7 +540,7 @@ func (s *taskToolState) Begin(tc llm.ToolCall) (content string, handled bool) {
 				s.readFileSlices[path] = slices
 			}
 			if !slices[slice] && len(slices) >= readFileDistinctSlicesPerPath {
-				return fmt.Sprintf("[read_file budget exhausted] Already read %d distinct slices from %s in this task. Use the existing context or a narrower search instead of reading more slices from this file.", readFileDistinctSlicesPerPath, path), true
+				return fmt.Sprintf("[read_file budget exhausted] Already read %d distinct slices from %s in this task. Stop slicing this file — use `search` to find the exact lines you still need, or commit to an `apply_diff` with the context you already have.", readFileDistinctSlicesPerPath, path), true
 			}
 			slices[slice] = true
 		}
@@ -805,10 +856,11 @@ func (d *Driver) execSpawnSubAgent(ctx context.Context, parentTaskID, parentConv
 
 	subRegistry := filterToolsByAllowlist(d.registry(), preset.AllowedTools)
 	mode := &ModeDefinition{
-		ID:            preset.Name,
-		Label:         "Research",
-		SystemPrompt:  preset.SystemPrompt,
-		ToolAllowlist: preset.AllowedTools,
+		ID:              preset.Name,
+		Label:           "Research",
+		SystemPrompt:    preset.SystemPrompt,
+		ToolAllowlist:   preset.AllowedTools,
+		ReasoningEffort: preset.ReasoningEffort,
 	}
 	userPrompt := buildSubAgentPrompt(in)
 	subConversationID := parentConversationID + ":" + subTaskID
@@ -1294,18 +1346,37 @@ func ApplyMode(registry []tools.Tool, mode *ModeDefinition) []tools.Tool {
 }
 
 const (
-	elidedDuplicateToolResultTemplate = "<duplicate tool-result elided: same %s input retained later at tool_call_id %s; original was %d bytes>"
+	elidedDuplicateToolResultTemplate  = "<duplicate tool-result elided: same %s input retained later at tool_call_id %s; original was %d bytes>"
+	elidedReadOverlapTemplate          = "<read_file result superseded: a later read of %s (tool_call_id %s) covers this range; original was %d bytes>"
+	elidedSearchOlderTemplate          = "<search result superseded: only the %d most-recent unique queries are kept full; original was %d bytes>"
+	searchKeepLatestUniqueQueries      = 3
 )
 
-// wireMessages prepares the message slice for an LLM call. It elides only
-// older duplicate read/navigation RoleTool messages; unique reads and all
-// write/state outputs stay full. The original Entry is untouched.
+// wireMessages prepares the message slice for an LLM call. Elision policy
+// applies only to read/navigation tools; write/state tool results never
+// elide. The original Entry is untouched. Three rules, applied while
+// walking newest-to-oldest so a later result can "shadow" an earlier one:
+//
+//  1. Exact-input dedup: any older RoleTool whose tool+input matches a
+//     later one collapses to a short marker pointing at the kept call.
+//  2. read_file overlap: an older read_file whose (offset, limit) range
+//     is fully covered by a later kept read on the same path is treated
+//     as superseded — the later result has all the lines the older one
+//     had.
+//  3. search recency cap: only the `searchKeepLatestUniqueQueries` most-
+//     recent unique search queries stay full. Older unique queries
+//     collapse — their lines are already in the model's reasoning, and
+//     fresh queries are typically the ones it's acting on.
 func wireMessages(msgs []llm.Message) []llm.Message {
 	if len(msgs) == 0 {
 		return msgs
 	}
 	callByID := toolCallsByID(msgs)
 	latestByKey := make(map[string]string)
+	readFileKeptRanges := make(map[string][]keptReadRange)
+	searchKeysKeptOrder := make([]string, 0, searchKeepLatestUniqueQueries)
+	searchKeysKept := make(map[string]bool)
+
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].Role != llm.RoleTool {
 			continue
@@ -1320,8 +1391,80 @@ func wireMessages(msgs []llm.Message) []llm.Message {
 			continue
 		}
 		latestByKey[key] = msgs[i].ToolCallID
+
+		switch tc.Name {
+		case "read_file":
+			if path, rr, parseOK := readFileRange(tc.Input); parseOK {
+				if laterID, covered := findCoveringRead(readFileKeptRanges[path], rr); covered {
+					msgs[i].Content = fmt.Sprintf(elidedReadOverlapTemplate, path, laterID, len(msgs[i].Content))
+					continue
+				}
+				readFileKeptRanges[path] = append(readFileKeptRanges[path], keptReadRange{
+					rng:        rr,
+					toolCallID: msgs[i].ToolCallID,
+				})
+			}
+		case "search":
+			if searchKeysKept[key] {
+				break
+			}
+			if len(searchKeysKeptOrder) >= searchKeepLatestUniqueQueries {
+				msgs[i].Content = fmt.Sprintf(elidedSearchOlderTemplate, searchKeepLatestUniqueQueries, len(msgs[i].Content))
+				// Roll the kept-key tracker back so this slot isn't claimed —
+				// we don't want a "stale" key squatting in the window.
+				continue
+			}
+			searchKeysKeptOrder = append(searchKeysKeptOrder, key)
+			searchKeysKept[key] = true
+		}
 	}
 	return msgs
+}
+
+// keptReadRange records a read_file range whose result we're keeping in
+// full. The line range is closed-inclusive; `end = math.MaxInt` represents
+// "read to end of file" (unbounded `limit`).
+type keptReadRange struct {
+	rng        readRange
+	toolCallID string
+}
+
+type readRange struct {
+	start int // 1-based first line included
+	end   int // 1-based last line included (math.MaxInt for unbounded)
+}
+
+func (r readRange) covers(other readRange) bool {
+	return r.start <= other.start && r.end >= other.end
+}
+
+func readFileRange(raw json.RawMessage) (string, readRange, bool) {
+	var in struct {
+		Path   string `json:"path"`
+		Offset int    `json:"offset"`
+		Limit  int    `json:"limit"`
+	}
+	if err := json.Unmarshal(raw, &in); err != nil || in.Path == "" {
+		return "", readRange{}, false
+	}
+	start := in.Offset
+	if start < 1 {
+		start = 1
+	}
+	end := math.MaxInt
+	if in.Limit > 0 {
+		end = start + in.Limit - 1
+	}
+	return in.Path, readRange{start: start, end: end}, true
+}
+
+func findCoveringRead(kept []keptReadRange, rr readRange) (string, bool) {
+	for _, k := range kept {
+		if k.rng.covers(rr) {
+			return k.toolCallID, true
+		}
+	}
+	return "", false
 }
 
 func toolCallsByID(msgs []llm.Message) map[string]llm.ToolCall {

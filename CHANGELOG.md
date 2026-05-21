@@ -1,5 +1,69 @@
 # Changelog
 
+## 0.6.1
+
+Loom 0.6.1 is a token-spend reduction release for OpenAI reasoning models.
+Four workstreams land together — three default-on quick wins plus an
+opt-in transport migration that's the biggest single saving for
+high-reasoning workloads (gpt-5.x at medium/high effort).
+
+### Added
+
+- **OpenAI Responses API transport (experimental, opt-in).** Settings →
+  Advanced → "Use OpenAI Responses API" (or `OPENAI_USE_RESPONSES=1`)
+  routes calls for `gpt-5*` / `o3*` / `o4*` / `o5*` models through
+  `/v1/responses`. Subsequent turns chain via `previous_response_id` so
+  the server retains reasoning state instead of re-billing assistant
+  reasoning blocks every turn — typically cuts per-turn input by 60-80%
+  on high-reasoning workloads. The adapter falls back to Chat
+  Completions automatically on adapter errors. `openai-compatible`
+  providers always stay on Chat Completions.
+- **Per-mode reasoning effort defaults.** `ModeDefinition.reasoningEffort`
+  threaded end-to-end. Built-in modes ship sensible defaults:
+  `code` / `ask` / `debug` → `low`, `architect` → `medium`, read-only
+  sub-agent presets → `low`. Trivial follow-up turns no longer inherit
+  a globally-set "high" reasoning effort. The provider-wide Advanced
+  "Reasoning effort" setting is now the fallback (used when a mode has
+  no opinion); custom modes under `loom.modes` and
+  `.loom/agents/*.md` presets (`reasoning_effort:` frontmatter) may
+  override per-mode.
+- **Index-tool descriptions.** New markdown bodies for `find_symbol`,
+  `find_references`, and `semantic_search` (previously hardcoded one-
+  liners with no body in the stable prefix). Each leads with "use
+  before regex search for identifier hunts." Mode prompts (`code.md`,
+  `debug.md`) gained a "Snipe, don't browse" rule naming the index
+  tools first.
+- **`gpt-5.4` context window** registered at 400K in `ModelContextLimit`.
+  Unknown `gpt-5*` / `gpt-6*` / `o5*` variants now fall back to 400K via
+  a prefix-match rather than the 200K default — keeps summarization
+  from firing too early on newly-released model names.
+
+### Changed
+
+- **Tool registry reorder.** Read-family ordering is now `search` →
+  `find_files` → `read_file` → `list_dir` (was `read_file` → `list_dir`
+  → `search` → `find_files`), steering the catalogue toward navigation
+  over browsing.
+- **`list_dir` description.** Added a "Don't browse with this tool"
+  section that names `search` / `find_files` / `find_symbol` /
+  `semantic_search` as the preferred exploration tools.
+- **`wireMessages` elision policy.** In addition to exact-input
+  duplicate dedup, an older `read_file` whose `(offset, limit)` range is
+  fully covered by a later broader read on the same path collapses to a
+  short superseded marker. Only the 3 most-recent unique `search`
+  queries stay full; older unique queries collapse.
+- **`read_file` per-file slice cap** lowered from 25 → 10 distinct
+  `(offset, limit)` windows. The guard message now steers toward
+  `search` or committing to an `apply_diff` rather than slicing further.
+
+### Notes
+
+This release is opt-in for the largest saving (Responses API) and
+default-on for the rest (mode reasoning defaults, exploration steering,
+smarter elision, `gpt-5.x` context limit). To see the full reduction on
+gpt-5.x with high reasoning, flip the Responses API checkbox in Settings
+Advanced.
+
 ## 0.6.0
 
 Loom 0.6.0 adds two new built-in sub-agent presets — `test-scout` and

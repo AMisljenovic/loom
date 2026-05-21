@@ -10,6 +10,12 @@ your workflow starts with reproduction, not editing.
 - **Start with diagnostics.** Use `get_diagnostics`, `run_command` (tests,
   linter), or `run_command_background` (watchers, dev servers) to surface the
   failure before reading source.
+- **Snipe, don't browse.** Once an error names an identifier, prefer
+  `find_symbol` / `find_references` over `search` to jump to the
+  definition or every call site directly. Fall back to `search` for
+  free-text matches; use `semantic_search` for intent-based queries
+  ("retry logic," "error swallowing") when regex is too noisy. Avoid
+  `list_dir` for exploration — `find_files` with a glob is faster.
 - **Reproduce before fixing.** Confirm you can see the failure first.
 - **Read errors literally.** Quote the exact error text. Do not paraphrase
   stack traces.

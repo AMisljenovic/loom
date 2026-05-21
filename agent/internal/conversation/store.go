@@ -41,6 +41,18 @@ type Entry struct {
 	// ScratchpadLoaded guards the one-time disk hydration of Scratchpad for
 	// this entry's lifetime so repeated tool calls don't re-read the file.
 	ScratchpadLoaded bool
+
+	// LastResponseID is the OpenAI Responses API anchor for the next call's
+	// `previous_response_id`. Empty when the chain hasn't started (or was
+	// reset). The loop sets it after a successful Responses call and the
+	// adapter reads it (via context) on the next call to ship only the
+	// delta.
+	LastResponseID string
+	// LastResponseConsumedCount is len(Messages) at the point the server's
+	// chain knows about — the index immediately after the assistant turn
+	// that produced LastResponseID. The delta the next chained call sends
+	// is Messages[LastResponseConsumedCount:].
+	LastResponseConsumedCount int
 }
 
 // LoadSkills appends previously-unseen ids to LoadedSkills, preserving order
@@ -106,6 +118,12 @@ func (s *Store) Hydrate(id string, snap Snapshot) {
 	entry.CumulativeCacheWrite = snap.CumulativeCacheWrite
 	entry.LastInputTokens = snap.LastInputTokens
 	entry.LastOutputTokens = snap.LastOutputTokens
+	// Hydrated entries have no server-side Responses chain — the session
+	// was reloaded from local persistence, the previous_response_id (if
+	// any) belongs to a process that no longer exists. Force a "first
+	// turn" on the next Responses call.
+	entry.LastResponseID = ""
+	entry.LastResponseConsumedCount = 0
 }
 
 // HealOrphanToolCalls repairs the in-memory message log if the previous task
@@ -119,6 +137,11 @@ func (e *Entry) HealOrphanToolCalls() bool {
 		return false
 	}
 	e.Messages = healed
+	// Healing changed the local history — the server's chain (if any) no
+	// longer matches. Drop the anchor so the next Responses call rebuilds
+	// from scratch.
+	e.LastResponseID = ""
+	e.LastResponseConsumedCount = 0
 	return true
 }
 
@@ -220,6 +243,37 @@ func (e *Entry) AddUsage(usage llm.TokenUsage) {
 	e.CumulativeOutput += usage.OutputTokens
 	e.CumulativeCacheRead += usage.CacheReadTokens
 	e.CumulativeCacheWrite += usage.CacheCreationTokens
+}
+
+// ResetResponseChain zeroes the Responses-API anchor. Called whenever the
+// local message history mutates outside the server's view (summarization,
+// orphan-tool healing, hydrate, reset) so the next Responses call falls
+// back to a "first turn" that re-sends the full prompt and captures a
+// fresh response_id.
+func (e *Entry) ResetResponseChain() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.LastResponseID = ""
+	e.LastResponseConsumedCount = 0
+}
+
+// MarkResponseStored records the server-side anchor for the next chained
+// Responses call. `consumedCount` is the message-array length immediately
+// after the assistant turn the server now reflects (i.e. the index where
+// the next delta begins).
+func (e *Entry) MarkResponseStored(responseID string, consumedCount int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.LastResponseID = responseID
+	e.LastResponseConsumedCount = consumedCount
+}
+
+// ResponseChain returns the current chain anchor and consumed-count atomically.
+// Returns ("", 0) when the chain is reset or never started.
+func (e *Entry) ResponseChain() (string, int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.LastResponseID, e.LastResponseConsumedCount
 }
 
 // SetRulesHash records the hash of the rules bundle captured at task start.

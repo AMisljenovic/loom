@@ -93,6 +93,25 @@ newline-delimited JSON-RPC over stdio.
     `ConfigUpdateParams` and spawn env (`OPENAI_MAX_OUTPUT_TOKENS`,
     `OPENAI_CONTEXT_WINDOW`, `OPENAI_CUSTOM_HEADERS`). `openai-compatible`
     collapses to `openai` on the wire.
+10a. OpenAI Responses API is an opt-in transport for reasoning-capable
+    models. `AdvancedLlmOptions.useResponsesAPI` (or
+    `OPENAI_USE_RESPONSES=1`) routes gpt-5* / o3* / o4* / o5* models
+    through `/v1/responses`. Subsequent turns chain via
+    `previous_response_id` (tracked on `Entry.LastResponseID`); the
+    adapter ships only the delta. Chain resets on summarize, heal,
+    hydrate, reset. On 404 or chain-mismatch 400, a sticky fallback
+    flag routes the rest of the provider session through Chat
+    Completions. `openai-compatible` providers always use Chat
+    Completions.
+10b. Reasoning effort is per-mode. `ModeDefinition.reasoningEffort` is
+    optional in the shared protocol; built-ins default Code/Ask/Debug → `low`,
+    Architect → `medium`, read-only sub-agent presets → `low`. The loop tags
+    the LLM context via `llm.WithReasoningEffort`; the OpenAI adapter's
+    `resolveReasoningEffort` prefers the per-call override over the provider
+    default. `.loom/agents/*.md` may set `reasoning_effort:` frontmatter.
+    `ModelContextLimit` falls back to 400K for unrecognized `gpt-5*` /
+    `gpt-6*` / `o5*` variants instead of the 200K default — keeps
+    summarization from firing too early on new model names.
 11. Extension shutdown/update cleanup must cancel active tasks, persist the
     session, and dispose the Go process explicitly.
 12. Go task panics must recover with sanitized opt-in telemetry and generic

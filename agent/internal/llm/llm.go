@@ -40,12 +40,25 @@ func NewFromEnv() (Provider, error) {
 			MaxOutputTokens: parseInt64Env("OPENAI_MAX_OUTPUT_TOKENS"),
 			ContextWindow:   parseInt64Env("OPENAI_CONTEXT_WINDOW"),
 			CustomHeaders:   parseHeadersEnv("OPENAI_CUSTOM_HEADERS"),
+			UseResponsesAPI: parseBoolEnv("OPENAI_USE_RESPONSES"),
 		},
 		Anthropic: AnthropicConfig{
 			APIKey: os.Getenv("ANTHROPIC_API_KEY"),
 			Model:  getenvDefault("MY_AGENT_MODEL", "claude-opus-4-7"),
 		},
 	})
+}
+
+// parseBoolEnv accepts "1", "true", "yes", "on" (case-insensitive) as true;
+// anything else (including empty) is false. Lenient on input because users
+// hand-set this in shell rc files.
+func parseBoolEnv(key string) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 func parseInt64Env(key string) int64 {

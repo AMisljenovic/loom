@@ -49,6 +49,7 @@ export interface AdvancedOpts {
   maxOutputTokens?: number;
   contextWindow?: number;
   customHeaders?: CustomHeader[];
+  useResponsesAPI?: boolean;
 }
 
 export type LlmConfig =
@@ -299,6 +300,7 @@ function buildSpawnEnv(cfg: LlmConfig): Record<string, string> {
     OPENAI_MAX_OUTPUT_TOKENS: "",
     OPENAI_CONTEXT_WINDOW: "",
     OPENAI_CUSTOM_HEADERS: "",
+    OPENAI_USE_RESPONSES: "",
   };
   if (agentCfg.provider === "openai") {
     env.OPENAI_API_KEY = agentCfg.apiKey;
@@ -313,6 +315,9 @@ function buildSpawnEnv(cfg: LlmConfig): Record<string, string> {
     }
     if (agentCfg.customHeaders && agentCfg.customHeaders.length > 0) {
       env.OPENAI_CUSTOM_HEADERS = JSON.stringify(agentCfg.customHeaders);
+    }
+    if (agentCfg.useResponsesAPI === true) {
+      env.OPENAI_USE_RESPONSES = "1";
     }
   } else {
     env.ANTHROPIC_API_KEY = agentCfg.apiKey;
@@ -369,6 +374,9 @@ function advancedToParams(advanced: AdvancedOpts | undefined): Partial<ConfigUpd
   }
   if (advanced.customHeaders && advanced.customHeaders.length > 0) {
     out.customHeaders = advanced.customHeaders.filter((h) => h.name.trim() !== "");
+  }
+  if (advanced.useResponsesAPI === true) {
+    out.useResponsesAPI = true;
   }
   return out;
 }

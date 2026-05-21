@@ -36,14 +36,15 @@ type hydrateParams struct {
 }
 
 type configUpdateParams struct {
-	Provider        string            `json:"provider"`
-	Model           string            `json:"model"`
-	APIKey          string            `json:"apiKey"`
-	BaseURL         string            `json:"baseUrl"`
-	ReasoningEffort string            `json:"reasoningEffort"`
-	MaxOutputTokens int64             `json:"maxOutputTokens"`
-	ContextWindow   int64             `json:"contextWindow"`
-	CustomHeaders   []llm.HeaderPair  `json:"customHeaders"`
+	Provider        string           `json:"provider"`
+	Model           string           `json:"model"`
+	APIKey          string           `json:"apiKey"`
+	BaseURL         string           `json:"baseUrl"`
+	ReasoningEffort string           `json:"reasoningEffort"`
+	MaxOutputTokens int64            `json:"maxOutputTokens"`
+	ContextWindow   int64            `json:"contextWindow"`
+	CustomHeaders   []llm.HeaderPair `json:"customHeaders"`
+	UseResponsesAPI bool             `json:"useResponsesAPI"`
 }
 
 type providerHolder struct {
@@ -223,6 +224,7 @@ func main() {
 				MaxOutputTokens: p.MaxOutputTokens,
 				ContextWindow:   p.ContextWindow,
 				CustomHeaders:   p.CustomHeaders,
+				UseResponsesAPI: p.UseResponsesAPI,
 			},
 			Anthropic: llm.AnthropicConfig{
 				APIKey: p.APIKey,

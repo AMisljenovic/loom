@@ -65,6 +65,9 @@ export function SettingsView({ config, onClose }: SettingsViewProps) {
         (initialAdvanced?.reasoningEffort ?? config?.reasoningEffort ?? "") as ReasoningEffort,
     );
     const [headers, setHeaders] = useState<FormHeader[]>(toFormHeaders(initialAdvanced?.customHeaders));
+    const [useResponsesAPI, setUseResponsesAPI] = useState<boolean>(
+        initialAdvanced?.useResponsesAPI === true,
+    );
 
     useEffect(() => {
         if (!config) return;
@@ -78,6 +81,7 @@ export function SettingsView({ config, onClose }: SettingsViewProps) {
         setContextWindow(config.advanced?.contextWindow ? String(config.advanced.contextWindow) : "");
         setReasoning((config.advanced?.reasoningEffort ?? config.reasoningEffort ?? "") as ReasoningEffort);
         setHeaders(toFormHeaders(config.advanced?.customHeaders));
+        setUseResponsesAPI(config.advanced?.useResponsesAPI === true);
     }, [config?.provider]);
 
     const suggestions = useMemo(
@@ -140,6 +144,7 @@ export function SettingsView({ config, onClose }: SettingsViewProps) {
             .map((h): CustomHeader => ({ name: h.name.trim(), value: h.value }))
             .filter((h) => h.name);
         if (cleanHeaders.length > 0) advanced.customHeaders = cleanHeaders;
+        if (provider === "openai" && useResponsesAPI) advanced.useResponsesAPI = true;
 
         post({
             type: "setLlmConfig",
@@ -305,18 +310,45 @@ export function SettingsView({ config, onClose }: SettingsViewProps) {
                         />
                     </label>
                     {providerSupportsReasoning(provider) && (
-                        <label>
-                            <span>Reasoning effort</span>
-                            <select
-                                value={reasoning}
-                                onChange={(e) => setReasoning(e.target.value as ReasoningEffort)}
-                            >
-                                <option value="">None</option>
-                                <option value="low">Low</option>
-                                <option value="medium">Medium</option>
-                                <option value="high">High</option>
-                            </select>
-                        </label>
+                        <>
+                            <label>
+                                <span>Reasoning effort</span>
+                                <select
+                                    value={reasoning}
+                                    onChange={(e) => setReasoning(e.target.value as ReasoningEffort)}
+                                >
+                                    <option value="">None</option>
+                                    <option value="low">Low</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="high">High</option>
+                                </select>
+                            </label>
+                            <p className="settings-hint">
+                                Built-in modes also carry per-mode defaults (Code/Ask/Debug:
+                                low, Architect: medium). The mode default takes effect when
+                                running tasks; this Advanced setting is the provider-wide
+                                fallback. Define a custom mode in <code>loom.modes</code> to
+                                override per-mode effort.
+                            </p>
+                        </>
+                    )}
+                    {provider === "openai" && (
+                        <>
+                            <label className="settings-checkbox">
+                                <input
+                                    type="checkbox"
+                                    checked={useResponsesAPI}
+                                    onChange={(e) => setUseResponsesAPI(e.target.checked)}
+                                />
+                                <span>Use OpenAI Responses API (experimental)</span>
+                            </label>
+                            <p className="settings-hint">
+                                On reasoning-capable models (gpt-5*, o3*, o4*, o5*), chains
+                                turns via <code>previous_response_id</code> so the server
+                                retains reasoning state instead of re-sending it every turn.
+                                Falls back to Chat Completions automatically on errors.
+                            </p>
+                        </>
                     )}
 
                     <div className="custom-headers">

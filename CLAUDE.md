@@ -252,6 +252,45 @@ change to a message type must be made on both sides.
   SecretStorage under `loom.secret.openaiCompatibleApiKey`. On the wire to
   Go, `openai-compatible` collapses to the `openai` provider with an
   explicit `BaseURL` — there is no parallel agent-side branch.
+- **OpenAI Responses API is an opt-in transport for reasoning models.**
+  When `AdvancedLlmOptions.useResponsesAPI` is true (or
+  `OPENAI_USE_RESPONSES=1`), the adapter routes calls for gpt-5*/o3*/
+  o4*/o5* models through `/v1/responses` instead of `/v1/chat/completions`.
+  Subsequent turns chain via `previous_response_id` so reasoning state
+  stays server-side instead of being re-billed every turn. The loop
+  tracks the chain anchor on `conversation.Entry.LastResponseID` +
+  `LastResponseConsumedCount` ([conversation/store.go](agent/internal/conversation/store.go))
+  and tags the LLM context with `llm.WithResponsesChain` before each
+  call. The adapter ([agent/internal/llm/responses.go](agent/internal/llm/responses.go))
+  builds `ResponseNewParams` with full history on first call (and full
+  `instructions`) but only the **delta** (`messages[deltaStart:]`) on
+  chained calls, omitting `instructions`. Tools are re-sent every call
+  because the registry may change mid-task. The chain is reset on
+  `maybeSummarize`, `HealOrphanToolCalls`, `Store.Hydrate`, and
+  `Store.Reset` so the local history and server view never desync. On
+  any 404 (endpoint unavailable) or 400 referencing
+  `previous_response_id` (server lost the chain), the adapter flips a
+  sticky `responsesFallback` flag and routes the rest of the provider
+  session through Chat Completions. `openai-compatible` providers
+  always use Chat Completions because their `/v1/responses` support is
+  inconsistent.
+- **Reasoning effort is per-mode, not just global.** `ModeDefinition`
+  carries an optional `reasoningEffort` ([src/shared/protocol.ts](src/shared/protocol.ts),
+  mirrored in [agent/internal/loop/loop.go](agent/internal/loop/loop.go)).
+  Built-in modes ship sensible defaults — Code / Ask / Debug → `low`,
+  Architect → `medium`, built-in read-only sub-agent presets → `low` —
+  so trivial follow-up turns don't inherit the global Advanced "high"
+  setting. The loop tags the LLM `ctx` with `llm.WithReasoningEffort`
+  before each `Stream` call; the OpenAI adapter's
+  `resolveReasoningEffort` ([agent/internal/llm/openai.go](agent/internal/llm/openai.go))
+  prefers the per-call override, falling back to the provider default.
+  User-authored `.loom/agents/*.md` presets may opt in via a
+  `reasoning_effort: low|medium|high` frontmatter key. Custom modes
+  declared under `loom.modes` may also set `reasoningEffort`.
+  `ModelContextLimit` ([agent/internal/llm/limits.go](agent/internal/llm/limits.go))
+  now falls back to 400K for any `gpt-5*` / `gpt-6*` / `o5*` variant
+  rather than the 200K default, so unrecognized future models don't
+  trigger over-aggressive summarization.
 - **Shutdown is deliberate.** `ChatPanel.dispose()` cancels an active task,
   persists session state, clears pending approvals, and disposes
   `AgentClient`. Do not rely on VS Code process cleanup for update/reload

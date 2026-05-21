@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"strings"
+	"sync/atomic"
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
@@ -24,6 +26,12 @@ type OpenAIConfig struct {
 	BaseURL         string // empty -> SDK default (https://api.openai.com/v1)
 	Model           string
 	ReasoningEffort string // "" | "low" | "medium" | "high"
+	// UseResponsesAPI opts into the OpenAI Responses API (`/v1/responses`)
+	// for reasoning-capable models. The adapter falls back to Chat
+	// Completions on any Responses error or for non-reasoning models.
+	// Default false. Driven by env `OPENAI_USE_RESPONSES=1` or the
+	// `useResponsesAPI` field on the Advanced settings.
+	UseResponsesAPI bool
 	// Advanced options. Zero values mean "use provider defaults".
 	MaxOutputTokens int64
 	ContextWindow   int64
@@ -36,6 +44,16 @@ type openaiProvider struct {
 	effort          shared.ReasoningEffort
 	maxOutputTokens int64
 	contextWindow   int64
+	// useResponsesAPI gates the Responses-API path. When false the adapter
+	// stays on Chat Completions and behaves exactly as before. When true
+	// AND the model is reasoning-capable AND the fallback flag isn't set,
+	// Stream() routes through streamResponses.
+	useResponsesAPI bool
+	// responsesFallback is set after the first Responses-API call returns
+	// a fatal error (404, chain mismatch). Sticky for the provider's
+	// lifetime — the next config update creates a fresh provider so the
+	// user can retry by toggling the setting.
+	responsesFallback atomic.Bool
 }
 
 func newOpenAI(cfg OpenAIConfig) (Provider, error) {
@@ -68,6 +86,7 @@ func newOpenAI(cfg OpenAIConfig) (Provider, error) {
 		effort:          effort,
 		maxOutputTokens: cfg.MaxOutputTokens,
 		contextWindow:   cfg.ContextWindow,
+		useResponsesAPI: cfg.UseResponsesAPI,
 	}, nil
 }
 
@@ -104,6 +123,23 @@ func isAzureOpenAIBaseURL(raw string) bool {
 		strings.HasSuffix(host, ".cognitiveservices.azure.com")
 }
 
+// resolveReasoningEffort picks the effort to send on this single call. If the
+// caller tagged ctx with WithReasoningEffort (mode-scoped override from the
+// loop), that wins. Otherwise the provider's configured default applies.
+// Invalid override strings are dropped silently — better to under-instruct
+// than to fail a turn over a typo.
+func resolveReasoningEffort(ctx context.Context, fallback shared.ReasoningEffort) shared.ReasoningEffort {
+	switch strings.ToLower(strings.TrimSpace(ReasoningEffortFromContext(ctx))) {
+	case "low":
+		return shared.ReasoningEffortLow
+	case "medium":
+		return shared.ReasoningEffortMedium
+	case "high":
+		return shared.ReasoningEffortHigh
+	}
+	return fallback
+}
+
 func (p *openaiProvider) Family() string {
 	m := strings.ToLower(strings.TrimPrefix(p.model, "models/"))
 	if strings.HasPrefix(m, "gemini") {
@@ -113,6 +149,41 @@ func (p *openaiProvider) Family() string {
 }
 
 func (p *openaiProvider) Stream(
+	ctx context.Context,
+	system SystemPrompt,
+	messages []Message,
+	tools []ToolDef,
+	h StreamHandler,
+) (StreamResult, error) {
+	if p.shouldUseResponses() {
+		res, err := p.streamResponses(ctx, system, messages, tools, h)
+		if err == nil {
+			return res, nil
+		}
+		if p.isResponsesFatal(err) {
+			if p.responsesFallback.CompareAndSwap(false, true) {
+				log.Printf("openai: responses-api fallback engaged (%v) — using chat-completions for the rest of this provider session", err)
+			}
+			// Fall through to the Chat Completions path below. The handler
+			// has already received any partial text/tool events streamed
+			// before the fatal error; the loop's stream handler is
+			// idempotent for OnTextDelta and tool-call accumulation
+			// happens at the SDK level, so falling through here means the
+			// caller sees an incomplete turn followed by a retry on the
+			// next iteration. That's acceptable for a 404 (endpoint
+			// missing) — Loom's loop will resend with Chat Completions on
+			// the model's next response. For chain-mismatch (400), the
+			// caller has already reset the chain, so the retry is clean.
+			return p.streamChatCompletions(ctx, system, messages, tools, h)
+		}
+		return res, err
+	}
+	return p.streamChatCompletions(ctx, system, messages, tools, h)
+}
+
+// streamChatCompletions is the original Chat Completions path. Extracted
+// from Stream so the new Responses branching can fall back to it cleanly.
+func (p *openaiProvider) streamChatCompletions(
 	ctx context.Context,
 	system SystemPrompt,
 	messages []Message,
@@ -187,8 +258,8 @@ func (p *openaiProvider) Stream(
 	if len(oaiTools) > 0 {
 		params.Tools = oaiTools
 	}
-	if p.effort != "" {
-		params.ReasoningEffort = p.effort
+	if effort := resolveReasoningEffort(ctx, p.effort); effort != "" {
+		params.ReasoningEffort = effort
 	}
 	if p.maxOutputTokens > 0 {
 		params.MaxTokens = openai.Int(p.maxOutputTokens)
@@ -262,8 +333,8 @@ func (p *openaiProvider) Complete(ctx context.Context, systemPrompt string, mess
 		Model:    p.model,
 		Messages: oaiMsgs,
 	}
-	if p.effort != "" {
-		params.ReasoningEffort = p.effort
+	if effort := resolveReasoningEffort(ctx, p.effort); effort != "" {
+		params.ReasoningEffort = effort
 	}
 	if p.maxOutputTokens > 0 {
 		params.MaxTokens = openai.Int(p.maxOutputTokens)
