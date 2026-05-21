@@ -20,6 +20,14 @@ func TestReviewPresetAllowedTools(t *testing.T) {
 	assertReadOnlyBuiltinPreset(t, "review")
 }
 
+func TestTestScoutPresetAllowedTools(t *testing.T) {
+	assertReadOnlyBuiltinPreset(t, "test-scout")
+}
+
+func TestArchitectureMapperPresetAllowedTools(t *testing.T) {
+	assertReadOnlyBuiltinPreset(t, "architecture-mapper")
+}
+
 func assertReadOnlyBuiltinPreset(t *testing.T, name string) {
 	t.Helper()
 	preset, err := LoadPresets("").For(name)
@@ -30,6 +38,9 @@ func assertReadOnlyBuiltinPreset(t *testing.T, name string) {
 	for _, name := range preset.AllowedTools {
 		allowed[name] = true
 	}
+	if strings.TrimSpace(preset.SystemPrompt) == "" {
+		t.Fatalf("%s SystemPrompt is empty", name)
+	}
 	if !reflect.DeepEqual(preset.AutoApprove, preset.AllowedTools) {
 		t.Fatalf("%s AutoApprove = %#v, want AllowedTools %#v", name, preset.AutoApprove, preset.AllowedTools)
 	}
@@ -38,7 +49,7 @@ func assertReadOnlyBuiltinPreset(t *testing.T, name string) {
 			t.Fatalf("research preset should not allow %s", disallowed)
 		}
 	}
-	for _, required := range []string{"read_file", "list_dir", "search", "get_diagnostics", "load_skill"} {
+	for _, required := range []string{"read_file", "list_dir", "search", "find_files", "get_diagnostics", "load_skill"} {
 		if !allowed[required] {
 			t.Fatalf("research preset missing %s", required)
 		}
@@ -46,7 +57,7 @@ func assertReadOnlyBuiltinPreset(t *testing.T, name string) {
 }
 
 func TestBuiltInPresetBudgets(t *testing.T) {
-	for _, name := range []string{"research", "review"} {
+	for _, name := range []string{"research", "review", "test-scout", "architecture-mapper"} {
 		preset, err := LoadPresets("").For(name)
 		if err != nil {
 			t.Fatalf("For(%s): %v", name, err)
@@ -74,7 +85,7 @@ func TestSpawnSubAgentSchemaIncludesBuiltInPresets(t *testing.T) {
 	if !ok {
 		t.Fatalf("enum missing: %#v", typeSchema["enum"])
 	}
-	if want := []string{"research", "review"}; !reflect.DeepEqual(enum, want) {
+	if want := []string{"architecture-mapper", "research", "review", "test-scout"}; !reflect.DeepEqual(enum, want) {
 		t.Fatalf("enum = %#v, want %#v", enum, want)
 	}
 }
@@ -86,6 +97,8 @@ func TestStableSystemListsBuiltInPresets(t *testing.T) {
 	for _, want := range []string{
 		"- research: isolated read-only research; pass task, context, and optional files",
 		"- review: read-only implementation review; return actionable findings for the parent agent",
+		"- test-scout: read-only test coverage scout; map existing coverage, missing scenarios, and risk for a change surface",
+		"- architecture-mapper: read-only structural mapper; return layers, public surface, import edges, and cycles for a named target tree",
 	} {
 		if !strings.Contains(stable, want) {
 			t.Fatalf("stable prompt missing %q", want)

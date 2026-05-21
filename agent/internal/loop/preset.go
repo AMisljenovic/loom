@@ -46,6 +46,12 @@ func LoadPresets(workspaceRoot string) Registry {
 	if p, err := reviewPreset(); err == nil {
 		reg.add(p)
 	}
+	if p, err := testScoutPreset(); err == nil {
+		reg.add(p)
+	}
+	if p, err := architectureMapperPreset(); err == nil {
+		reg.add(p)
+	}
 	if workspaceRoot != "" {
 		loadLoomPresets(&reg, workspaceRoot, ".loom/agents")
 	}
@@ -192,11 +198,28 @@ func reviewPreset() (Preset, error) {
 	return readOnlyBuiltinPreset("review", "read-only implementation review; return actionable findings for the parent agent", prompt), nil
 }
 
+func testScoutPreset() (Preset, error) {
+	prompt, err := agentprompts.Load("test-scout")
+	if err != nil {
+		return Preset{}, err
+	}
+	return readOnlyBuiltinPreset("test-scout", "read-only test coverage scout; map existing coverage, missing scenarios, and risk for a change surface", prompt), nil
+}
+
+func architectureMapperPreset() (Preset, error) {
+	prompt, err := agentprompts.Load("architecture-mapper")
+	if err != nil {
+		return Preset{}, err
+	}
+	return readOnlyBuiltinPreset("architecture-mapper", "read-only structural mapper; return layers, public surface, import edges, and cycles for a named target tree", prompt), nil
+}
+
 func readOnlyBuiltinPreset(name, description, prompt string) Preset {
 	allowed := []string{
 		"read_file",
 		"list_dir",
 		"search",
+		"find_files",
 		"find_symbol",
 		"find_references",
 		"semantic_search",

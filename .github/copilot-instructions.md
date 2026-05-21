@@ -120,9 +120,13 @@ newline-delimited JSON-RPC over stdio.
     (user-facing progress) and skills (curated static knowledge).
 
 16. v0.1.4 sub-agents run in parallel within a turn. Built-in
-    `research` and `review` presets are always available through
-    `spawn_subagent`; `review` is read-only and parent-facing for
-    implementation critique. Additional presets may be added under
+    `research`, `review`, `test-scout`, and `architecture-mapper`
+    presets are always available through `spawn_subagent`; `review` is
+    read-only and parent-facing for implementation critique, `test-scout`
+    is read-only and parent-facing for test coverage triage, and
+    `architecture-mapper` is read-only and parent-facing for structural
+    scoping of a target tree (layers, public surface, import edges,
+    cycles) before a refactor. Additional presets may be added under
     `.loom/agents/`. Multiple
     spawns emitted in one turn run concurrently through the same errgroup
     as other tools; each sub-agent is read-only, has isolated conversation
@@ -148,8 +152,8 @@ newline-delimited JSON-RPC over stdio.
     `.github/instructions/`) are not loaded.
 20. Skills, sub-agent presets, and slash commands are Loom-only. Skills:
     builtins in `agent/internal/skills/builtin/*.md` plus
-    `.loom/skills/<id>/SKILL.md`. Presets: builtins `research` and `review` plus
-    `.loom/agents/*.md`. Commands: `.loom/commands/*.md`.
+    `.loom/skills/<id>/SKILL.md`. Presets: builtins `research`, `review`, and
+    `test-scout` plus `.loom/agents/*.md`. Commands: `.loom/commands/*.md`.
 21. `agent/internal/loop/maybeSummarize` never cuts mid-tool-batch.
     `safeCutBoundary` walks the proposed cut back so the kept tail never
     starts with `RoleTool` and the summarized prefix never ends on an
@@ -172,7 +176,7 @@ newline-delimited JSON-RPC over stdio.
     `MutationObserver` to pin scrollTop on every container/child growth
     while the user is within 32 px of the bottom. The user-scroll
     detector is suppressed for one event after each programmatic pin so
-    streaming layout shifts can't stall auto-follow.
+
 
 ## Pre-commit hook
 

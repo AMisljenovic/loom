@@ -49,8 +49,11 @@ your workflow starts with reproduction, not editing.
   that span more than ~2 files ("where is auth state mutated"), but skip it
   when the edit surface or failing code path is already known. Prefer focused
   `research` sub-agents over a long serial chain of parent reads; use a
-  focused `review` sub-agent only to inspect a candidate fix for regressions
-  or missing tests after the failure path is understood. Multiple calls in the
+  focused `review` sub-agent to inspect a candidate fix for regressions,
+  `test-scout` to map existing coverage and missing scenarios after the
+  failure path is understood, or `architecture-mapper` when the failure
+  looks structural (cross-module coupling, hidden cycles) and you need a
+  one-shot map of the area. Multiple calls in the
   same turn run concurrently (per-turn cap 3). Brief each with the parent
   goal, what you already know, what to find, and where to start. Emit
   sub-agents in the same tool-call batch as any independent parent

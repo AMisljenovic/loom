@@ -26,12 +26,17 @@ It is not worth the overhead for:
 
 ## Presets
 
-The built-in presets are `research` and `review`. `research` is for bounded
-discovery; `review` is for read-only implementation critique and returns
-actionable findings for the parent agent. Their system prompts live in
-[agent/internal/prompts/](agent/internal/prompts/); both use the same read-only
-tool allowlist (file reads, search, diagnostics, skills). The preset registry
-is [agent/internal/loop/preset.go](agent/internal/loop/preset.go).
+The built-in presets are `research`, `review`, `test-scout`, and
+`architecture-mapper`. `research` is for bounded discovery; `review` is for
+read-only implementation critique and returns actionable findings for the
+parent agent; `test-scout` is for read-only test coverage mapping,
+missing-scenario triage, and change risk assessment before writing or landing
+a fix; `architecture-mapper` is for read-only structural scoping of a target
+tree (layers, public surface, import edges, cycles) before a cross-module
+refactor. Their system prompts live in
+[agent/internal/prompts/](agent/internal/prompts/); all four share the same
+read-only tool allowlist (file reads, globbing, search, diagnostics, skills).
+The preset registry is [agent/internal/loop/preset.go](agent/internal/loop/preset.go).
 
 Additional presets may be imported from `.loom/agents/*.md`. Workspace presets
 override built-ins with the same name. Imported presets trust their `tools:`
@@ -81,6 +86,22 @@ The built-in `review` prompt structures it as:
 3. **Test Gaps** - missing or weak verification that matters for the change.
 4. **Unverified** - anything it could not check, and why.
 
+The built-in `test-scout` prompt structures it as:
+
+1. **Existing Coverage** - tests already exercising the change surface, with citations.
+2. **Missing Scenarios** - concrete tests to add, ranked by risk.
+3. **Risk** - where a bug would land if the missing tests are skipped.
+4. **Unverified** - anything it could not check, and why.
+
+The built-in `architecture-mapper` prompt structures it as:
+
+1. **Target** - the folder/package/module mapped, plus file count.
+2. **Layers** - coarse groupings discovered, one line each.
+3. **Public Surface** - exported symbols per file, grouped by layer, with citations.
+4. **Dependencies** - compact edges list (`a/foo -> b/bar`) and external packages.
+5. **Cycles** - detected import cycles, or `None found`.
+6. **Unverified** - files/edges/symbols not checked, and why.
+
 The full return value to the parent is a JSON object:
 
 ```json
@@ -123,5 +144,7 @@ Sub-agents cannot spawn further sub-agents.
 
 - [agent/internal/prompts/research.md](agent/internal/prompts/research.md) - the sub-agent system prompt
 - [agent/internal/prompts/review.md](agent/internal/prompts/review.md) - the review sub-agent system prompt
+- [agent/internal/prompts/test-scout.md](agent/internal/prompts/test-scout.md) - the test-coverage scout system prompt
+- [agent/internal/prompts/architecture-mapper.md](agent/internal/prompts/architecture-mapper.md) - the architecture-mapper sub-agent system prompt
 - [agent/internal/tools/descriptions/spawn_subagent.md](agent/internal/tools/descriptions/spawn_subagent.md) - the parent-side tool description
 - [CLAUDE.md](CLAUDE.md) / [AGENTS.md](AGENTS.md) - repo-wide architecture invariants for sub-agents

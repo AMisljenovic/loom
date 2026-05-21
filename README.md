@@ -66,10 +66,15 @@ and optional embeddings add semantic search through Ollama or Voyage.
 
 **Read-only sub-agents**
 
-The built-in `research` sub-agent preset lets the main agent delegate focused
-investigations in parallel. Sub-agents use isolated conversation state and
-return structured Answer / Evidence / Unverified summaries. Workspaces can add
+The built-in `research`, `review`, `test-scout`, and `architecture-mapper`
+sub-agent presets let the main agent delegate focused investigations in
+parallel. `research` returns structured Answer / Evidence / Unverified
+summaries, `review` critiques an implementation surface, `test-scout` maps
+existing coverage plus missing scenarios before a fix lands, and
+`architecture-mapper` returns a compact map (layers, public surface, import
+edges, cycles) of a named target tree before a refactor. Workspaces can add
 custom presets under `.loom/agents/`.
+
 
 **Per-conversation scratchpad**
 

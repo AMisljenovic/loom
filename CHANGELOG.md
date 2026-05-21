@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.6.0
+
+Loom 0.6.0 adds two new built-in sub-agent presets — `test-scout` and
+`architecture-mapper` — bringing the read-only sub-agent roster to four
+(`research`, `review`, `test-scout`, `architecture-mapper`).
+
+### Added
+
+- **Built-in `test-scout` sub-agent.** Read-only test-coverage triage for a
+  change surface. Returns four sections: Existing Coverage (with file:line
+  citations), Missing Scenarios (ranked by risk), Risk (where a bug would
+  land), and Unverified. Pairs with `review` — call before writing a fix to
+  see what's already tested. System prompt at
+  [agent/internal/prompts/test-scout.md](agent/internal/prompts/test-scout.md).
+- **Built-in `architecture-mapper` sub-agent.** Read-only structural scoping
+  of a named target tree before a cross-module refactor. Returns six
+  sections: Target (path + file count), Layers, Public Surface (exported
+  symbols per file), Dependencies (compact `a/foo -> b/bar` edge list +
+  external imports), Cycles (detected import cycles), Unverified. System
+  prompt at
+  [agent/internal/prompts/architecture-mapper.md](agent/internal/prompts/architecture-mapper.md).
+- **`find_files` in the read-only sub-agent allowlist.** All four read-only
+  presets can now use the filename-glob tool, which makes locating tests,
+  package entry points, and target subtrees practical without leaning on
+  content search.
+
+### Changed
+
+- **`spawn_subagent` description and mode prompts** now brief the new
+  presets in `code.md`, `architect.md`, and `debug.md` — when each is
+  appropriate and how it composes with `research`/`review` calls in the
+  same turn.
+
 ## 0.5.82
 
 Loom 0.5.82 tightens the read/search loop and adds a built-in `review`

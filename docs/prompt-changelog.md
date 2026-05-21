@@ -2,6 +2,36 @@
 
 Reverse-chronological notes for meaningful Loom prompt-layer changes.
 
+## 2026-05-21 - Add architecture-mapper sub-agent preset
+
+- Affected files: `agent/internal/prompts/architecture-mapper.md`,
+  `agent/internal/loop/preset.go`,
+  `agent/internal/tools/descriptions/spawn_subagent.md`,
+  `agent/internal/prompts/code.md`, `agent/internal/prompts/architect.md`,
+  `agent/internal/prompts/debug.md`,
+  `SUBAGENTS.md`, `CLAUDE.md`, `AGENTS.md`,
+  `.github/copilot-instructions.md`, `README.md`.
+- Rationale: add a fourth built-in read-only sub-agent for structural
+  scoping of a target tree (layers, public surface, import edges, and
+  cycles) so the parent can plan a cross-module refactor before writing
+  any diff. Reuses the existing read-only allowlist; no new tools.
+- Eval impact: prompt snapshots change for built-in modes and sub-agent
+  presets. No provider eval was run in this environment.
+
+## 2026-05-21 - Add test-scout sub-agent preset
+
+- Affected files: `agent/internal/prompts/test-scout.md`,
+  `agent/internal/loop/preset.go`,
+  `agent/internal/tools/descriptions/spawn_subagent.md`,
+  `SUBAGENTS.md`, `CLAUDE.md`, `AGENTS.md`,
+  `.github/copilot-instructions.md`, `README.md`.
+- Rationale: add a dedicated read-only sub-agent for test coverage triage so
+  the parent can map existing coverage, missing scenarios, and change risk
+  before writing or landing a fix. The built-in read-only allowlist now also
+  includes `find_files` to make test discovery practical across presets.
+- Eval impact: prompt snapshots change for built-in modes and sub-agent
+  presets. No provider eval was run in this environment.
+
 ## 2026-05-21 - Built-in review sub-agent
 
 - Affected files: `agent/internal/prompts/review.md`,

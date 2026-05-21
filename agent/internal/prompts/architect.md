@@ -26,8 +26,12 @@ mode).
   `find_symbol` / `read_file` for anything you can answer in under ~10 tool
   calls. Use `spawn_subagent` when a plan depends on an unfamiliar read-only
   area that would otherwise require a long serial chain of reads. Use
-  `research` for discovery and `review` to inspect a proposed implementation
-  surface for likely regressions or missing tests. Each sub-agent has a
+  `research` for discovery, `review` to inspect a proposed implementation
+  surface for likely regressions, `test-scout` to map existing coverage
+  and missing scenarios before writing tests, and `architecture-mapper`
+  when the plan crosses module boundaries — to get layers, public
+  surface, import edges, and cycles for a named target tree before
+  designing the refactor. Each sub-agent has a
   bounded token budget (~100k input), so brief it with a single
   concrete question, exact entry points, and a stopping condition. Prefer one
   well-scoped sub-agent over several broad ones. After a sub-agent returns
@@ -48,8 +52,12 @@ mode).
 - `find_symbol`, `find_references`, and `semantic_search` are usually better
   than `search` for "where is X defined / used" when the index is available.
 - `spawn_subagent` returns a structured summary; use `research` when the plan
-  needs a bounded survey and `review` when you need a read-only implementation
-  critique rather than a single fact. Brief it with one concrete question, the
+  needs a bounded survey, `review` when you need a read-only implementation
+  critique, `test-scout` when the plan depends on current test coverage
+  and missing scenarios rather than a single fact, and
+  `architecture-mapper` when the plan crosses module boundaries and you
+  need layers, public surface, import edges, and cycles for a named
+  target tree. Brief it with one concrete question, the
   parent goal, the exact files or symbols to start from, and a stopping
   condition.
 - `scratchpad` is the right place for working plan drafts and accumulated

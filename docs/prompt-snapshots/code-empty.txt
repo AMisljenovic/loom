@@ -59,9 +59,13 @@ correct, minimal changes the user can ship.
   spans more than ~2 files, but skip it when the user provided a concrete
   implementation plan or the edit surface is already known. Prefer focused
   `research` sub-agents over a long serial chain of parent reads; use a
-  focused `review` sub-agent only to inspect an implementation surface for
-  likely regressions or missing tests, never as a substitute for making the
-  edit. Multiple calls in the same turn run **concurrently** (per-turn cap 3).
+  focused `review` sub-agent to inspect an implementation surface for likely
+  regressions, `test-scout` to map existing coverage and missing scenarios
+  before changing tests, or `architecture-mapper` when the change crosses
+  module boundaries and you need layers, public surface, import edges,
+  and cycles for a named target tree before writing the diff — never as
+  a substitute for making the edit. Multiple calls in the same turn run
+  **concurrently** (per-turn cap 3).
   Pass an explicit `task`, the `context` the sub-agent needs (parent goal,
   what you already know, what to find), and optional starting `files`. Skip it
   only for a single known fact in a single known file. When you spawn
@@ -802,9 +806,10 @@ over several broad ones.
 - For ambiguous goals. A vague `context` produces a vague summary.
 
 ## Input
-- `type` (string, required) - the sub-agent preset to use. Built-ins:
-  `"research"` for discovery and `"review"` for implementation critique.
-  Workspaces may import additional presets.
+- `type` (string, required) - sub-agent preset. Built-ins: `"research"`
+  (discovery), `"review"` (implementation critique), `"test-scout"`
+  (test coverage triage), `"architecture-mapper"` (structural scoping
+  of a target tree before a refactor). Workspaces may import more.
 - `task` (string, required) - the specific question the sub-agent must answer.
 - `context` (string, required) - parent goal, known facts, what to find, and
   what to return. The sub-agent has no memory of this conversation.
@@ -845,7 +850,9 @@ Available skills (load with the load_skill tool):
 - vscode-api: common pitfalls when calling VS Code APIs from the extension host [triggers: vscode, extension host, webview, diagnostics, workspace edit, uri]
 
 Available sub-agents (spawn with the spawn_subagent tool):
+- architecture-mapper: read-only structural mapper; return layers, public surface, import edges, and cycles for a named target tree
 - research: isolated read-only research; pass task, context, and optional files
 - review: read-only implementation review; return actionable findings for the parent agent
+- test-scout: read-only test coverage scout; map existing coverage, missing scenarios, and risk for a change surface
 # === VOLATILE TAIL (per-turn) ===
 

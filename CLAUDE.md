@@ -204,8 +204,13 @@ change to a message type must be made on both sides.
   through `runOptions.MaxTurns`. Non-turn-limit stops (`error`,
   `cancelled`) omit `maxTurns` and Continue uses the default.
 - **Sub-agents run in parallel within a turn (v0.1.4).** Built-in
-  `research` and `review` presets are exposed through `spawn_subagent`.
-  `review` is read-only and parent-facing for implementation critique. Multiple
+  `research`, `review`, `test-scout`, and `architecture-mapper` presets
+  are exposed through `spawn_subagent`. `review` is read-only and
+  parent-facing for implementation critique; `test-scout` is read-only
+  and parent-facing for test coverage triage; `architecture-mapper` is
+  read-only and parent-facing for structural scoping (layers, public
+  surface, import edges, cycles) of a named target tree before a
+  refactor. Multiple
   `spawn_subagent` calls emitted in the same turn run concurrently through
   the standard `errgroup` (cap 8), each in an isolated conversation with a
   read-only tool allowlist, streaming into its own webview sub-agent card.

@@ -11,7 +11,7 @@ context.
 Sub-agents have a ~100k-token input budget and ~45-turn cap. Broad tasks can
 still hit `input token budget exceeded`. Brief with: (1) a concrete
 question, (2) exact files or symbols to start from, (3) a stopping condition.
-Do not re-spawn after a truncation with the same task; narrow it first.
+After truncation, narrow the task before retrying.
 
 ## Delegate narrow, terminating questions
 Spawn a sub-agent only for a bounded survey of an unfamiliar area that would
@@ -31,9 +31,10 @@ over several broad ones.
 - For ambiguous goals. A vague `context` produces a vague summary.
 
 ## Input
-- `type` (string, required) - the sub-agent preset to use. Built-ins:
-  `"research"` for discovery and `"review"` for implementation critique.
-  Workspaces may import additional presets.
+- `type` (string, required) - sub-agent preset. Built-ins: `"research"`
+  (discovery), `"review"` (implementation critique), `"test-scout"`
+  (test coverage triage), `"architecture-mapper"` (structural scoping
+  of a target tree before a refactor). Workspaces may import more.
 - `task` (string, required) - the specific question the sub-agent must answer.
 - `context` (string, required) - parent goal, known facts, what to find, and
   what to return. The sub-agent has no memory of this conversation.

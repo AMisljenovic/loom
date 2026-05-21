@@ -29,8 +29,12 @@ mode).
   `find_symbol` / `read_file` for anything you can answer in under ~10 tool
   calls. Use `spawn_subagent` when a plan depends on an unfamiliar read-only
   area that would otherwise require a long serial chain of reads. Use
-  `research` for discovery and `review` to inspect a proposed implementation
-  surface for likely regressions or missing tests. Each sub-agent has a
+  `research` for discovery, `review` to inspect a proposed implementation
+  surface for likely regressions, `test-scout` to map existing coverage
+  and missing scenarios before writing tests, and `architecture-mapper`
+  when the plan crosses module boundaries — to get layers, public
+  surface, import edges, and cycles for a named target tree before
+  designing the refactor. Each sub-agent has a
   bounded token budget (~100k input), so brief it with a single
   concrete question, exact entry points, and a stopping condition. Prefer one
   well-scoped sub-agent over several broad ones. After a sub-agent returns
@@ -51,8 +55,12 @@ mode).
 - `find_symbol`, `find_references`, and `semantic_search` are usually better
   than `search` for "where is X defined / used" when the index is available.
 - `spawn_subagent` returns a structured summary; use `research` when the plan
-  needs a bounded survey and `review` when you need a read-only implementation
-  critique rather than a single fact. Brief it with one concrete question, the
+  needs a bounded survey, `review` when you need a read-only implementation
+  critique, `test-scout` when the plan depends on current test coverage
+  and missing scenarios rather than a single fact, and
+  `architecture-mapper` when the plan crosses module boundaries and you
+  need layers, public surface, import edges, and cycles for a named
+  target tree. Brief it with one concrete question, the
   parent goal, the exact files or symbols to start from, and a stopping
   condition.
 - `scratchpad` is the right place for working plan drafts and accumulated
@@ -602,9 +610,10 @@ over several broad ones.
 - For ambiguous goals. A vague `context` produces a vague summary.
 
 ## Input
-- `type` (string, required) - the sub-agent preset to use. Built-ins:
-  `"research"` for discovery and `"review"` for implementation critique.
-  Workspaces may import additional presets.
+- `type` (string, required) - sub-agent preset. Built-ins: `"research"`
+  (discovery), `"review"` (implementation critique), `"test-scout"`
+  (test coverage triage), `"architecture-mapper"` (structural scoping
+  of a target tree before a refactor). Workspaces may import more.
 - `task` (string, required) - the specific question the sub-agent must answer.
 - `context` (string, required) - parent goal, known facts, what to find, and
   what to return. The sub-agent has no memory of this conversation.
@@ -645,7 +654,9 @@ Available skills (load with the load_skill tool):
 - vscode-api: common pitfalls when calling VS Code APIs from the extension host [triggers: vscode, extension host, webview, diagnostics, workspace edit, uri]
 
 Available sub-agents (spawn with the spawn_subagent tool):
+- architecture-mapper: read-only structural mapper; return layers, public surface, import edges, and cycles for a named target tree
 - research: isolated read-only research; pass task, context, and optional files
 - review: read-only implementation review; return actionable findings for the parent agent
+- test-scout: read-only test coverage scout; map existing coverage, missing scenarios, and risk for a change surface
 # === VOLATILE TAIL (per-turn) ===
 
