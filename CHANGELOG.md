@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.6.2
+
+Loom 0.6.2 adds a live diff-summary card above the chat composer.
+
+### Added
+
+- **Diff-stats card.** A collapsible card now sits above the composer
+  whenever `apply_diff` runs in the current turn. Header shows
+  aggregated `+added -removed` totals and a file count; expand to see
+  per-file `+/-` deltas and click any row to open the file's unified
+  diff in a read-only editor tab. Auto-resets at the start of every new
+  user turn and on conversation switch.
+- **Keep / Undo on the diff-stats card.** Once the agent finishes the
+  turn (`!busy`), the card surfaces **Keep** (dismiss the summary;
+  changes stay on disk) and **Undo** (revert every file touched this
+  turn back to its pre-turn snapshot via one `WorkspaceEdit`; created
+  files are deleted). Undo prompts for confirmation and lists every
+  file that will be reverted.
+
+### Changed
+
+- **`diffPreview` is now emitted for every `apply_diff`.** Previously
+  the host only computed and posted the unified diff when an
+  `apply_diff` was awaiting approval UI, which meant the diff-stats
+  pipeline went silent under write auto-approve. The host now always
+  calls `prepareApplyDiff` for `apply_diff` calls and posts the
+  `diffPreview` wire message; the VS Code side-by-side diff editor
+  still only opens when approval is required.
+
+### Internal
+
+- New `WebviewToHost` message `{ type: "undoDiffTurn" }`.
+- New `turnSnapshots` map on `ChatPanel` captures the first pre-edit
+  content per file per turn; cleared on every `runTask` start,
+  `newConversation`, `switchSession`, and the agent dispose path.
+- `webview-ui/src/util/diffStats.ts` parses unified diff into
+  added/removed counts and aggregates by path; new
+  `webview-ui/src/components/DiffStatsCard.tsx` renders the card.
+- `.panel` grid now has eight rows: `.diff-stats-card` lives at row 6;
+  `.input-area` moves to row 7 and `.toolbar-shell` to row 8.
+- `.loom/` (per-workspace local state — scratchpad, index, workspace
+  skills/agents/commands) is now in `.gitignore`.
+
 ## 0.6.1
 
 Loom 0.6.1 is a token-spend reduction release for OpenAI reasoning models.

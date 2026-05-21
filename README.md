@@ -89,6 +89,14 @@ cards in the transcript. Survives reload, capped at 64 KB.
 Workspace slash commands live in `.loom/commands/`. Type `/` in the composer to
 expand a command into the user message before it is sent to the agent.
 
+For test-driven bug fixes, add a workspace command like `.loom/commands/test-fix.md`
+and run `/test-fix <bug report or failing behavior>`. A good `test-fix` workflow
+should invoke `test-scout` first, add or update a failing regression test before
+editing code, apply the smallest fix, then run the narrowest relevant tests.
+If you later want proactive coverage work rather than bug fixing, consider a
+follow-up command such as `/test-hardening <file or symbol>`.
+
+
 **First-run setup**
 
 The first-run panel is global, not per workspace. Pick a provider once, store

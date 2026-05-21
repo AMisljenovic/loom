@@ -573,7 +573,8 @@ export type WebviewToHost =
   | { type: "packDelete"; id: string }
   | { type: "packRename"; id: string; name: string }
   | { type: "packApply"; id: string; mode?: "merge" | "replace" }
-  | { type: "openInEditor"; id: string; title: string; content: string; language?: string };
+  | { type: "openInEditor"; id: string; title: string; content: string; language?: string }
+  | { type: "undoDiffTurn" };
 
 export type HostToWebview =
   | { type: "delta"; text: string }

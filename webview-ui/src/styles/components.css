@@ -5,7 +5,7 @@
 /* ---- Panel shell ---- */
 .panel {
     display: grid;
-    grid-template-rows: auto auto auto minmax(0, 1fr) auto auto auto;
+    grid-template-rows: auto auto auto minmax(0, 1fr) auto auto auto auto;
     height: 100vh;
     overflow: hidden;
     background: var(--bg);
@@ -2061,7 +2061,7 @@
 
 /* ---- Composer / input area ---- */
 .input-area {
-    grid-row: 6;
+    grid-row: 7;
     border-top: 1px solid var(--border-faint);
     background: var(--bg);
     padding: 10px 12px 12px;
@@ -2423,9 +2423,122 @@
 }
 
 .toolbar-shell {
-    grid-row: 7;
+    grid-row: 8;
     position: relative;
     min-width: 0;
+}
+
+/* Diff-stats card — collapsible summary of apply_diff changes for the current turn. */
+.diff-stats-card {
+    grid-row: 6;
+    margin: 6px 12px 0;
+    border: 1px solid var(--border-faint);
+    border-radius: var(--r-2);
+    background: var(--bg-soft, var(--bg));
+    overflow: hidden;
+    min-width: 0;
+}
+
+.diff-stats-header {
+    display: flex;
+    align-items: stretch;
+    min-width: 0;
+}
+
+.diff-stats-summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+    padding: 6px 10px;
+    background: transparent;
+    border: 0;
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.diff-stats-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px 4px 0;
+    flex-shrink: 0;
+}
+
+.diff-stats-summary:hover {
+    background: var(--hover, rgba(127, 127, 127, 0.08));
+}
+
+.diff-stats-chevron {
+    width: 10px;
+    color: var(--text-faint);
+    flex-shrink: 0;
+}
+
+.diff-stats-label {
+    flex: 1;
+    min-width: 0;
+    color: var(--text-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.diff-stats-added {
+    color: var(--diff-added-fg, #3fb950);
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+}
+
+.diff-stats-removed {
+    color: var(--diff-removed-fg, #f85149);
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+}
+
+.diff-stats-files {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-top: 1px solid var(--border-faint);
+    max-height: 180px;
+    overflow-y: auto;
+}
+
+.diff-stats-file + .diff-stats-file {
+    border-top: 1px solid var(--border-faint);
+}
+
+.diff-stats-file-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 5px 10px 5px 24px;
+    background: transparent;
+    border: 0;
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.diff-stats-file-btn:hover {
+    background: var(--hover, rgba(127, 127, 127, 0.08));
+}
+
+.diff-stats-file-path {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
 }
 
 .toolbar-spacer {

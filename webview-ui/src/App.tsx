@@ -38,6 +38,8 @@ import { PlanHandoff } from "./components/PlanHandoff";
 import { SearchPanel } from "./components/SearchPanel";
 import { Thread } from "./components/thread/Thread";
 import { Toolbar } from "./components/toolbar/Toolbar";
+import { DiffStatsCard } from "./components/DiffStatsCard";
+import { parseDiffStats, type FileDiffStat } from "./util/diffStats";
 import { post } from "./vscode";
 
 const defaultLlmConfig: LlmConfigView = {
@@ -470,6 +472,7 @@ export function App() {
   const [approvalBatch, setApprovalBatch] = useState<{ batchId: string; items: ToolApprovalItem[] } | null>(null);
   const [pendingDiffs, setPendingDiffs] = useState<Map<string, string>>(() => new Map());
   const [pendingOutputs, setPendingOutputs] = useState<Map<string, string>>(() => new Map());
+  const [diffStats, setDiffStats] = useState<Map<string, FileDiffStat>>(() => new Map());
   const [mcpStatuses, setMcpStatuses] = useState<McpServerStatus[]>([]);
   const [indexStatus, setIndexStatus] = useState<IndexStatusNotify | null>(null);
   const [sessions, setSessions] = useState<SessionsIndex | null>(null);
@@ -585,6 +588,7 @@ export function App() {
         setLlmConfig(m.llmConfig ?? defaultLlmConfig);
         setPendingDiffs(new Map());
         setPendingOutputs(new Map());
+        setDiffStats(new Map());
         setMcpStatuses([]);
         setApprovalBatch(null);
         setProcesses([]);
@@ -620,6 +624,13 @@ export function App() {
       }
       if (m.type === "diffPreview") {
         setPendingDiffs((prev) => { const next = new Map(prev); next.set(m.callId, m.unified); return next; });
+        setDiffStats((prev) => {
+          const counts = parseDiffStats(m.unified);
+          if (counts.added === 0 && counts.removed === 0) return prev;
+          const next = new Map(prev);
+          next.set(m.callId, { path: m.relPath, unified: m.unified, ...counts });
+          return next;
+        });
         return;
       }
       if (m.type === "mcpStatus") {
@@ -653,10 +664,16 @@ export function App() {
       if (m.type === "toolResult") {
         setPendingDiffs((prev) => { if (!prev.has(m.callId)) return prev; const next = new Map(prev); next.delete(m.callId); return next; });
         setPendingOutputs((prev) => { if (!prev.has(m.callId)) return prev; const next = new Map(prev); next.delete(m.callId); return next; });
+        if (!m.ok) {
+          setDiffStats((prev) => { if (!prev.has(m.callId)) return prev; const next = new Map(prev); next.delete(m.callId); return next; });
+        }
       }
       if (m.type === "subagentToolResult") {
         setPendingDiffs((prev) => { if (!prev.has(m.callId)) return prev; const next = new Map(prev); next.delete(m.callId); return next; });
         setPendingOutputs((prev) => { if (!prev.has(m.callId)) return prev; const next = new Map(prev); next.delete(m.callId); return next; });
+        if (!m.ok) {
+          setDiffStats((prev) => { if (!prev.has(m.callId)) return prev; const next = new Map(prev); next.delete(m.callId); return next; });
+        }
       }
       if (m.type === "subagentToolProgress") {
         setPendingOutputs((po) => { const np = new Map(po); np.set(m.callId, (po.get(m.callId) ?? "") + m.chunk); return np; });
@@ -867,6 +884,7 @@ export function App() {
     setShowSessions(false);
     // Any new user turn dismisses the previous plan-handoff CTA.
     setPlanHandoffArmed(false);
+    setDiffStats(new Map());
     if (busy) {
       interruptQueuedRef.current = true;
       post({ type: "cancel" });
@@ -885,6 +903,7 @@ export function App() {
     post({ type: "setMode", modeId: "code" });
     setMessages((m) => [...m, { role: "user", text: prompt }]);
     setShowSessions(false);
+    setDiffStats(new Map());
     post({
       type: "submit",
       prompt,
@@ -900,6 +919,7 @@ export function App() {
     setMessages((m) => [...m, { role: "user", text: nextPrompt }]);
     setShowSessions(false);
     setPlanHandoffArmed(false);
+    setDiffStats(new Map());
     post({
       type: "submit",
       prompt: nextPrompt,
@@ -1063,6 +1083,15 @@ export function App() {
           onDismiss={() => setPlanHandoffArmed(false)}
         />
       )}
+      <DiffStatsCard
+        stats={diffStats}
+        busy={busy}
+        onKeep={() => setDiffStats(new Map())}
+        onUndo={() => {
+          post({ type: "undoDiffTurn" });
+          setDiffStats(new Map());
+        }}
+      />
       <InputArea
         busy={busy}
         input={input}

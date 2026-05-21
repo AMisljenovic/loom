@@ -8,11 +8,13 @@ describe("scanCommands", () => {
   it("reads commands from .loom/commands", () => {
     const root = tempRoot();
     writeCommand(root, ".loom/commands/review.md", "review", "Review changes");
+    writeCommand(root, ".loom/commands/test-fix.md", "test-fix", "Regression-first bug fix workflow", "bug report, failing behavior, file, or symbol");
 
     const commands = scanCommands(root);
-    expect(commands.map((c) => c.name)).toEqual(["review"]);
-    expect(commands[0].source).toBe(".loom/commands/review.md");
-    expect(commands[0].description).toBe("Review changes");
+    expect(commands.map((c) => c.name)).toEqual(["review", "test-fix"]);
+    expect(commands[1].source).toBe(".loom/commands/test-fix.md");
+    expect(commands[1].description).toBe("Regression-first bug fix workflow");
+    expect(commands[1].argumentHint).toBe("bug report, failing behavior, file, or symbol");
   });
 
   it("ignores foreign-format command folders", () => {
@@ -35,8 +37,8 @@ function tempRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "loom-commands-"));
 }
 
-function writeCommand(root: string, rel: string, name: string, description: string): void {
+function writeCommand(root: string, rel: string, name: string, description: string, argumentHint = "target"): void {
   const full = path.join(root, rel);
   fs.mkdirSync(path.dirname(full), { recursive: true });
-  fs.writeFileSync(full, `---\nname: ${name}\ndescription: ${description}\nargument-hint: target\n---\nRun $ARGUMENTS`, "utf8");
+  fs.writeFileSync(full, `---\nname: ${name}\ndescription: ${description}\nargument-hint: ${argumentHint}\n---\nRun $ARGUMENTS`, "utf8");
 }

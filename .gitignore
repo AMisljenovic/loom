@@ -9,3 +9,6 @@ out/
 .vscode/*.log
 
 .env
+
+# Loom per-workspace local state (scratchpad, index, workspace skills/agents/commands)
+.loom/

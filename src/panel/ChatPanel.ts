@@ -122,6 +122,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
   private pendingApprovals = new Map<string, (ok: boolean) => void>();
   private pendingApprovalCalls = new Map<string, ToolCall>();
   private toolStartTimes = new Map<string, number>();
+  private turnSnapshots = new Map<string, { uri: vscode.Uri; before: string; existed: boolean; relPath: string }>();
   private state: ConversationState;
   private sessions: SessionsIndex;
   private autoApprove: AutoApproveConfig = { ...DEFAULT_AUTO_APPROVE_CONFIG, categories: { ...DEFAULT_AUTO_APPROVE_CONFIG.categories } };
@@ -463,6 +464,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       } catch (e: unknown) {
         this.post({ type: "error", error: e instanceof Error ? e.message : String(e) });
       }
+    } else if (m.type === "undoDiffTurn") {
+      await this.undoTurnDiffs();
     } else if (m.type === "approve") {
       const call = this.pendingApprovalCalls.get(m.callId);
       if (m.approved) {
@@ -591,6 +594,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.activeTaskStartedAt = Date.now();
     this.activeProgressKeys.clear();
     this.activeTaskSawDelta = false;
+    this.turnSnapshots.clear();
     this.busy = true;
     this.state.messages.push({ role: "user", text: preparedPrompt, references: taskReferences, command });
     this.assistantIndex = null;
@@ -727,28 +731,40 @@ export class ChatPanel implements vscode.WebviewViewProvider {
           return this.handleAskQuestions(call);
         }
         this.toolStartTimes.set(call.callId, Date.now());
+        let applyDiffPlan: Awaited<ReturnType<typeof prepareApplyDiff>> | undefined;
+        if (call.name === "apply_diff") {
+          try {
+            applyDiffPlan = await prepareApplyDiff(call, { workspaceRoot });
+            cachePreparedApplyDiff(applyDiffPlan);
+            const snapshotKey = applyDiffPlan.uri.toString();
+            if (!this.turnSnapshots.has(snapshotKey)) {
+              this.turnSnapshots.set(snapshotKey, {
+                uri: applyDiffPlan.uri,
+                before: applyDiffPlan.before,
+                existed: applyDiffPlan.existed,
+                relPath: applyDiffPlan.relPath,
+              });
+            }
+            this.post({
+              type: "diffPreview",
+              callId: call.callId,
+              relPath: applyDiffPlan.relPath,
+              unified: createUnifiedDiff(applyDiffPlan.relPath, applyDiffPlan.before, applyDiffPlan.after),
+            });
+          } catch (e: unknown) {
+            const result = this.failedToolResult(call.callId, e);
+            this.routeToolCall(call);
+            this.routeToolResult(result);
+            return result;
+          }
+        }
         if (call.requiresApproval) {
           if (this.isApprovedByHostPolicy(call)) {
             this.routeToolCall({ ...call, requiresApproval: false });
           } else {
-            if (call.name === "apply_diff") {
-              try {
-                const plan = await prepareApplyDiff(call, { workspaceRoot });
-                cachePreparedApplyDiff(plan);
-                setDiffPreview(call.callId, plan.relPath, plan.before, plan.after);
-                await openDiffPreview(call.callId, plan.relPath);
-                this.post({
-                  type: "diffPreview",
-                  callId: call.callId,
-                  relPath: plan.relPath,
-                  unified: createUnifiedDiff(plan.relPath, plan.before, plan.after),
-                });
-              } catch (e: unknown) {
-                const result = this.failedToolResult(call.callId, e);
-                this.routeToolCall(call);
-                this.routeToolResult(result);
-                return result;
-              }
+            if (applyDiffPlan) {
+              setDiffPreview(call.callId, applyDiffPlan.relPath, applyDiffPlan.before, applyDiffPlan.after);
+              await openDiffPreview(call.callId, applyDiffPlan.relPath);
             }
             this.routeToolCall(call);
             const approved = await new Promise<boolean>((resolve) => {
@@ -1181,6 +1197,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.activeSubAgents.clear();
     this.seededTodosByTask.clear();
     this.activeProgressKeys.clear();
+    this.turnSnapshots.clear();
     this.queuedReferences = undefined;
     this.queuedCommand = undefined;
     this.persistNow();
@@ -1216,6 +1233,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.activeToolCalls.clear();
     this.activeSubAgents.clear();
     this.activeProgressKeys.clear();
+    this.turnSnapshots.clear();
     this.queuedReferences = undefined;
     this.queuedCommand = undefined;
     this.persistNow();
@@ -2204,6 +2222,43 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     await closeDiffPreview(callId);
   }
 
+  private async undoTurnDiffs() {
+    if (this.turnSnapshots.size === 0) return;
+    const snapshots = Array.from(this.turnSnapshots.values());
+    this.turnSnapshots.clear();
+    const edit = new vscode.WorkspaceEdit();
+    const filesToDelete: vscode.Uri[] = [];
+    const docsToSave: vscode.Uri[] = [];
+    for (const snap of snapshots) {
+      if (!snap.existed) {
+        filesToDelete.push(snap.uri);
+        continue;
+      }
+      try {
+        const doc = await vscode.workspace.openTextDocument(snap.uri);
+        const fullRange = new vscode.Range(doc.positionAt(0), doc.positionAt(doc.getText().length));
+        edit.replace(snap.uri, fullRange, snap.before);
+        docsToSave.push(snap.uri);
+      } catch (e: unknown) {
+        this.output.appendLine(`undoDiffTurn: skipped ${snap.relPath}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    for (const uri of filesToDelete) {
+      edit.deleteFile(uri, { ignoreIfNotExists: true });
+    }
+    try {
+      await vscode.workspace.applyEdit(edit);
+      for (const uri of docsToSave) {
+        try {
+          const doc = await vscode.workspace.openTextDocument(uri);
+          await doc.save();
+        } catch { /* document may have been closed; ignore */ }
+      }
+    } catch (e: unknown) {
+      this.post({ type: "error", error: `Undo failed: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  }
+
   private async openPlanPreview(markdown: string) {
     try {
       const doc = await vscode.workspace.openTextDocument({
@@ -2351,6 +2406,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     this.activeToolCalls.clear();
     this.activeSubAgents.clear();
     this.activeProgressKeys.clear();
+    this.turnSnapshots.clear();
     this.queuedReferences = undefined;
     this.queuedCommand = undefined;
     this.persistNow();
