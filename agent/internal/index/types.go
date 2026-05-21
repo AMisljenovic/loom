@@ -43,4 +43,5 @@ type Status struct {
 	FilesScanned  int    `json:"filesScanned"`
 	SymbolsCount  int    `json:"symbolsCount"`
 	WorkspaceRoot string `json:"workspaceRoot,omitempty"`
+	Engine        string `json:"engine,omitempty"` // "tree-sitter" | "fallback"
 }

@@ -273,6 +273,7 @@ export interface IndexStatusNotify {
   filesScanned: number;
   symbolsCount: number;
   workspaceRoot?: string;
+  engine?: "tree-sitter" | "fallback";
 }
 
 export interface ProcessSnapshot {
@@ -298,6 +299,8 @@ export interface TaskDone {
   reason: "completed" | "cancelled" | "error" | "turn_limit";
   error?: string;
   maxTurns?: number;
+  toolCounts?: Record<string, number>;
+  duplicateToolCalls?: number;
 }
 
 export interface TokenUsage {
@@ -318,6 +321,8 @@ export interface TaskUsage extends TokenUsage {
   subAgentCount?: number;
   model: string;
   promptVersion?: string;
+  toolCounts?: Record<string, number>;
+  duplicateToolCalls?: number;
 }
 
 export interface SubAgentSpawn {
@@ -362,6 +367,8 @@ export interface ConversationUsage {
   subAgentCount?: number;
   model?: string;
   promptVersion?: string;
+  toolCounts?: Record<string, number>;
+  duplicateToolCalls?: number;
 }
 
 export interface ConversationState {
@@ -426,6 +433,8 @@ export type Msg =
     // For turn_limit stops, the cap the task hit. Continue uses this to
     // request twice the budget on resume; absent on other stop reasons.
     maxTurns?: number;
+    toolCounts?: Record<string, number>;
+    duplicateToolCalls?: number;
   }
   | {
     role: "tool";
@@ -579,7 +588,7 @@ export type HostToWebview =
     outputTokens: number;
     truncated?: boolean;
   }
-  | { type: "done"; taskId?: string; reason: TaskDone["reason"]; error?: string; durationMs?: number; maxTurns?: number }
+  | { type: "done"; taskId?: string; reason: TaskDone["reason"]; error?: string; durationMs?: number; maxTurns?: number; toolCounts?: Record<string, number>; duplicateToolCalls?: number }
   | { type: "restore"; messages: Msg[]; conversationId: string; usage: ConversationUsage; llmConfig: LlmConfigView }
   | { type: "llmConfig"; llmConfig: LlmConfigView }
   | { type: "firstRunState"; state: FirstRunState }

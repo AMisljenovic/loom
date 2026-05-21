@@ -119,9 +119,11 @@ newline-delimited JSON-RPC over stdio.
     `agent/internal/scratchpad/`. Distinct from `update_todos`
     (user-facing progress) and skills (curated static knowledge).
 
-16. v0.1.4 sub-agents run in parallel within a turn. The built-in
-    `research` preset is always available, exposed through `spawn_subagent`;
-    additional presets may be added under `.loom/agents/`. Multiple
+16. v0.1.4 sub-agents run in parallel within a turn. Built-in
+    `research` and `review` presets are always available through
+    `spawn_subagent`; `review` is read-only and parent-facing for
+    implementation critique. Additional presets may be added under
+    `.loom/agents/`. Multiple
     spawns emitted in one turn run concurrently through the same errgroup
     as other tools; each sub-agent is read-only, has isolated conversation
     state, and streams into its own webview sub-agent card. Depth, per-tree
@@ -146,7 +148,7 @@ newline-delimited JSON-RPC over stdio.
     `.github/instructions/`) are not loaded.
 20. Skills, sub-agent presets, and slash commands are Loom-only. Skills:
     builtins in `agent/internal/skills/builtin/*.md` plus
-    `.loom/skills/<id>/SKILL.md`. Presets: builtin `research` plus
+    `.loom/skills/<id>/SKILL.md`. Presets: builtins `research` and `review` plus
     `.loom/agents/*.md`. Commands: `.loom/commands/*.md`.
 21. `agent/internal/loop/maybeSummarize` never cuts mid-tool-batch.
     `safeCutBoundary` walks the proposed cut back so the kept tail never
@@ -157,6 +159,11 @@ newline-delimited JSON-RPC over stdio.
     repairs any in-memory assistant `tool_calls` left without matching
     `RoleTool` messages by cancellation, reload, or interruption. Keep it
     aligned with the persisted hydrate repair in `agent/internal/conversation/`.
+21c. `wireMessages` keeps unique read/navigation results and all write/state
+    results full; only older duplicate read/navigation results may be elided.
+    The per-task tool state caches exact duplicate read/navigation calls,
+    reports tool counts/duplicates, and stops Code/Debug read loops that make
+    no `apply_diff` progress.
 22. Default turn cap is 32. Continue on a `turn_limit` stop doubles it
     (32 → 64 → 128 → …) via `Msg.maxTurns` on the stop card →
     `submit.maxTurns` → `TaskStartParams.maxTurns` → `StartParams.MaxTurns`

@@ -2,6 +2,38 @@
 
 Reverse-chronological notes for meaningful Loom prompt-layer changes.
 
+## 2026-05-21 - Built-in review sub-agent
+
+- Affected files: `agent/internal/prompts/review.md`,
+  `agent/internal/prompts/code.md`,
+  `agent/internal/prompts/debug.md`,
+  `agent/internal/prompts/architect.md`,
+  `agent/internal/tools/descriptions/spawn_subagent.md`,
+  `agent/internal/loop/preset.go`.
+- Rationale: Loom now has a parent-facing read-only review preset for
+  implementation critique after the read/search loop regression was fixed.
+  The parent prompts distinguish `research` for discovery from `review` for
+  finding likely regressions, missing tests, compatibility issues, and
+  unverified assumptions.
+- Eval impact: prompt snapshots change for built-in modes and sub-agent
+  presets. No provider eval was run in this environment.
+
+## 2026-05-21 - Read-loop guardrails and Loom-only safety text
+
+- Affected files: `agent/internal/prompts/code.md`,
+  `agent/internal/prompts/debug.md`, `agent/internal/prompts/ask.md`,
+  `agent/internal/prompts/architect.md`,
+  `agent/internal/prompts/research.md`,
+  `agent/internal/prompts/_template.md`.
+- Rationale: repeated read/search loops were amplified by stale guidance that
+  strongly preferred sub-agent/read surveys even when a concrete plan or edit
+  surface was already known. Code/Debug now explicitly tell the model to stop
+  rereading duplicate slices and edit once it has enough context; sub-agents
+  are framed as optional for unfamiliar areas. The shared safety block now
+  matches Loom's current `.loomrules`-only loading behavior.
+- Eval impact: prompt snapshots change for built-in modes and research. No
+  provider eval was run in this environment.
+
 ## 2026-05-20 - Larger sub-agent research budget and batch-overlap guidance
 
 - Affected files: `agent/internal/loop/preset.go`,

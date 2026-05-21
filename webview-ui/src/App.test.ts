@@ -191,6 +191,19 @@ describe("stop messages", () => {
     expect(errored.maxTurns).toBeUndefined();
   });
 
+  it("preserves tool count metadata on stop messages", () => {
+    const errored = taskStopMessage({
+      taskId: "task-1",
+      reason: "error",
+      error: "loop",
+      toolCounts: { read_file: 120 },
+      duplicateToolCalls: 12,
+    });
+
+    expect(errored.toolCounts).toEqual({ read_file: 120 });
+    expect(errored.duplicateToolCalls).toBe(12);
+  });
+
   it("updates an existing stop card in place by task id", () => {
     const first = taskStopMessage({ taskId: "task-1", reason: "error", error: "old" });
     const second = taskStopMessage({ taskId: "task-1", reason: "error", error: "new" });

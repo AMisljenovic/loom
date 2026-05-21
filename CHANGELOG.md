@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.82
+
+Loom 0.5.82 tightens the read/search loop and adds a built-in `review`
+sub-agent preset alongside `research`.
+
+### Fixed
+
+- **Read/search loop regression.** Loom now keeps unique read/navigation tool
+  results visible to the model, elides only older duplicate read/navigation
+  outputs, caches exact duplicate read/search calls per task, and stops
+  Code/Debug read loops that make no edit progress before they can burn
+  hundreds of tool calls.
+
+### Added
+
+- **Built-in review sub-agent.** `spawn_subagent` now exposes a built-in
+  `review` preset alongside `research` for read-only implementation critique,
+  focused on regressions, missing tests, compatibility risks, and unverified
+  assumptions.
+
 ## 0.5.81
 
 Loom 0.5.81 fixes OpenAI/Azure task continuation after an interrupted tool

@@ -3849,6 +3849,14 @@ button.mcp-status:hover {
     overflow-wrap: anywhere;
 }
 
+.stop-meta {
+    margin-top: 6px;
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+}
+
 .stop-actions {
     display: flex;
     align-items: center;

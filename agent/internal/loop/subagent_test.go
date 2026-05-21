@@ -4,18 +4,34 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/your-org/loom/internal/skills"
+	"github.com/your-org/loom/internal/tools"
 )
 
 func TestResearchPresetAllowedTools(t *testing.T) {
-	preset, err := LoadPresets("").For("research")
+	assertReadOnlyBuiltinPreset(t, "research")
+}
+
+func TestReviewPresetAllowedTools(t *testing.T) {
+	assertReadOnlyBuiltinPreset(t, "review")
+}
+
+func assertReadOnlyBuiltinPreset(t *testing.T, name string) {
+	t.Helper()
+	preset, err := LoadPresets("").For(name)
 	if err != nil {
-		t.Fatalf("For(research): %v", err)
+		t.Fatalf("For(%s): %v", name, err)
 	}
 	allowed := map[string]bool{}
 	for _, name := range preset.AllowedTools {
 		allowed[name] = true
+	}
+	if !reflect.DeepEqual(preset.AutoApprove, preset.AllowedTools) {
+		t.Fatalf("%s AutoApprove = %#v, want AllowedTools %#v", name, preset.AutoApprove, preset.AllowedTools)
 	}
 	for _, disallowed := range []string{"apply_diff", "run_command", "run_command_background", "kill_process", "spawn_subagent"} {
 		if allowed[disallowed] {
@@ -29,16 +45,51 @@ func TestResearchPresetAllowedTools(t *testing.T) {
 	}
 }
 
-func TestResearchPresetBudgets(t *testing.T) {
-	preset, err := LoadPresets("").For("research")
-	if err != nil {
-		t.Fatalf("For(research): %v", err)
+func TestBuiltInPresetBudgets(t *testing.T) {
+	for _, name := range []string{"research", "review"} {
+		preset, err := LoadPresets("").For(name)
+		if err != nil {
+			t.Fatalf("For(%s): %v", name, err)
+		}
+		if preset.MaxTurns != 45 {
+			t.Fatalf("%s MaxTurns = %d, want 45", name, preset.MaxTurns)
+		}
+		if preset.MaxInputTokens != 100000 {
+			t.Fatalf("%s MaxInputTokens = %d, want 100000", name, preset.MaxInputTokens)
+		}
 	}
-	if preset.MaxTurns != 45 {
-		t.Fatalf("MaxTurns = %d, want 45", preset.MaxTurns)
+}
+
+func TestSpawnSubAgentSchemaIncludesBuiltInPresets(t *testing.T) {
+	schema := spawnSubAgentInputSchema(LoadPresets("").All())
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("properties missing: %#v", schema["properties"])
 	}
-	if preset.MaxInputTokens != 100000 {
-		t.Fatalf("MaxInputTokens = %d, want 100000", preset.MaxInputTokens)
+	typeSchema, ok := properties["type"].(map[string]any)
+	if !ok {
+		t.Fatalf("type schema missing: %#v", properties["type"])
+	}
+	enum, ok := typeSchema["enum"].([]string)
+	if !ok {
+		t.Fatalf("enum missing: %#v", typeSchema["enum"])
+	}
+	if want := []string{"research", "review"}; !reflect.DeepEqual(enum, want) {
+		t.Fatalf("enum = %#v, want %#v", enum, want)
+	}
+}
+
+func TestStableSystemListsBuiltInPresets(t *testing.T) {
+	presets := LoadPresets("")
+	registry := withSubAgentPresetSchema(tools.Registry(), presets.All())
+	stable := BuildStableSystem(&ModeDefinition{ID: "code", Label: "Code"}, registry, skills.Catalogue{}, presets.All())
+	for _, want := range []string{
+		"- research: isolated read-only research; pass task, context, and optional files",
+		"- review: read-only implementation review; return actionable findings for the parent agent",
+	} {
+		if !strings.Contains(stable, want) {
+			t.Fatalf("stable prompt missing %q", want)
+		}
 	}
 }
 

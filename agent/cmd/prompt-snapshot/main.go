@@ -1,5 +1,5 @@
 // Command prompt-snapshot prints the stable+volatile system prompt for each
-// built-in mode, plus the research sub-agent preset. Output is written under
+// built-in mode, plus built-in sub-agent presets. Output is written under
 // docs/prompt-snapshots/<id>-empty.txt and is meant as a regression baseline
 // when changing prompt-layer code.
 //
@@ -70,31 +70,32 @@ func main() {
 		mode := m
 		registry := loop.ApplyMode(tools.Registry(), &mode)
 		stable := loop.BuildStableSystem(&mode, registry, cat, presets.All())
-		volatile := loop.BuildVolatileSystem("", cat, nil, bundle)
+		volatile := loop.BuildVolatileSystem("", cat, nil, bundle, nil)
 
 		path := filepath.Join(*outDir, m.ID+"-empty.txt")
 		writeOrCheck(path, render(m.ID, stable, volatile), *check)
 	}
 
-	// Research sub-agent preset.
-	preset, err := presets.For("research")
-	if err != nil {
-		fail("research preset: %v", err)
+	// Built-in sub-agent presets.
+	for _, preset := range presets.All() {
+		if preset.Source != "builtin" {
+			continue
+		}
+		subMode := loop.ModeDefinition{
+			ID:            preset.Name,
+			Label:         preset.Name,
+			SystemPrompt:  preset.SystemPrompt,
+			ToolAllowlist: preset.AllowedTools,
+		}
+		subRegistry := loop.ApplyMode(tools.Registry(), &subMode)
+		subStable := loop.BuildStableSystem(&subMode, subRegistry, cat, nil)
+		subVolatile := loop.BuildVolatileSystem("", cat, nil, bundle, nil)
+		writeOrCheck(
+			filepath.Join(*outDir, preset.Name+"-empty.txt"),
+			render(preset.Name+" (sub-agent)", subStable, subVolatile),
+			*check,
+		)
 	}
-	subMode := loop.ModeDefinition{
-		ID:            preset.Name,
-		Label:         preset.Name,
-		SystemPrompt:  preset.SystemPrompt,
-		ToolAllowlist: preset.AllowedTools,
-	}
-	subRegistry := loop.ApplyMode(tools.Registry(), &subMode)
-	subStable := loop.BuildStableSystem(&subMode, subRegistry, cat, nil)
-	subVolatile := loop.BuildVolatileSystem("", cat, nil, bundle)
-	writeOrCheck(
-		filepath.Join(*outDir, "research-empty.txt"),
-		render("research (sub-agent)", subStable, subVolatile),
-		*check,
-	)
 
 	if *check {
 		fmt.Fprintln(os.Stderr, "prompt-snapshot: all snapshots match")

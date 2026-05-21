@@ -155,6 +155,8 @@ export function taskStopMessage(input: {
   error?: string;
   durationMs?: number;
   maxTurns?: number;
+  toolCounts?: Record<string, number>;
+  duplicateToolCalls?: number;
 }): Extract<Msg, { role: "stop" }> {
   const elapsed = formatDuration(input.durationMs);
   const suffix = elapsed ? ` after ${elapsed}` : "";
@@ -171,6 +173,8 @@ export function taskStopMessage(input: {
       canContinue: true,
       continuePrompt: baseContinue,
       maxTurns: input.maxTurns,
+      toolCounts: input.toolCounts,
+      duplicateToolCalls: input.duplicateToolCalls,
     };
   }
   if (input.reason === "cancelled") {
@@ -183,6 +187,8 @@ export function taskStopMessage(input: {
       durationMs: input.durationMs,
       canContinue: true,
       continuePrompt: baseContinue,
+      toolCounts: input.toolCounts,
+      duplicateToolCalls: input.duplicateToolCalls,
     };
   }
   return {
@@ -194,6 +200,8 @@ export function taskStopMessage(input: {
     durationMs: input.durationMs,
     canContinue: true,
     continuePrompt: baseContinue,
+    toolCounts: input.toolCounts,
+    duplicateToolCalls: input.duplicateToolCalls,
   };
 }
 
@@ -784,6 +792,8 @@ export function App() {
               error: typeof m.error === "string" ? m.error : undefined,
               durationMs: typeof m.durationMs === "number" ? m.durationMs : undefined,
               maxTurns: typeof m.maxTurns === "number" ? m.maxTurns : undefined,
+              toolCounts: m.toolCounts,
+              duplicateToolCalls: typeof m.duplicateToolCalls === "number" ? m.duplicateToolCalls : undefined,
             }));
           }
           const keepBusy = m.reason === "cancelled" && interruptQueuedRef.current;

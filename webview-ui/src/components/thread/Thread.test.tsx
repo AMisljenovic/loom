@@ -62,6 +62,25 @@ describe("StopCard", () => {
         expect(html).toContain("cap 64");
     });
 
+    it("renders tool counts when a task stops", () => {
+        const msg: Extract<Msg, { role: "stop" }> = {
+            role: "stop",
+            title: "Task stopped",
+            text: "Read loop guard tripped.",
+            reason: "error",
+            canContinue: true,
+            toolCounts: { read_file: 121, search: 4 },
+            duplicateToolCalls: 7,
+        };
+
+        const html = renderToStaticMarkup(<StopCard msg={msg} busy={false} onContinue={() => { }} />);
+
+        expect(html).toContain("Tool calls:");
+        expect(html).toContain("read_file 121");
+        expect(html).toContain("search 4");
+        expect(html).toContain("duplicates 7");
+    });
+
 });
 
 describe("Thread auto-follow helpers", () => {

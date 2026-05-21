@@ -31,8 +31,9 @@ over several broad ones.
 - For ambiguous goals. A vague `context` produces a vague summary.
 
 ## Input
-- `type` (string, required) - the sub-agent preset to use. `"research"` is
-  always available; workspaces may import additional presets.
+- `type` (string, required) - the sub-agent preset to use. Built-ins:
+  `"research"` for discovery and `"review"` for implementation critique.
+  Workspaces may import additional presets.
 - `task` (string, required) - the specific question the sub-agent must answer.
 - `context` (string, required) - parent goal, known facts, what to find, and
   what to return. The sub-agent has no memory of this conversation.

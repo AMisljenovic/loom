@@ -35,12 +35,15 @@ type Registry struct {
 	order  []string
 }
 
-// LoadPresets builds the sub-agent preset registry: builtin "research" plus
-// any user-authored presets in <workspace>/.loom/agents/*.md. Foreign-format
+// LoadPresets builds the sub-agent preset registry: builtins plus any
+// user-authored presets in <workspace>/.loom/agents/*.md. Foreign-format
 // folders (.claude/agents, .codex/agents, .gemini/agents) are not read.
 func LoadPresets(workspaceRoot string) Registry {
 	reg := Registry{byName: map[string]Preset{}}
 	if p, err := researchPreset(); err == nil {
+		reg.add(p)
+	}
+	if p, err := reviewPreset(); err == nil {
 		reg.add(p)
 	}
 	if workspaceRoot != "" {
@@ -178,23 +181,36 @@ func researchPreset() (Preset, error) {
 	if err != nil {
 		return Preset{}, err
 	}
+	return readOnlyBuiltinPreset("research", "isolated read-only research; pass task, context, and optional files", prompt), nil
+}
+
+func reviewPreset() (Preset, error) {
+	prompt, err := agentprompts.Load("review")
+	if err != nil {
+		return Preset{}, err
+	}
+	return readOnlyBuiltinPreset("review", "read-only implementation review; return actionable findings for the parent agent", prompt), nil
+}
+
+func readOnlyBuiltinPreset(name, description, prompt string) Preset {
+	allowed := []string{
+		"read_file",
+		"list_dir",
+		"search",
+		"find_symbol",
+		"find_references",
+		"semantic_search",
+		"get_diagnostics",
+		"load_skill",
+	}
 	return Preset{
-		Name:         "research",
-		Description:  "isolated read-only research; pass task, context, and optional files",
-		SystemPrompt: prompt,
-		AllowedTools: []string{
-			"read_file",
-			"list_dir",
-			"search",
-			"find_symbol",
-			"find_references",
-			"semantic_search",
-			"get_diagnostics",
-			"load_skill",
-		},
-		AutoApprove:    []string{"read_file", "list_dir", "search", "find_symbol", "find_references", "semantic_search", "get_diagnostics", "load_skill"},
+		Name:           name,
+		Description:    description,
+		SystemPrompt:   prompt,
+		AllowedTools:   append([]string(nil), allowed...),
+		AutoApprove:    append([]string(nil), allowed...),
 		MaxTurns:       subAgentMaxTurns,
 		MaxInputTokens: subAgentMaxInputTokens,
 		Source:         "builtin",
-	}, nil
+	}
 }

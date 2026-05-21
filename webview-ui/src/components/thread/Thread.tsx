@@ -244,6 +244,7 @@ export function StopCard({
                 <span>{msg.title}</span>
             </div>
             <div className="stop-body">{msg.text}</div>
+            {formatStopToolMeta(msg) && <div className="stop-meta">{formatStopToolMeta(msg)}</div>}
             <div className="stop-actions">
                 {msg.canContinue && (
                     <button
@@ -269,6 +270,16 @@ export function StopCard({
             </div>
         </div>
     );
+}
+
+function formatStopToolMeta(msg: Extract<Msg, { role: "stop" }>): string {
+    const counts = msg.toolCounts ?? {};
+    const names = Object.keys(counts).filter((name) => counts[name] > 0).sort();
+    const parts = names.map((name) => `${name} ${counts[name]}`);
+    if (typeof msg.duplicateToolCalls === "number" && msg.duplicateToolCalls > 0) {
+        parts.push(`duplicates ${msg.duplicateToolCalls}`);
+    }
+    return parts.length > 0 ? `Tool calls: ${parts.join(", ")}` : "";
 }
 
 export function TodoCard({ msg }: { msg: Extract<Msg, { role: "todo" }> }) {

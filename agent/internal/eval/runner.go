@@ -76,7 +76,7 @@ func (r Runner) Run(ctx context.Context, s Scenario) (RunResult, error) {
 	}
 
 	for turn := 0; turn < maxTurns; turn++ {
-		volatile := loop.BuildVolatileSystem(root, cat, sortedMapKeys(state.loaded), bundle)
+		volatile := loop.BuildVolatileSystem(root, cat, sortedMapKeys(state.loaded), bundle, nil)
 		h := &captureHandler{}
 		result, err := r.Provider.Stream(ctx, llm.SystemPrompt{Stable: stable, Volatile: volatile}, state.transcript, toolDefs, h)
 		assistantText, calls := h.finish()
@@ -102,7 +102,7 @@ func (r Runner) Run(ctx context.Context, s Scenario) (RunResult, error) {
 		Mode:         s.Mode,
 		StartedAt:    started,
 		SystemStable: stable,
-		SystemTail:   loop.BuildVolatileSystem(root, cat, sortedMapKeys(state.loaded), bundle),
+		SystemTail:   loop.BuildVolatileSystem(root, cat, sortedMapKeys(state.loaded), bundle, nil),
 		Messages:     state.transcript,
 		ToolCalls:    state.toolCalls,
 		Failures:     failures,

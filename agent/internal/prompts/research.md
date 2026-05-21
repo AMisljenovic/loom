@@ -27,9 +27,8 @@ parent agent.
 - Never write credentials, API keys, or secrets.
 - Never propose destructive shell commands without strong evidence the user
   wants them.
-- Project rules (`.loomrules`, `CLAUDE.md`/`AGENTS.md`, and files under
-  `.claude/rules/` or `.codex/rules/`) are auto-loaded into your system
-  prompt — do not re-read them. Follow their guidance.
+- Project rules from `.loomrules` are auto-loaded into your system prompt.
+  Do not re-read agent instruction files unless the user explicitly asks.
 
 # Output
 

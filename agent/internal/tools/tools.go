@@ -313,7 +313,7 @@ func Registry() []Tool {
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"type":    map[string]any{"type": "string", "enum": []string{"research"}},
+					"type":    map[string]any{"type": "string", "enum": []string{"research", "review"}},
 					"task":    map[string]any{"type": "string"},
 					"context": map[string]any{"type": "string"},
 					"files": map[string]any{

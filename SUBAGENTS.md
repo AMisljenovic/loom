@@ -26,18 +26,16 @@ It is not worth the overhead for:
 
 ## Presets
 
-The built-in preset is `research`. Its system prompt is
-[agent/internal/prompts/research.md](agent/internal/prompts/research.md); its
-tool allowlist is read-only (file reads, search, diagnostics, skills). The
-preset registry is [agent/internal/loop/preset.go](agent/internal/loop/preset.go).
+The built-in presets are `research` and `review`. `research` is for bounded
+discovery; `review` is for read-only implementation critique and returns
+actionable findings for the parent agent. Their system prompts live in
+[agent/internal/prompts/](agent/internal/prompts/); both use the same read-only
+tool allowlist (file reads, search, diagnostics, skills). The preset registry
+is [agent/internal/loop/preset.go](agent/internal/loop/preset.go).
 
-Additional presets may be imported from `.loom/agents/*.md`,
-`.claude/agents/*.md`, or `.codex/agents/*.md`. Anthropic uses `.claude`;
-OpenAI, OpenAI-compatible, and local providers use `.codex`; the opposite
-family is fallback-only when the native folder contributes no presets.
-Precedence is `.loom/agents` over builtins, builtins over external entries.
-Imported presets trust their `tools:` field as written, but write tools still
-go through the standard approval flow.
+Additional presets may be imported from `.loom/agents/*.md`. Workspace presets
+override built-ins with the same name. Imported presets trust their `tools:`
+field as written, but write tools still go through the standard approval flow.
 
 ## Briefing sub-agents
 
@@ -75,6 +73,13 @@ The sub-agent's summary is the main artifact the parent sees. The built-in
 1. **Answer** - the direct response in two or three sentences.
 2. **Evidence** - file paths with line numbers backing the answer.
 3. **Unverified** - anything the sub-agent could not check, and why.
+
+The built-in `review` prompt structures it as:
+
+1. **Findings** - concrete issues ordered by severity, or `No findings`.
+2. **Evidence** - file paths with line numbers backing each finding.
+3. **Test Gaps** - missing or weak verification that matters for the change.
+4. **Unverified** - anything it could not check, and why.
 
 The full return value to the parent is a JSON object:
 
@@ -117,5 +122,6 @@ Sub-agents cannot spawn further sub-agents.
 ## See also
 
 - [agent/internal/prompts/research.md](agent/internal/prompts/research.md) - the sub-agent system prompt
+- [agent/internal/prompts/review.md](agent/internal/prompts/review.md) - the review sub-agent system prompt
 - [agent/internal/tools/descriptions/spawn_subagent.md](agent/internal/tools/descriptions/spawn_subagent.md) - the parent-side tool description
 - [CLAUDE.md](CLAUDE.md) / [AGENTS.md](AGENTS.md) - repo-wide architecture invariants for sub-agents

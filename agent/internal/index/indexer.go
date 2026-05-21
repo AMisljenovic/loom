@@ -74,6 +74,7 @@ func (i *Indexer) Status() Status {
 		FilesScanned:  files,
 		SymbolsCount:  syms,
 		WorkspaceRoot: i.root,
+		Engine:        engineName,
 	}
 }
 

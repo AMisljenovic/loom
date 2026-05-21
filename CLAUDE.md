@@ -66,12 +66,16 @@ change to a message type must be made on both sides.
 - **Tool results are elided on the wire.** The conversation `Entry`
   retains every tool result verbatim so the webview transcript can show
   full output. Before each LLM call, `wireMessages()` in
-  [agent/internal/loop/loop.go](agent/internal/loop/loop.go) replaces the
-  content of `RoleTool` messages older than the most recent
-  `keepRecentToolResults` with a short placeholder when the original
-  exceeded `minElideToolResultBytes`. This prevents the per-turn payload
-  from growing quadratically with task length. If a tool needs its full
-  output revisited later, the model can re-run the tool.
+  [agent/internal/loop/loop.go](agent/internal/loop/loop.go) keeps the latest
+  full result for every exact read/navigation input and keeps all write/state
+  tool outputs full. It may replace only older duplicate read/navigation
+  results with a marker that points to the later retained `tool_call_id`.
+- **Read/search loops are guarded per task.** The loop keeps a per-task cache
+  for exact duplicate read/navigation calls (`read_file`, `search`,
+  `find_files`, `list_dir`, symbol/index tools, `semantic_search`) and returns
+  cached output instead of hitting disk again. Code/Debug tasks stop with an
+  error and tool-count metadata if they cross the read/search guard without
+  attempting `apply_diff`.
 - **Skills are advertised in the prefix, loaded on demand.** The catalogue
   (id + synopsis) sits in the stable prefix; bodies are injected into the
   volatile tail only after the model calls `load_skill`. Builtin skills
@@ -199,8 +203,9 @@ change to a message type must be made on both sides.
   host forwards it to `TaskStartParams.maxTurns`; the Go loop uses it
   through `runOptions.MaxTurns`. Non-turn-limit stops (`error`,
   `cancelled`) omit `maxTurns` and Continue uses the default.
-- **Sub-agents run in parallel within a turn (v0.1.4).** The only built-in
-  preset is `research`, exposed through `spawn_subagent`. Multiple
+- **Sub-agents run in parallel within a turn (v0.1.4).** Built-in
+  `research` and `review` presets are exposed through `spawn_subagent`.
+  `review` is read-only and parent-facing for implementation critique. Multiple
   `spawn_subagent` calls emitted in the same turn run concurrently through
   the standard `errgroup` (cap 8), each in an isolated conversation with a
   read-only tool allowlist, streaming into its own webview sub-agent card.

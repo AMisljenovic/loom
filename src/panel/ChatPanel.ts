@@ -1062,7 +1062,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     });
   }
 
-  private async handleDone({ taskId, reason, error, maxTurns }: TaskDone) {
+  private async handleDone({ taskId, reason, error, maxTurns, toolCounts, duplicateToolCalls }: TaskDone) {
     if (this.activeSubAgents.has(taskId)) {
       return;
     }
@@ -1087,7 +1087,7 @@ export class ChatPanel implements vscode.WebviewViewProvider {
     const durationMs = this.activeTaskId === taskId && this.activeTaskStartedAt
       ? Date.now() - this.activeTaskStartedAt
       : undefined;
-    this.post({ type: "done", taskId, reason, error, durationMs, maxTurns });
+    this.post({ type: "done", taskId, reason, error, durationMs, maxTurns, toolCounts, duplicateToolCalls });
     this.emitProgress("completed", reason === "completed" ? "Task completed." : `Task ${reason}.`);
     if (this.activeTaskId === taskId) {
       this.activeTaskId = undefined;
@@ -1118,6 +1118,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
           subAgentInputTokens: usage.subAgentInputTokens,
           subAgentOutputTokens: usage.subAgentOutputTokens,
           subAgentCount: usage.subAgentCount,
+          toolCounts: usage.toolCounts,
+          duplicateToolCalls: usage.duplicateToolCalls,
           model: usage.model,
           promptVersion: usage.promptVersion,
         },
@@ -1133,6 +1135,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         subAgentInputTokens: usage.subAgentInputTokens,
         subAgentOutputTokens: usage.subAgentOutputTokens,
         subAgentCount: usage.subAgentCount,
+        toolCounts: usage.toolCounts,
+        duplicateToolCalls: usage.duplicateToolCalls,
         model: usage.model,
         promptVersion: usage.promptVersion,
       },
@@ -2683,6 +2687,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         canContinue: true,
         continuePrompt,
         maxTurns: msg.maxTurns,
+        toolCounts: msg.toolCounts,
+        duplicateToolCalls: msg.duplicateToolCalls,
       };
     }
     if (msg.reason === "cancelled") {
@@ -2695,6 +2701,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         durationMs: msg.durationMs,
         canContinue: true,
         continuePrompt,
+        toolCounts: msg.toolCounts,
+        duplicateToolCalls: msg.duplicateToolCalls,
       };
     }
     return {
@@ -2706,6 +2714,8 @@ export class ChatPanel implements vscode.WebviewViewProvider {
       durationMs: msg.durationMs,
       canContinue: true,
       continuePrompt,
+      toolCounts: msg.toolCounts,
+      duplicateToolCalls: msg.duplicateToolCalls,
     };
   }
 
@@ -2949,7 +2959,7 @@ function normalizeTodoStatus(status: unknown): TodoItem["status"] {
 function appendSeedTodoInstruction(prompt: string, seededTodos: TodoItem[]): string {
   if (seededTodos.length === 0) return prompt;
   const items = seededTodos.map(({ id, text }) => ({ id, text }));
-  return `${prompt.trimEnd()}\n\n<implementation_todos>\nThe UI has already seeded the visible implementation checklist below. Treat this as the authoritative scope for the task. Work through every item before your final response. If the checklist spans multiple files or unfamiliar areas, spawn focused read-only sub-agent(s) before or alongside implementation research instead of doing a long serial parent-only survey. Emit sub-agent calls in the same tool-call batch as any independent parent search/read calls so the research overlaps. When you call update_todos, preserve exactly these ids and text values in this order; update only status values as work progresses. Do not finish with pending items unless a blocker makes an item impossible, and in that case mark it cancelled and explain the blocker.\n${JSON.stringify(items, null, 2)}\n</implementation_todos>`;
+  return `${prompt.trimEnd()}\n\n<implementation_todos>\nThe UI has already seeded the visible implementation checklist below. Treat this as the authoritative scope for the task. Work through every item before your final response. If the checklist spans multiple unfamiliar files, you may spawn focused read-only sub-agent(s), but skip sub-agents when the plan or edit surface is already concrete. Do not reread identical file slices or repeat the same search; use cached context and move to edits once enough context is available. When you call update_todos, preserve exactly these ids and text values in this order; update only status values as work progresses. Do not finish with pending items unless a blocker makes an item impossible, and in that case mark it cancelled and explain the blocker.\n${JSON.stringify(items, null, 2)}\n</implementation_todos>`;
 }
 
 function seededTodoMismatch(seed: TodoItem[], next: TodoItem[]): string | undefined {

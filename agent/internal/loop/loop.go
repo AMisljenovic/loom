@@ -77,6 +77,14 @@ type runOptions struct {
 	IsSubAgent     bool
 }
 
+type runtimeContext struct {
+	IndexState            string
+	IndexEngine           string
+	IndexFilesScanned     int
+	IndexSymbolsCount     int
+	SemanticSearchEnabled bool
+}
+
 func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error {
 	if d.Tasks == nil {
 		d.Tasks = NewTaskRegistry()
@@ -121,11 +129,15 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 	d.notifyConversationUpdated(p.ConversationID, entry)
 
 	stableSystem := BuildStableSystem(p.Mode, registry, skillsCatalogue, presetRegistry.All())
+	toolState := newTaskToolState()
 
 	done := func(reason string, fields ...map[string]any) {
+		toolCounts, duplicateToolCalls := toolState.Snapshot()
 		payload := map[string]any{
-			"taskId": p.TaskID,
-			"reason": reason,
+			"taskId":             p.TaskID,
+			"reason":             reason,
+			"toolCounts":         toolCounts,
+			"duplicateToolCalls": duplicateToolCalls,
 		}
 		for _, extra := range fields {
 			for k, v := range extra {
@@ -147,7 +159,7 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 		// Volatile system tail rebuilt each turn so loaded-skill bodies
 		// flow in immediately after the model calls load_skill. The cached
 		// stable prefix is unaffected.
-		volatileSystem := BuildVolatileSystem(p.WorkspaceRoot, skillsCatalogue, entry.LoadedSkillsCopy(), rulesBundle)
+		volatileSystem := BuildVolatileSystem(p.WorkspaceRoot, skillsCatalogue, entry.LoadedSkillsCopy(), rulesBundle, d.runtimeContext())
 		sysPrompt := llm.SystemPrompt{Stable: stableSystem, Volatile: volatileSystem}
 		if err := d.maybeSummarize(ctx, p.TaskID, p.ConversationID, sysPrompt.String(), entry); err != nil {
 			if ctx.Err() != nil {
@@ -181,7 +193,7 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 
 		entry.AddUsage(result.Usage)
 		d.Tasks.RecordUsage(p.TaskID, result.Usage.InputTokens, result.Usage.OutputTokens)
-		d.notifyUsage(p.TaskID, entry, result.Usage)
+		d.notifyUsage(p.TaskID, entry, result.Usage, toolState)
 		usageTotals := entry.Usage()
 		if opts.MaxInputTokens > 0 && usageTotals.CumulativeInput > opts.MaxInputTokens {
 			d.notifyConversationUpdated(p.ConversationID, entry)
@@ -208,7 +220,7 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 			return nil
 		}
 
-		toolResults, err := d.execToolsParallel(ctx, p.TaskID, p.ConversationID, toolCalls, registry, entry, skillsCatalogue, presetRegistry)
+		toolResults, err := d.execToolsParallel(ctx, p.TaskID, p.ConversationID, toolCalls, registry, entry, skillsCatalogue, presetRegistry, toolState)
 		if err != nil {
 			if ctx.Err() != nil {
 				done("cancelled")
@@ -234,6 +246,13 @@ func (d *Driver) run(ctx context.Context, p StartParams, opts runOptions) error 
 				followups = append(followups, r.followup)
 			}
 			d.notifyConversationUpdated(p.ConversationID, entry)
+		}
+		if toolState.ShouldStopReadNavigationLoop(p.Mode) {
+			toolCounts, duplicateToolCalls := toolState.Snapshot()
+			msg := fmt.Sprintf("Stopped because this task made %d read/search/navigation tool calls with no apply_diff calls. Tool counts: %s. Duplicate read/search calls: %d. Narrow the next step and edit instead of rereading the same context.", toolState.ReadNavigationCalls(), formatToolCounts(toolCounts), duplicateToolCalls)
+			d.notifyConversationUpdated(p.ConversationID, entry)
+			done("error", map[string]any{"error": msg})
+			return nil
 		}
 		// Diagnostics-feedback follow-up: if any tool reported new errors
 		// introduced by its action (currently apply_diff), surface them as a
@@ -291,7 +310,7 @@ func (d *Driver) maybeSummarize(ctx context.Context, taskID, conversationID, sys
 		return fmt.Errorf("summarize conversation: %w", err)
 	}
 	entry.AddUsage(usage)
-	d.notifyUsage(taskID, entry, usage)
+	d.notifyUsage(taskID, entry, usage, nil)
 
 	// Splice the summary in. We hold the lock for the whole replace so a
 	// concurrent Append cannot observe a half-replaced log.
@@ -312,14 +331,14 @@ func (d *Driver) maybeSummarize(ctx context.Context, taskID, conversationID, sys
 	return nil
 }
 
-func (d *Driver) notifyUsage(taskID string, entry *conversation.Entry, usage llm.TokenUsage) {
+func (d *Driver) notifyUsage(taskID string, entry *conversation.Entry, usage llm.TokenUsage, toolState *taskToolState) {
 	rootID := taskID
 	if node := d.Tasks.Node(taskID); node != nil && node.RootID != "" {
 		rootID = node.RootID
 	}
 	subInput, subOutput, subCount := d.Tasks.TreeUsage(rootID)
 	totals := entry.Usage()
-	_ = d.Conn.Notify("task.usage", map[string]any{
+	payload := map[string]any{
 		"taskId":               taskID,
 		"inputTokens":          usage.InputTokens,
 		"outputTokens":         usage.OutputTokens,
@@ -334,7 +353,13 @@ func (d *Driver) notifyUsage(taskID string, entry *conversation.Entry, usage llm
 		"subAgentCount":        subCount,
 		"model":                d.LLM.Model(),
 		"promptVersion":        agentprompts.PROMPT_VERSION,
-	})
+	}
+	if toolState != nil {
+		counts, duplicates := toolState.Snapshot()
+		payload["toolCounts"] = counts
+		payload["duplicateToolCalls"] = duplicates
+	}
+	_ = d.Conn.Notify("task.usage", payload)
 }
 
 func (d *Driver) notifyConversationUpdated(conversationID string, entry *conversation.Entry) {
@@ -392,6 +417,191 @@ type toolOutcome struct {
 	followup string // optional next-turn user message (e.g. diagnostics diff)
 }
 
+const (
+	readNavigationLoopLimit       = 120
+	readFileDistinctSlicesPerPath = 25
+)
+
+var readNavigationTools = map[string]bool{
+	"read_file":       true,
+	"list_dir":        true,
+	"search":          true,
+	"find_files":      true,
+	"find_symbol":     true,
+	"find_references": true,
+	"semantic_search": true,
+}
+
+type cachedToolResult struct {
+	content string
+	hits    int
+}
+
+type taskToolState struct {
+	mu                  sync.Mutex
+	cache               map[string]cachedToolResult
+	counts              map[string]int
+	duplicateToolCalls  int
+	readNavigationCalls int
+	applyDiffCalls      int
+	readFileSlices      map[string]map[string]bool
+}
+
+func newTaskToolState() *taskToolState {
+	return &taskToolState{
+		cache:          make(map[string]cachedToolResult),
+		counts:         make(map[string]int),
+		readFileSlices: make(map[string]map[string]bool),
+	}
+}
+
+func (s *taskToolState) Begin(tc llm.ToolCall) (content string, handled bool) {
+	if s == nil {
+		return "", false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.counts[tc.Name]++
+	if tc.Name == "apply_diff" {
+		s.applyDiffCalls++
+	}
+	if !readNavigationTools[tc.Name] {
+		return "", false
+	}
+	s.readNavigationCalls++
+	key := toolCacheKey(tc)
+	if cached, ok := s.cache[key]; ok {
+		s.duplicateToolCalls++
+		cached.hits++
+		s.cache[key] = cached
+		msg := "[cached duplicate] " + cached.content
+		if cached.hits >= 3 {
+			msg += "\n\n[cached duplicate warning] This exact read/search/navigation request has already been answered. Do not call it again unless the file or index changed; use the cached context or make an edit."
+		}
+		return msg, true
+	}
+	if tc.Name == "read_file" {
+		path, slice := readFilePathSlice(tc.Input)
+		if path != "" {
+			slices := s.readFileSlices[path]
+			if slices == nil {
+				slices = make(map[string]bool)
+				s.readFileSlices[path] = slices
+			}
+			if !slices[slice] && len(slices) >= readFileDistinctSlicesPerPath {
+				return fmt.Sprintf("[read_file budget exhausted] Already read %d distinct slices from %s in this task. Use the existing context or a narrower search instead of reading more slices from this file.", readFileDistinctSlicesPerPath, path), true
+			}
+			slices[slice] = true
+		}
+	}
+	return "", false
+}
+
+func (s *taskToolState) Finish(tc llm.ToolCall, out toolOutcome) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if tc.Name == "apply_diff" && out.err == nil {
+		s.cache = make(map[string]cachedToolResult)
+	}
+	if !readNavigationTools[tc.Name] || out.err != nil || out.content == "" {
+		return
+	}
+	s.cache[toolCacheKey(tc)] = cachedToolResult{content: out.content}
+}
+
+func (s *taskToolState) Snapshot() (map[string]int, int) {
+	if s == nil {
+		return map[string]int{}, 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	counts := make(map[string]int, len(s.counts))
+	for k, v := range s.counts {
+		counts[k] = v
+	}
+	return counts, s.duplicateToolCalls
+}
+
+func (s *taskToolState) ReadNavigationCalls() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.readNavigationCalls
+}
+
+func (s *taskToolState) ShouldStopReadNavigationLoop(mode *ModeDefinition) bool {
+	if s == nil || !isExecutionMode(mode) {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.readNavigationCalls >= readNavigationLoopLimit && s.applyDiffCalls == 0
+}
+
+func isExecutionMode(mode *ModeDefinition) bool {
+	if mode == nil || mode.ID == "" {
+		return true
+	}
+	id := strings.ToLower(mode.ID)
+	return id == "code" || id == "debug"
+}
+
+func toolCacheKey(tc llm.ToolCall) string {
+	return tc.Name + ":" + canonicalJSON(tc.Input)
+}
+
+func canonicalJSON(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return "{}"
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return string(raw)
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return string(raw)
+	}
+	return string(b)
+}
+
+func readFilePathSlice(raw json.RawMessage) (string, string) {
+	var in struct {
+		Path   string `json:"path"`
+		Offset int    `json:"offset"`
+		Limit  int    `json:"limit"`
+	}
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return "", ""
+	}
+	offset := in.Offset
+	if offset < 1 {
+		offset = 1
+	}
+	return in.Path, fmt.Sprintf("%d:%d", offset, in.Limit)
+}
+
+func formatToolCounts(counts map[string]int) string {
+	if len(counts) == 0 {
+		return "none"
+	}
+	names := make([]string, 0, len(counts))
+	for name := range counts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var parts []string
+	for _, name := range names {
+		parts = append(parts, fmt.Sprintf("%s=%d", name, counts[name]))
+	}
+	return strings.Join(parts, ", ")
+}
+
 // execToolsParallel runs a turn's tool calls concurrently. For Go-side tools
 // requiring approval, a single tool.approveBatch RPC collects decisions before
 // any execution starts. TS-side tools (no LocalExec) handle their own
@@ -405,6 +615,7 @@ func (d *Driver) execToolsParallel(
 	entry *conversation.Entry,
 	skillsCatalogue skills.Catalogue,
 	presetRegistry Registry,
+	toolState *taskToolState,
 ) (map[string]toolOutcome, error) {
 	if len(calls) == 0 {
 		return nil, nil
@@ -451,7 +662,7 @@ func (d *Driver) execToolsParallel(
 			if gctx.Err() != nil {
 				return gctx.Err()
 			}
-			out := d.execOneTool(gctx, taskID, conversationID, tc, byName, approvals, entry, interceptors)
+			out := d.execOneTool(gctx, taskID, conversationID, tc, byName, approvals, entry, interceptors, toolState)
 			mu.Lock()
 			results[tc.ID] = out
 			mu.Unlock()
@@ -476,9 +687,17 @@ func (d *Driver) execOneTool(
 	approvals map[string]bool,
 	entry *conversation.Entry,
 	interceptors map[string]localInterceptor,
+	toolState *taskToolState,
 ) toolOutcome {
+	if content, handled := toolState.Begin(tc); handled {
+		out := toolOutcome{content: content}
+		d.notifySyntheticToolResult(taskID, tc, out)
+		return out
+	}
 	if intercept, ok := interceptors[tc.Name]; ok {
-		return intercept(ctx, taskID, conversationID, entry, tc.Input)
+		out := intercept(ctx, taskID, conversationID, entry, tc.Input)
+		toolState.Finish(tc, out)
+		return out
 	}
 	t, ok := byName[tc.Name]
 	var out toolOutcome
@@ -501,7 +720,29 @@ func (d *Driver) execOneTool(
 	if out.err != nil && out.content == "" {
 		out.content = "error: " + out.err.Error()
 	}
+	toolState.Finish(tc, out)
 	return out
+}
+
+func (d *Driver) notifySyntheticToolResult(taskID string, tc llm.ToolCall, out toolOutcome) {
+	_ = d.Conn.Notify("tool.localCall", map[string]any{
+		"callId":           tc.ID,
+		"taskId":           taskID,
+		"name":             tc.Name,
+		"input":            tc.Input,
+		"requiresApproval": false,
+	})
+	payload := map[string]any{
+		"callId":     tc.ID,
+		"ok":         out.err == nil,
+		"durationMs": 0,
+	}
+	if out.err != nil {
+		payload["error"] = out.err.Error()
+	} else {
+		payload["content"] = out.content
+	}
+	_ = d.Conn.Notify("tool.localResult", payload)
 }
 
 type spawnSubAgentInput struct {
@@ -946,6 +1187,20 @@ func (d *Driver) registry() []tools.Tool {
 	return registry
 }
 
+func (d *Driver) runtimeContext() *runtimeContext {
+	if d.Index == nil {
+		return &runtimeContext{IndexState: "disabled", SemanticSearchEnabled: false}
+	}
+	status := d.Index.Status()
+	return &runtimeContext{
+		IndexState:            status.State,
+		IndexEngine:           status.Engine,
+		IndexFilesScanned:     status.FilesScanned,
+		IndexSymbolsCount:     status.SymbolsCount,
+		SemanticSearchEnabled: d.Embedder != nil && d.Index.Vectors() != nil,
+	}
+}
+
 func buildToolDefs(registry []tools.Tool) []llm.ToolDef {
 	defs := make([]llm.ToolDef, len(registry))
 	for i, t := range registry {
@@ -1038,44 +1293,50 @@ func ApplyMode(registry []tools.Tool, mode *ModeDefinition) []tools.Tool {
 	return registry
 }
 
-// keepRecentToolResults is the number of most-recent RoleTool messages whose
-// content is kept verbatim when sending the message history to the LLM. Older
-// tool results that exceed minElideToolResultBytes are replaced with a short
-// placeholder so the wire payload doesn't grow with every turn. Full content
-// is still retained in the conversation Entry so the webview transcript can
-// display it on demand.
 const (
-	keepRecentToolResults    = 6
-	minElideToolResultBytes  = 1024
-	elidedToolResultTemplate = "<tool-result elided: original was %d bytes; full content visible in transcript>"
+	elidedDuplicateToolResultTemplate = "<duplicate tool-result elided: same %s input retained later at tool_call_id %s; original was %d bytes>"
 )
 
-// wireMessages prepares the message slice for an LLM call. It elides the
-// content of older RoleTool messages so a long task's payload size stops
-// growing turn-over-turn. The original Entry is untouched — only the copy
-// passed to the provider is rewritten.
+// wireMessages prepares the message slice for an LLM call. It elides only
+// older duplicate read/navigation RoleTool messages; unique reads and all
+// write/state outputs stay full. The original Entry is untouched.
 func wireMessages(msgs []llm.Message) []llm.Message {
 	if len(msgs) == 0 {
 		return msgs
 	}
-	// Count from the tail; keep the last keepRecentToolResults RoleTool
-	// messages verbatim. Older RoleTool messages with sufficiently large
-	// content get elided.
-	kept := 0
+	callByID := toolCallsByID(msgs)
+	latestByKey := make(map[string]string)
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].Role != llm.RoleTool {
 			continue
 		}
-		kept++
-		if kept <= keepRecentToolResults {
+		tc, ok := callByID[msgs[i].ToolCallID]
+		if !ok || !readNavigationTools[tc.Name] {
 			continue
 		}
-		if len(msgs[i].Content) < minElideToolResultBytes {
+		key := toolCacheKey(tc)
+		if laterID, seen := latestByKey[key]; seen {
+			msgs[i].Content = fmt.Sprintf(elidedDuplicateToolResultTemplate, tc.Name, laterID, len(msgs[i].Content))
 			continue
 		}
-		msgs[i].Content = fmt.Sprintf(elidedToolResultTemplate, len(msgs[i].Content))
+		latestByKey[key] = msgs[i].ToolCallID
 	}
 	return msgs
+}
+
+func toolCallsByID(msgs []llm.Message) map[string]llm.ToolCall {
+	out := make(map[string]llm.ToolCall)
+	for _, msg := range msgs {
+		if msg.Role != llm.RoleAssistant {
+			continue
+		}
+		for _, tc := range msg.ToolCalls {
+			if tc.ID != "" {
+				out[tc.ID] = tc
+			}
+		}
+	}
+	return out
 }
 
 // BuildStableSystem returns the cache-friendly prefix of the system prompt:
@@ -1150,10 +1411,33 @@ func hasTool(registry []tools.Tool, name string) bool {
 //
 // Anything here sits *after* the provider's cache breakpoint, so changes do
 // not invalidate the cached prefix.
-func BuildVolatileSystem(workspaceRoot string, cat skills.Catalogue, loadedSkills []string, bundle rules.Bundle) string {
+func BuildVolatileSystem(workspaceRoot string, cat skills.Catalogue, loadedSkills []string, bundle rules.Bundle, runtime *runtimeContext) string {
 	var b strings.Builder
 	if workspaceRoot != "" {
 		fmt.Fprintf(&b, "Workspace root: %s\n", workspaceRoot)
+	}
+	if runtime != nil {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		state := runtime.IndexState
+		if state == "" {
+			state = "disabled"
+		}
+		engine := runtime.IndexEngine
+		if engine == "" {
+			engine = "unknown"
+		}
+		semantic := "disabled"
+		if runtime.SemanticSearchEnabled {
+			semantic = "enabled"
+		}
+		fmt.Fprintf(&b, "Workspace index: state=%s, engine=%s, files=%d, symbols=%d. Semantic search: %s.",
+			state, engine, runtime.IndexFilesScanned, runtime.IndexSymbolsCount, semantic)
+		if state == "ready" && runtime.IndexSymbolsCount == 0 {
+			b.WriteString(" Symbol lookups may return no matches; fall back to search/read when needed.")
+		}
+		b.WriteString("\n")
 	}
 	if loaded := cat.RenderLoaded(loadedSkills); loaded != "" {
 		if b.Len() > 0 {

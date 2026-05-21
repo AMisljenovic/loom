@@ -117,9 +117,11 @@ handoff:
     loaded from disk on first call per Entry. Keep separate from
     `update_todos` (user-visible) and skills (curated static).
 
-15. v0.1.4 sub-agents run in parallel within a turn. The built-in
-    `research` preset is always available, exposed through `spawn_subagent`.
-    Additional presets may be added under `.loom/agents/`. Multiple
+15. v0.1.4 sub-agents run in parallel within a turn. Built-in
+    `research` and `review` presets are always available through
+    `spawn_subagent`; `review` is read-only and parent-facing for
+    implementation critique. Additional presets may be added under
+    `.loom/agents/`. Multiple
     spawns emitted in one turn run concurrently through the same errgroup
     as other tools; each sub-agent is read-only, has isolated conversation
     state, and streams into its own webview sub-agent card. Depth, per-tree
@@ -186,7 +188,7 @@ handoff:
     with other tools should symlink or generate `.loomrules`.
 19. Skills, sub-agent presets, and slash commands are Loom-only. Skills:
     builtins in `agent/internal/skills/builtin/*.md` plus
-    `.loom/skills/<id>/SKILL.md`. Presets: builtin `research` plus
+    `.loom/skills/<id>/SKILL.md`. Presets: builtins `research` and `review` plus
     `.loom/agents/*.md`. Commands: `.loom/commands/*.md`. Foreign-format
     folders are not read.
 20. `agent/internal/loop/maybeSummarize` must never cut mid-tool-batch.
@@ -202,6 +204,13 @@ handoff:
     otherwise interrupted mid-tool-batch. Keep this paired with the persisted
     hydrate repair in `agent/internal/conversation/`; Continue must never send
     an assistant tool-call message without one following `RoleTool` per id.
+20c. `wireMessages` must preserve the latest full result for every exact
+    read/navigation tool input and all write/state tool results. It may elide
+    only older duplicate read/navigation results, and the marker must point to
+    the later retained `tool_call_id`. The per-task tool state also caches
+    exact duplicate read/navigation calls, emits duplicate/tool-count metadata,
+    and stops Code/Debug tasks that cross the read/search loop guard without
+    an `apply_diff`.
 21. Default per-task model/tool turn cap is 32 (`loop.go`). Continue on a
     `turn_limit` stop doubles the cap (32 → 64 → 128 → …): the stop card
     carries `maxTurns`, the Continue button posts `submit` with `maxTurns`
