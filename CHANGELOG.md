@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.3
+
+Loom 0.6.3 signs its commits.
+
+### Added
+
+- **`Co-Authored-By: Loom` trailer on git commits.** Code and Debug
+  modes now instruct the agent to append
+  `Co-Authored-By: Loom <noreply@loom.dev>` (preceded by a blank line)
+  to every commit message it constructs via `run_command` — covering
+  `-m`, heredoc, and `--amend` shapes. Existing trailers are not
+  duplicated and no extra co-authors are invented. Loom now appears
+  alongside the human author on GitHub's commit page and Contributors
+  list when it drives the commit.
+
 ## 0.6.2
 
 Loom 0.6.2 adds a live diff-summary card above the chat composer.

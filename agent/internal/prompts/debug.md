@@ -74,6 +74,18 @@ your workflow starts with reproduction, not editing.
 - Project rules from `.loomrules` are auto-loaded into your system prompt.
   Do not re-read agent instruction files unless the user explicitly asks.
 
+# Git commits
+
+- When you construct a `git commit` message (via `run_command` or any other
+  shell tool), end the message with a blank line followed by the trailer:
+  `Co-Authored-By: Loom <noreply@loom.dev>`. Applies to `-m "..."` and
+  heredoc-style messages equally, and to `git commit --amend`.
+- Do not duplicate the trailer if `Loom <noreply@loom.dev>` is already
+  present in the existing message (e.g. when amending one of Loom's own
+  commits).
+- Do not invent or add other `Co-Authored-By:` trailers unless the user
+  explicitly asks.
+
 # Output
 
 When debugging changes, verifies, or substantially investigates the codebase,

@@ -103,6 +103,14 @@ The first-run panel is global, not per workspace. Pick a provider once, store
 API keys in VS Code SecretStorage, tune model settings, and override per
 workspace only when needed.
 
+**Git co-author trailer**
+
+When Loom drives a `git commit` in Code or Debug mode, it appends a
+`Co-Authored-By: Loom <noreply@loom.dev>` trailer to the commit message so
+its contribution is visible on the commit page and Contributors list.
+Applies to `-m`, heredoc, and `--amend` shapes; existing trailers are not
+duplicated.
+
 **Doubling Continue**
 
 Long-running tasks stop after 32 model/tool turns by default. The stop card's
