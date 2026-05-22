@@ -2,6 +2,58 @@
 
 Reverse-chronological notes for meaningful Loom prompt-layer changes.
 
+## 2026-05-22 - Add `git_status` / `git_diff` tools, `scout` sub-agent, `/commit` command
+
+- Affected prompt-layer files:
+  `agent/internal/tools/descriptions/git_status.md` (new),
+  `agent/internal/tools/descriptions/git_diff.md` (new),
+  `agent/internal/tools/descriptions/spawn_subagent.md` (mentions
+  `scout`; tightened wording to stay under the 400-word body cap),
+  `agent/internal/prompts/scout.md` (new — system prompt for the
+  scout preset),
+  `agent/internal/prompts/code.md` (git-tool nudge + mention scout in
+  the sub-agent listing),
+  `agent/internal/prompts/architect.md` (mention scout in the sub-agent
+  listing and tool guidance),
+  `.loom/commands/commit.md` (new — slash-command template that runs
+  `git_status` → `git_diff` → conventional-commit drafting → commit).
+- Rationale:
+  - Drafting commit messages used to route through `run_command`, which
+    incurred an `execute`-category approval for every read-only inspection
+    and made the model parse raw porcelain output. Dedicated read-only
+    `git_status` / `git_diff` tools (no approval) plus a `/commit`
+    template remove friction and standardize the workflow.
+  - Architect/code modes needed a cheap repo-wide surveyor for
+    ambiguous scope. `architecture-mapper` is too narrow (it audits
+    layers/exports/cycles for a named target tree). The new `scout`
+    preset returns a folder map, hot files with line ranges, and
+    suggested next reads at a higher 250k-input / 150-turn budget so a
+    single scout can survey a sizeable repo without hitting the
+    sub-agent ceiling. The 500k task-tree token cap still bites.
+- Behavior changes the model can observe:
+  - Two new tools appear in the catalogue: `git_status`, `git_diff`
+    (both category `read`, no approval). Existing `run_command` git
+    flow still works for state-mutating operations.
+  - A fifth sub-agent enum value, `scout`, is dynamically added to
+    `spawn_subagent`'s schema. Code/Architect/Ask mode prompts list
+    when to pick it vs. the other presets.
+  - All read-only built-in sub-agents (`research`, `review`,
+    `test-scout`, `architecture-mapper`, `scout`) now have `git_status`
+    + `git_diff` in their tool allowlists so they can inspect recent
+    changes without bouncing back to the parent.
+  - Cache impact: one-time prefix invalidation on the first turn after
+    upgrade (new tools + new preset shift the stable prefix bytes);
+    stable thereafter.
+- Companion code changes (not prompt-layer):
+  `agent/internal/tools/git.go`,
+  `agent/internal/tools/tools.go` (registration),
+  `agent/internal/tools/git_test.go`,
+  `agent/internal/loop/preset.go`
+  (`scoutMaxTurns`/`scoutMaxInputTokens`, `scoutPreset()`,
+  `readOnlyBuiltinPresetWithBudget` factory),
+  `agent/internal/loop/subagent_test.go` (scout coverage),
+  `src/approval/categories.ts` (`git_status` + `git_diff` → `read`).
+
 ## 2026-05-22 - Project rules file renamed `.loomrules` → `LOOM.md`
 
 - Affected files: `agent/internal/prompts/code.md`,

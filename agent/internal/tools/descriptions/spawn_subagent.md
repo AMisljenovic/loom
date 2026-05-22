@@ -31,15 +31,15 @@ over several broad ones.
 - For ambiguous goals. A vague `context` produces a vague summary.
 
 ## Input
-- `type` (string, required) - sub-agent preset. Built-ins: `"research"`
-  (discovery), `"review"` (implementation critique), `"test-scout"`
-  (test coverage triage), `"architecture-mapper"` (structural scoping
-  of a target tree before a refactor). Workspaces may import more.
-- `task` (string, required) - the specific question the sub-agent must answer.
-- `context` (string, required) - parent goal, known facts, what to find, and
-  what to return. The sub-agent has no memory of this conversation.
-- `files` (array of strings, optional) - starting file paths the sub-agent
-  should read first.
+- `type` (string, required) - built-ins: `research` (discovery), `review`
+  (implementation critique), `test-scout` (coverage triage),
+  `architecture-mapper` (structural scoping of a target tree), `scout`
+  (repo-wide file/line-range surveyor, 250k/150-turn budget for ambiguous
+  scope). Workspaces may import more.
+- `task` (string, required) - the specific question to answer.
+- `context` (string, required) - parent goal, known facts, what to find and
+  return. The sub-agent has no memory of this conversation.
+- `files` (array of strings, optional) - starting paths to read first.
 
 ## Behavior
 - The sub-agent runs in an isolated conversation with the preset's tool

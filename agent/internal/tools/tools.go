@@ -128,6 +128,8 @@ func Registry() []Tool {
 				return out, nil
 			},
 		},
+		gitStatusTool(),
+		gitDiffTool(),
 		{
 			Name: "get_diagnostics",
 			InputSchema: map[string]any{

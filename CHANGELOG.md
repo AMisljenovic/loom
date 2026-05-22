@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.7.0
+
+Loom 0.7.0 makes commit drafting a first-class flow and adds a repo-wide
+"scout" sub-agent for cheap, broad exploration before the parent agent
+commits to a plan.
+
+### Added
+
+- **Read-only `git_status` and `git_diff` tools.** Both are no-approval
+  `read`-category tools that the model can call directly to inspect the
+  working tree instead of routing every check through `run_command` (which
+  costs an `execute` approval). `git_status` returns a structured summary
+  (branch, ahead/behind, staged/unstaged/untracked groups);
+  `git_diff` returns the patch (default unstaged, opt-in `staged`), with
+  optional `paths` filter and a `maxBytes` cap (default 64 KB, hard cap
+  256 KB) that truncates large diffs with a clear marker. State-mutating
+  git operations (`add`, `commit`, `push`) still go through `run_command`.
+- **`/commit` slash command.** Templates a conventional-commit workflow:
+  inspect with `git_status` → review diffs with `git_diff` → draft a
+  `type(scope): subject` message (with the standard `Co-Authored-By: Loom`
+  trailer) → propose `git add`/`git commit` for explicit approval → show
+  the resulting `git log -1 --oneline`. Optional `$ARGUMENTS` hint shapes
+  the subject line.
+- **`scout` sub-agent preset.** A read-only repo surveyor for ambiguous
+  scope: given a task, it returns a structured report with the relevant
+  folder map, "hot files" with workspace-relative `path:start-end`
+  pointers, related surface, and suggested next reads. Budgeted at **150
+  turns / 250K input tokens** (vs. 45/100K for other read-only presets)
+  so a single scout can survey a sizeable repo, while the 500K task-tree
+  ceiling still bounds total cost. Complements `architecture-mapper`
+  (which audits topology of a *named* tree) by handling the
+  "where does this work live?" question first. Architect and Code mode
+  prompts list when to pick `scout` vs. the other presets.
+- **Read-only sub-agents can now inspect git state.** `research`,
+  `review`, `test-scout`, `architecture-mapper`, and `scout` all carry
+  `git_status` + `git_diff` in their tool allowlists, so they can check
+  recent changes without bouncing back to the parent for a `run_command`.
+
+### Changed
+
+- Code mode prompt prefers `git_status`/`git_diff` over
+  `run_command git ...` for read-only inspection.
+- `spawn_subagent` description and Architect/Code mode prompts now list
+  `scout` alongside the four pre-existing presets.
+
+### Notes
+
+- Cache impact: one-time prefix invalidation on the first turn after
+  upgrade (new tools + new preset shift the stable-prefix bytes); stable
+  thereafter.
+
 ## 0.6.6
 
 ### Breaking

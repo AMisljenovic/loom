@@ -66,14 +66,17 @@ and optional embeddings add semantic search through Ollama or Voyage.
 
 **Read-only sub-agents**
 
-The built-in `research`, `review`, `test-scout`, and `architecture-mapper`
-sub-agent presets let the main agent delegate focused investigations in
+The built-in `research`, `review`, `test-scout`, `architecture-mapper`, and
+`scout` sub-agent presets let the main agent delegate focused investigations in
 parallel. `research` returns structured Answer / Evidence / Unverified
 summaries, `review` critiques an implementation surface, `test-scout` maps
-existing coverage plus missing scenarios before a fix lands, and
+existing coverage plus missing scenarios before a fix lands,
 `architecture-mapper` returns a compact map (layers, public surface, import
-edges, cycles) of a named target tree before a refactor. Workspaces can add
-custom presets under `.loom/agents/`.
+edges, cycles) of a named target tree before a refactor, and `scout` performs
+cheap repo-wide surveying first (folder map, hot files with line ranges,
+suggested next reads) when the relevant surface is still unclear. Workspaces
+can add custom presets under `.loom/agents/`.
+
 
 
 **Per-conversation scratchpad**
@@ -89,10 +92,17 @@ cards in the transcript. Survives reload, capped at 64 KB.
 Workspace slash commands live in `.loom/commands/`. Type `/` in the composer to
 expand a command into the user message before it is sent to the agent.
 
+Loom now ships a `/commit` workflow that inspects the working tree with
+read-only `git_status` / `git_diff`, drafts a conventional commit message, and
+then asks for approval before staging or committing.
+
 For test-driven bug fixes, add a workspace command like `.loom/commands/test-fix.md`
 and run `/test-fix <bug report or failing behavior>`. A good `test-fix` workflow
 should invoke `test-scout` first, add or update a failing regression test before
 editing code, apply the smallest fix, then run the narrowest relevant tests.
+If you later want proactive coverage work rather than bug fixing, consider a
+follow-up command such as `/test-hardening <file or symbol>`.
+
 If you later want proactive coverage work rather than bug fixing, consider a
 follow-up command such as `/test-hardening <file or symbol>`.
 
@@ -103,12 +113,17 @@ The first-run panel is global, not per workspace. Pick a provider once, store
 API keys in VS Code SecretStorage, tune model settings, and override per
 workspace only when needed.
 
-**Git co-author trailer**
+**Git inspection and co-author trailer**
 
-When Loom drives a `git commit` in Code or Debug mode, it appends a
-`Co-Authored-By: Loom <274610884+loom-code-ai@users.noreply.github.com>`
-trailer to the commit message so its contribution shows up with an avatar
-on the commit page and Contributors list. Applies to `-m`, heredoc, and
+Loom exposes read-only `git_status` and `git_diff` tools so the agent can
+inspect working-tree state and patches without paying an execution approval for
+every `git status` / `git diff`. When Loom drives a `git commit` in Code or
+Debug mode, it appends a `Co-Authored-By: Loom
+<274610884+loom-code-ai@users.noreply.github.com>` trailer to the commit
+message so its contribution shows up with an avatar on the commit page and
+Contributors list. Applies to `-m`, heredoc, and `--amend` shapes; existing
+trailers are not duplicated.
+
 `--amend` shapes; existing trailers are not duplicated.
 
 **Doubling Continue**
@@ -172,7 +187,8 @@ trivial turns don't burn budget on high reasoning chains:
 - **Code / Ask / Debug** → `low`
 - **Architect** → `medium`
 - Built-in read-only sub-agent presets (`research`, `review`, `test-scout`,
-  `architecture-mapper`) → `low`
+  `architecture-mapper`, `scout`) → `low`
+
 
 The mode default wins per turn. The Advanced "Reasoning effort" setting in
 Settings is the provider-wide fallback (used when a mode has no opinion).

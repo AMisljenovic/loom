@@ -11,6 +11,8 @@ const TOOL_CATEGORY: Record<string, AutoApproveCategory> = {
   find_symbol: "read",
   find_references: "read",
   semantic_search: "read",
+  git_status: "read",
+  git_diff: "read",
   get_diagnostics: "read",
   read_process_output: "read",
   load_skill: "read",

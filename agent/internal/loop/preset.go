@@ -17,6 +17,12 @@ const (
 	subAgentMaxTurns       = 45
 	subAgentMaxInputTokens = int64(100000)
 	taskTreeMaxInputTokens = int64(500000)
+	// Scout preset budgets. Generous-but-bounded so a single scout can
+	// survey a sizeable repo without burning through the per-task tree
+	// ceiling. Stays well under taskTreeMaxInputTokens so the safety guard
+	// still bites if multiple scouts run in one tree.
+	scoutMaxTurns       = 150
+	scoutMaxInputTokens = int64(250000)
 )
 
 type Preset struct {
@@ -55,6 +61,9 @@ func LoadPresets(workspaceRoot string) Registry {
 		reg.add(p)
 	}
 	if p, err := architectureMapperPreset(); err == nil {
+		reg.add(p)
+	}
+	if p, err := scoutPreset(); err == nil {
 		reg.add(p)
 	}
 	if workspaceRoot != "" {
@@ -226,7 +235,25 @@ func architectureMapperPreset() (Preset, error) {
 	return readOnlyBuiltinPreset("architecture-mapper", "read-only structural mapper; return layers, public surface, import edges, and cycles for a named target tree", prompt), nil
 }
 
+func scoutPreset() (Preset, error) {
+	prompt, err := agentprompts.Load("scout")
+	if err != nil {
+		return Preset{}, err
+	}
+	return readOnlyBuiltinPresetWithBudget(
+		"scout",
+		"read-only repo surveyor; given a task, return the relevant folder map, hot files with line ranges, and suggested next reads",
+		prompt,
+		scoutMaxTurns,
+		scoutMaxInputTokens,
+	), nil
+}
+
 func readOnlyBuiltinPreset(name, description, prompt string) Preset {
+	return readOnlyBuiltinPresetWithBudget(name, description, prompt, subAgentMaxTurns, subAgentMaxInputTokens)
+}
+
+func readOnlyBuiltinPresetWithBudget(name, description, prompt string, maxTurns int, maxInputTokens int64) Preset {
 	allowed := []string{
 		"read_file",
 		"list_dir",
@@ -235,6 +262,8 @@ func readOnlyBuiltinPreset(name, description, prompt string) Preset {
 		"find_symbol",
 		"find_references",
 		"semantic_search",
+		"git_status",
+		"git_diff",
 		"get_diagnostics",
 		"load_skill",
 	}
@@ -244,8 +273,8 @@ func readOnlyBuiltinPreset(name, description, prompt string) Preset {
 		SystemPrompt:    prompt,
 		AllowedTools:    append([]string(nil), allowed...),
 		AutoApprove:     append([]string(nil), allowed...),
-		MaxTurns:        subAgentMaxTurns,
-		MaxInputTokens:  subAgentMaxInputTokens,
+		MaxTurns:        maxTurns,
+		MaxInputTokens:  maxInputTokens,
 		Source:          "builtin",
 		ReasoningEffort: "low",
 	}

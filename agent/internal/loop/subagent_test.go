@@ -28,6 +28,10 @@ func TestArchitectureMapperPresetAllowedTools(t *testing.T) {
 	assertReadOnlyBuiltinPreset(t, "architecture-mapper")
 }
 
+func TestScoutPresetAllowedTools(t *testing.T) {
+	assertReadOnlyBuiltinPreset(t, "scout")
+}
+
 func assertReadOnlyBuiltinPreset(t *testing.T, name string) {
 	t.Helper()
 	preset, err := LoadPresets("").For(name)
@@ -71,6 +75,19 @@ func TestBuiltInPresetBudgets(t *testing.T) {
 	}
 }
 
+func TestScoutPresetBudget(t *testing.T) {
+	preset, err := LoadPresets("").For("scout")
+	if err != nil {
+		t.Fatalf("For(scout): %v", err)
+	}
+	if preset.MaxTurns != scoutMaxTurns {
+		t.Fatalf("scout MaxTurns = %d, want %d", preset.MaxTurns, scoutMaxTurns)
+	}
+	if preset.MaxInputTokens != scoutMaxInputTokens {
+		t.Fatalf("scout MaxInputTokens = %d, want %d", preset.MaxInputTokens, scoutMaxInputTokens)
+	}
+}
+
 func TestSpawnSubAgentSchemaIncludesBuiltInPresets(t *testing.T) {
 	schema := spawnSubAgentInputSchema(LoadPresets("").All())
 	properties, ok := schema["properties"].(map[string]any)
@@ -85,7 +102,7 @@ func TestSpawnSubAgentSchemaIncludesBuiltInPresets(t *testing.T) {
 	if !ok {
 		t.Fatalf("enum missing: %#v", typeSchema["enum"])
 	}
-	if want := []string{"architecture-mapper", "research", "review", "test-scout"}; !reflect.DeepEqual(enum, want) {
+	if want := []string{"architecture-mapper", "research", "review", "scout", "test-scout"}; !reflect.DeepEqual(enum, want) {
 		t.Fatalf("enum = %#v, want %#v", enum, want)
 	}
 }
@@ -99,6 +116,7 @@ func TestStableSystemListsBuiltInPresets(t *testing.T) {
 		"- review: read-only implementation review; return actionable findings for the parent agent",
 		"- test-scout: read-only test coverage scout; map existing coverage, missing scenarios, and risk for a change surface",
 		"- architecture-mapper: read-only structural mapper; return layers, public surface, import edges, and cycles for a named target tree",
+		"- scout: read-only repo surveyor; given a task, return the relevant folder map, hot files with line ranges, and suggested next reads",
 	} {
 		if !strings.Contains(stable, want) {
 			t.Fatalf("stable prompt missing %q", want)

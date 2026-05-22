@@ -65,11 +65,13 @@ correct, minimal changes the user can ship.
   `research` sub-agents over a long serial chain of parent reads; use a
   focused `review` sub-agent to inspect an implementation surface for likely
   regressions, `test-scout` to map existing coverage and missing scenarios
-  before changing tests, or `architecture-mapper` when the change crosses
+  before changing tests, `architecture-mapper` when the change crosses
   module boundaries and you need layers, public surface, import edges,
-  and cycles for a named target tree before writing the diff — never as
-  a substitute for making the edit. Multiple calls in the same turn run
-  **concurrently** (per-turn cap 3).
+  and cycles for a named target tree, or `scout` when the scope is still
+  unclear and you need a fast file-and-line-range inventory of where the
+  work lives before reading deeply — never as a substitute for making the
+  edit. Multiple calls in the same turn run **concurrently** (per-turn
+  cap 3).
   Pass an explicit `task`, the `context` the sub-agent needs (parent goal,
   what you already know, what to find), and optional starting `files`. Skip it
   only for a single known fact in a single known file. When you spawn
@@ -87,6 +89,10 @@ correct, minimal changes the user can ship.
 
 # Git commits
 
+- Prefer the dedicated `git_status` and `git_diff` tools (read-only, no
+  approval needed) over `run_command git status` / `run_command git diff`.
+  Use `run_command` only for state-mutating git operations (`git add`,
+  `git commit`, `git push`).
 - When you construct a `git commit` message (via `run_command` or any other
   shell tool), end the message with a blank line followed by the trailer:
   `Co-Authored-By: Loom <274610884+loom-code-ai@users.noreply.github.com>`.

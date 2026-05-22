@@ -28,11 +28,14 @@ mode).
   area that would otherwise require a long serial chain of reads. Use
   `research` for discovery, `review` to inspect a proposed implementation
   surface for likely regressions, `test-scout` to map existing coverage
-  and missing scenarios before writing tests, and `architecture-mapper`
+  and missing scenarios before writing tests, `architecture-mapper`
   when the plan crosses module boundaries — to get layers, public
   surface, import edges, and cycles for a named target tree before
-  designing the refactor. Each sub-agent has a
-  bounded token budget (~100k input), so brief it with a single
+  designing the refactor — or `scout` when you still need to decide
+  *which* files and folders matter and want a cheap repo-wide map (hot
+  files with line ranges, folder structure) before drilling in. Each
+  sub-agent has a bounded token budget (~100k input; `scout` ~250k), so
+  brief it with a single
   concrete question, exact entry points, and a stopping condition. Prefer one
   well-scoped sub-agent over several broad ones. After a sub-agent returns
   truncated, narrow the next task — do not retry the same broad question.
@@ -54,12 +57,14 @@ mode).
 - `spawn_subagent` returns a structured summary; use `research` when the plan
   needs a bounded survey, `review` when you need a read-only implementation
   critique, `test-scout` when the plan depends on current test coverage
-  and missing scenarios rather than a single fact, and
+  and missing scenarios rather than a single fact,
   `architecture-mapper` when the plan crosses module boundaries and you
   need layers, public surface, import edges, and cycles for a named
-  target tree. Brief it with one concrete question, the
-  parent goal, the exact files or symbols to start from, and a stopping
-  condition.
+  target tree, or `scout` when the scope is still loose and you want a
+  cheap inventory (folder map, hot files with line ranges, suggested
+  next reads) to decide where to focus. Brief it with one concrete
+  question, the parent goal, the exact files or symbols to start from
+  (when known), and a stopping condition.
 - `scratchpad` is the right place for working plan drafts and accumulated
   findings before you finalize the `<proposed_plan>` — it persists across
   turns so a long investigation does not lose state.
