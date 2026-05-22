@@ -54,7 +54,7 @@ change to a message type must be made on both sides.
   by name in `Driver.registry()`). Never put per-turn-variable data in the
   stable prefix — it will break the cache.
 - **Project context is Loom-only.** `agent/internal/rules/` reads
-  `.loomrules` and nothing else. `agent/internal/skills/` and
+  `LOOM.md` and nothing else. `agent/internal/skills/` and
   `agent/internal/loop/preset.go` read `.loom/skills/` and `.loom/agents/`
   (plus builtins). `src/commands/loader.ts` reads `.loom/commands/`.
   Foreign-format files (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.claude/`,
@@ -327,7 +327,7 @@ change to a message type must be made on both sides.
 | Anthropic SDK wrapper | `agent/internal/llm/llm.go` |
 | Tool registry | `agent/internal/tools/tools.go` |
 | Local-state-mutating tool interceptors | `agent/internal/loop/interceptors.go` (load_skill, scratchpad, spawn_subagent) |
-| Project rules loader (`.loomrules`) | `agent/internal/rules/rules.go` |
+| Project rules loader (`LOOM.md`) | `agent/internal/rules/rules.go` |
 | Workspace skills + builtins | `agent/internal/skills/` |
 | Sub-agent presets (builtin + `.loom/agents/`) | `agent/internal/loop/preset.go` |
 | Workspace symbol index | `agent/internal/index/` (CGO tree-sitter when available, pure-Go fallback) |

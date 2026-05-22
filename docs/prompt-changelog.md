@@ -2,6 +2,36 @@
 
 Reverse-chronological notes for meaningful Loom prompt-layer changes.
 
+## 2026-05-22 - Project rules file renamed `.loomrules` → `LOOM.md`
+
+- Affected files: `agent/internal/prompts/code.md`,
+  `agent/internal/prompts/debug.md`,
+  `agent/internal/prompts/architect.md`, `agent/internal/prompts/ask.md`,
+  `agent/internal/prompts/research.md`,
+  `agent/internal/prompts/review.md`,
+  `agent/internal/prompts/test-scout.md`,
+  `agent/internal/prompts/architecture-mapper.md`,
+  `agent/internal/prompts/_template.md`. The one-line "Project rules
+  from `.loomrules` are auto-loaded into your system prompt." is now
+  "Project rules from `LOOM.md` are auto-loaded into your system
+  prompt." in every mode and read-only sub-agent preset.
+- Rationale: the dotfile name shared a prefix with the `.loom/` config
+  directory and hid that the file is plain Markdown. `LOOM.md` matches
+  the `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` convention used by other
+  AI tools, is discoverable in editor file trees, and is visibly
+  distinct from `.loom/`.
+- Behavior: the rules envelope is now
+  `<rules source="LOOM.md">…</rules>` instead of
+  `<rules source=".loomrules">…</rules>`. Cache impact: one-time
+  prefix-byte change shifts the rules-bundle hash on the first task
+  after upgrade; stable thereafter.
+- Companion code change (not prompt-layer):
+  `agent/internal/rules/rules.go`,
+  `agent/internal/rules/rules_test.go`, the rename of `.loomrules`
+  itself, and supporting docs (`README.md`, `CLAUDE.md`, `AGENTS.md`,
+  `.github/copilot-instructions.md`, `docs/loom-md.md` — formerly
+  `docs/loomrules.md`).
+
 ## 2026-05-22 - Scratchpad description: drop hard-coded storage path
 
 - Affected files:

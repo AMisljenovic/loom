@@ -24,7 +24,7 @@ disables caching and roughly 5–10×s input cost.
 - Workspace root path.
 - Index state (files scanned, semantic search status).
 - **Loaded skill bodies** (only those the model called `load_skill` on).
-- `.loomrules` content (wrapped in `<rules>` XML, 32 KB cap).
+- `LOOM.md` content (wrapped in `<rules>` XML, 32 KB cap).
 
 **Cache breakpoints** — `agent/internal/llm/anthropic.go`:
 - After the stable system prefix.
@@ -52,7 +52,7 @@ same byte-stability rules apply.
    re-ordering the existing tools invalidates it on every turn from then
    on — don't shuffle without a reason.
 
-5. **The rules bundle hash is captured at task start.** Mid-task `.loomrules`
+5. **The rules bundle hash is captured at task start.** Mid-task `LOOM.md`
    edits do not invalidate the running cache (the Entry holds the snapshot).
    Editing rules between tasks is fine — it's a volatile-tail change anyway.
 

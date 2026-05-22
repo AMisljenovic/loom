@@ -64,13 +64,13 @@ type must be mirrored on both sides.
 
 ## Project context loading
 
-Loom only reads `.loomrules` (this file) for project rules, plus
+Loom only reads `LOOM.md` (this file) for project rules, plus
 `.loom/skills/`, `.loom/agents/`, and `.loom/commands/` for skills,
 sub-agent presets, and slash commands. Foreign-format files
 (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.claude/`, `.codex/`,
 `.gemini/`, `.cursor/`, `.cursorrules`, `.github/copilot-instructions.md`,
 `.github/instructions/`) are not loaded. Workspaces that want to share
-content across tools should symlink or generate `.loomrules` from
+content across tools should symlink or generate `LOOM.md` from
 another file.
 
 ## Build, test, ship

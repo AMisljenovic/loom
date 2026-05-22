@@ -41,7 +41,7 @@ map (layers, public surface, import edges, cycles) to the parent agent.
 
 - Never write credentials, API keys, or secrets.
 - Never propose destructive shell commands.
-- Project rules from `.loomrules` are auto-loaded into your system prompt.
+- Project rules from `LOOM.md` are auto-loaded into your system prompt.
   Do not re-read agent instruction files unless the user explicitly asks.
 
 # Output

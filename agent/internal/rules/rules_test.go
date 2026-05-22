@@ -32,9 +32,9 @@ func TestLoad_EmptyRootStringReturnsEmpty(t *testing.T) {
 	}
 }
 
-func TestLoad_LoomrulesOnly(t *testing.T) {
+func TestLoad_LoomMdOnly(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, ".loomrules", "loom rules body")
+	writeFile(t, dir, "LOOM.md", "loom rules body")
 	// Foreign-format files exist but must be ignored.
 	writeFile(t, dir, "CLAUDE.md", "claude body")
 	writeFile(t, dir, "AGENTS.md", "agents body")
@@ -46,11 +46,11 @@ func TestLoad_LoomrulesOnly(t *testing.T) {
 
 	b := Load(dir)
 
-	if len(b.Sources) != 1 || b.Sources[0] != ".loomrules" {
-		t.Fatalf("expected only .loomrules in sources, got %v", b.Sources)
+	if len(b.Sources) != 1 || b.Sources[0] != "LOOM.md" {
+		t.Fatalf("expected only LOOM.md in sources, got %v", b.Sources)
 	}
 	if !strings.Contains(b.Text, "loom rules body") {
-		t.Fatalf("expected loomrules body in bundle:\n%s", b.Text)
+		t.Fatalf("expected LOOM.md body in bundle:\n%s", b.Text)
 	}
 	for _, forbidden := range []string{
 		"claude body", "agents body", "gemini body",
@@ -62,7 +62,7 @@ func TestLoad_LoomrulesOnly(t *testing.T) {
 	}
 }
 
-func TestLoad_NoLoomrulesReturnsEmpty(t *testing.T) {
+func TestLoad_NoLoomMdReturnsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	// Foreign files alone do not produce a bundle.
 	writeFile(t, dir, "CLAUDE.md", "claude body")
@@ -70,16 +70,16 @@ func TestLoad_NoLoomrulesReturnsEmpty(t *testing.T) {
 
 	b := Load(dir)
 	if b.Text != "" || b.Hash != "" || len(b.Sources) != 0 {
-		t.Fatalf("expected empty bundle when .loomrules absent, got %+v", b)
+		t.Fatalf("expected empty bundle when LOOM.md absent, got %+v", b)
 	}
 }
 
 func TestLoad_EnvelopeWrapsBody(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, ".loomrules", "body line 1\nbody line 2")
+	writeFile(t, dir, "LOOM.md", "body line 1\nbody line 2")
 
 	b := Load(dir)
-	if !strings.HasPrefix(b.Text, `<rules source=".loomrules">`) {
+	if !strings.HasPrefix(b.Text, `<rules source="LOOM.md">`) {
 		t.Fatalf("expected envelope prefix, got:\n%s", b.Text)
 	}
 	if !strings.HasSuffix(b.Text, "</rules>") {
@@ -92,11 +92,11 @@ func TestLoad_EnvelopeWrapsBody(t *testing.T) {
 
 func TestLoad_RespectsMaxBundleBytes(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, ".loomrules", strings.Repeat("x", MaxBundleBytes+1024))
+	writeFile(t, dir, "LOOM.md", strings.Repeat("x", MaxBundleBytes+1024))
 
 	b := Load(dir)
 	if !strings.Contains(b.Text, "<truncated:") {
-		t.Fatalf("expected truncation marker when .loomrules exceeds cap")
+		t.Fatalf("expected truncation marker when LOOM.md exceeds cap")
 	}
 	// Envelope + body + truncation marker should be within a small overhead
 	// of the cap.
@@ -107,7 +107,7 @@ func TestLoad_RespectsMaxBundleBytes(t *testing.T) {
 
 func TestLoad_HashStableAcrossRuns(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, ".loomrules", "stable body")
+	writeFile(t, dir, "LOOM.md", "stable body")
 
 	first := Load(dir)
 	second := Load(dir)
@@ -121,9 +121,9 @@ func TestLoad_HashStableAcrossRuns(t *testing.T) {
 
 func TestLoad_HashChangesWhenBodyChanges(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, ".loomrules", "before")
+	writeFile(t, dir, "LOOM.md", "before")
 	a := Load(dir).Hash
-	writeFile(t, dir, ".loomrules", "after")
+	writeFile(t, dir, "LOOM.md", "after")
 	b := Load(dir).Hash
 	if a == b {
 		t.Fatalf("expected hash to change with body, both %q", a)

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.6
+
+### Breaking
+
+- **Project rules file renamed `.loomrules` → `LOOM.md`.** The dotfile
+  name shared a prefix with the `.loom/` config directory and hid that
+  the file is plain Markdown. The new uppercase `.md` name matches the
+  convention used by other AI tools (`CLAUDE.md`, `AGENTS.md`,
+  `GEMINI.md`), is discoverable in editor file trees, and is visibly
+  distinct from `.loom/`. **Existing workspaces must rename
+  `.loomrules` to `LOOM.md` for project rules to keep loading** —
+  there is no backwards-compatible fallback. The prompt-rules envelope
+  is now emitted as `<rules source="LOOM.md">…</rules>`, which shifts
+  the rules-bundle hash once on the first task after upgrade
+  (self-healing — no action required).
+- The `examples/loomrules/` directory has been renamed to
+  `examples/loom-md/`, and the documentation page has moved from
+  `docs/loomrules.md` to `docs/loom-md.md`.
+
 ## 0.6.5
 
 ### Fixed
@@ -52,8 +71,6 @@ Loom 0.6.4 moves runtime artifacts out of the repo by default and expands Loom's
   fallback behavior for scratchpad persistence.
 - Updated prompt/change documentation in `docs/prompt-changelog.md`,
   `AGENTS.md`, `CLAUDE.md`, and `.github/copilot-instructions.md`.
-
-## 0.6.3
 
 ## 0.6.3
 

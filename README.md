@@ -22,7 +22,7 @@ and trust inside their editor.
 - **Provider choice**: use Anthropic, OpenAI, OpenAI-compatible providers such
   as OpenRouter, Groq, Cerebras, Vercel AI Gateway, Azure OpenAI, vLLM, or
   local OpenAI-compatible servers such as Ollama and LM Studio.
-- **Repo-native behavior**: Loom loads `.loomrules`, provider-native agent
+- **Repo-native behavior**: Loom loads `LOOM.md`, provider-native agent
   instruction files, skills, sub-agent presets, and slash commands so the
   agent follows the conventions your repo already carries.
 
@@ -183,16 +183,16 @@ so summarization fires less aggressively on new variants.
 
 ## Project Instructions
 
-Loom only reads `.loomrules` for project rules and `.loom/skills/`,
+Loom only reads `LOOM.md` for project rules and `.loom/skills/`,
 `.loom/agents/`, `.loom/commands/` for skills, sub-agent presets, and slash
 commands. Foreign-format files (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,
 `.claude/`, `.codex/`, `.gemini/`, `.cursor/`, `.cursorrules`,
 `.github/copilot-instructions.md`, `.github/instructions/`) are not loaded —
 this keeps the prompt prefix small and provider-neutral. Workspaces that want
-to share content across tools should symlink or generate `.loomrules` from
+to share content across tools should symlink or generate `LOOM.md` from
 their other instruction file.
 
-See [docs/loomrules.md](docs/loomrules.md) for size limits and examples.
+See [docs/loom-md.md](docs/loom-md.md) for size limits and examples.
 
 ## Architecture
 

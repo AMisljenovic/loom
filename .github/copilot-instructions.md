@@ -165,9 +165,9 @@ newline-delimited JSON-RPC over stdio.
     smallest focused test command while iterating, then the broader suite
     before handoff (`go test ./...` from `agent/`, `npm run test:ts`, and
     `npm run build` when the extension surface is touched).
-19. Project rules are read from `.loomrules` only by
+19. Project rules are read from `LOOM.md` only by
     `agent/internal/rules/`, frozen at task start, capped at 32 KB, and
-    rendered inside a `<rules source=".loomrules">…</rules>` envelope in
+    rendered inside a `<rules source="LOOM.md">…</rules>` envelope in
     the volatile system tail. Foreign-format files (CLAUDE.md, AGENTS.md,
     GEMINI.md, `.claude/`, `.codex/`, `.gemini/`, `.cursor/`,
     `.cursorrules`, `.github/copilot-instructions.md`,

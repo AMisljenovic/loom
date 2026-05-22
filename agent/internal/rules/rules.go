@@ -1,8 +1,8 @@
-// Package rules loads the project rules file (.loomrules) and produces a
+// Package rules loads the project rules file (LOOM.md) and produces a
 // single bundle the agent system prompt can include. Loom intentionally only
-// reads .loomrules — foreign-format files (CLAUDE.md, AGENTS.md, GEMINI.md,
+// reads LOOM.md — foreign-format files (CLAUDE.md, AGENTS.md, GEMINI.md,
 // .cursor/, .github/copilot-instructions.md, ...) are not loaded. Workspaces
-// that want to share content across tools can symlink or generate .loomrules
+// that want to share content across tools can symlink or generate LOOM.md
 // from another file.
 package rules
 
@@ -15,25 +15,25 @@ import (
 	"strings"
 )
 
-// MaxBundleBytes caps the rules body. A larger .loomrules is truncated at
+// MaxBundleBytes caps the rules body. A larger LOOM.md is truncated at
 // this boundary with a "<truncated: N byte(s) omitted>" marker so the model
 // knows content was elided.
 const MaxBundleBytes = 32 * 1024
 
 // Bundle is the result of a Load() call.
 type Bundle struct {
-	Text    string   // wrapped <rules>…</rules>, empty if .loomrules is absent
+	Text    string   // wrapped <rules>…</rules>, empty if LOOM.md is absent
 	Sources []string // workspace-relative paths actually included
 	Hash    string   // SHA-256 of the included body
 }
 
-// Load reads .loomrules from workspaceRoot and returns the wrapped bundle.
-// Returns the zero Bundle when workspaceRoot is empty or .loomrules is absent.
+// Load reads LOOM.md from workspaceRoot and returns the wrapped bundle.
+// Returns the zero Bundle when workspaceRoot is empty or LOOM.md is absent.
 func Load(workspaceRoot string) Bundle {
 	if workspaceRoot == "" {
 		return Bundle{}
 	}
-	const source = ".loomrules"
+	const source = "LOOM.md"
 	data, err := os.ReadFile(filepath.Join(workspaceRoot, source))
 	if err != nil {
 		return Bundle{}
@@ -48,7 +48,7 @@ func Load(workspaceRoot string) Bundle {
 	sum := sha256.Sum256(body)
 
 	var envelope strings.Builder
-	envelope.WriteString(`<rules source=".loomrules">`)
+	envelope.WriteString(`<rules source="LOOM.md">`)
 	envelope.WriteString("\n")
 	envelope.Write(body)
 	if truncated > 0 {

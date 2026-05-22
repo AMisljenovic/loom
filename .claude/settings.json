@@ -60,7 +60,9 @@
       "Bash(Remove-Item -Recurse -Force c:\\\\Projects\\\\loom\\\\agent\\\\internal\\\\normalize)",
       "Bash(rmdir /s /q familycfg)",
       "Bash(rmdir /s /q normalize)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(git mv *)",
+      "Bash(go -C agent run ./cmd/prompt-snapshot --out ../docs/prompt-snapshots)"
     ],
     "deny": [
       "Bash(rm -rf:*)",

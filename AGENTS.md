@@ -210,14 +210,14 @@ handoff:
     `agent/internal/prompts/_output_conventions.md`. Prompt changes require
     updating `docs/prompt-changelog.md` and running `npm run eval` when
     provider credentials are available.
-19. Project rules are read from `.loomrules` only by
+19. Project rules are read from `LOOM.md` only by
     `agent/internal/rules/`, frozen at task start, capped at 32 KB, and
-    wrapped in a `<rules source=".loomrules">…</rules>` envelope in the
+    wrapped in a `<rules source="LOOM.md">…</rules>` envelope in the
     volatile system tail. Foreign-format files (CLAUDE.md, AGENTS.md,
     GEMINI.md, `.claude/`, `.codex/`, `.gemini/`, `.cursor/`,
     `.cursorrules`, `.github/copilot-instructions.md`,
     `.github/instructions/`) are not loaded. Workspaces that share content
-    with other tools should symlink or generate `.loomrules`.
+    with other tools should symlink or generate `LOOM.md`.
 19. Skills, sub-agent presets, and slash commands are Loom-only. Skills:
     builtins in `agent/internal/skills/builtin/*.md` plus
     `.loom/skills/<id>/SKILL.md`. Presets: builtins `research`, `review`, and
