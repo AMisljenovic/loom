@@ -2,6 +2,31 @@
 
 Reverse-chronological notes for meaningful Loom prompt-layer changes.
 
+## 2026-05-22 - Scratchpad description: drop hard-coded storage path
+
+- Affected files:
+  `agent/internal/tools/descriptions/scratchpad.md`.
+- Rationale: scratchpad + vector index now resolve their on-disk location
+  via `LOOM_STORAGE_DIR` (host-supplied; VS Code routes
+  `ExtensionContext.storageUri` here) with a fall back to
+  `<workspace>/.loom/`. The prior tool description named the exact
+  `<workspace>/.loom/scratchpad/<conversationId>.md` path, which was no
+  longer accurate for VS Code installs and exposed an implementation
+  detail the model never needs.
+- Behavior: rewords the "Persisted at..." sentence to "Persisted
+  per-conversation. Storage location is host-controlled." The behavior
+  the model relies on (per-conversation, survives reload, 64 KB cap, must
+  call `read` to see prior content) is unchanged. Cache impact: one-time
+  prefix invalidation on the first turn after upgrade; stable thereafter.
+- Companion code change (not prompt-layer):
+  `agent/internal/scratchpad/scratchpad.go`,
+  `agent/internal/index/vector.go`, `src/agentClient.ts`
+  (`AgentSpawnExtras.storageDir` → env), `src/panel/ChatPanel.ts`
+  (`agentStorageDir()` mirrors the existing `sessionBodyFile` fallback
+  to `globalStorageUri/fallback-sessions/<fingerprint>/`). New tests in
+  `agent/internal/scratchpad/scratchpad_test.go` cover the env override
+  and empty-env fallback.
+
 ## 2026-05-21 - OpenAI Responses API transport (opt-in)
 
 - Affected files: `agent/internal/llm/responses.go` (new),

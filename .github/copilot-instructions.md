@@ -131,7 +131,10 @@ newline-delimited JSON-RPC over stdio.
     Code/Architect/Ask mode prompts lead with "search first, read
     narrowly" — preserve that ordering when adding new read-side tools.
 15c. `scratchpad` is the agent's private working memory between turns.
-    Persisted at `<workspace>/.loom/scratchpad/<conversationId>.md`
+    Persisted as `<conversationId>.md` under
+    `$LOOM_STORAGE_DIR/scratchpad/` (host-supplied, VS Code routes to
+    its per-workspace storage path) or the
+    `<workspace>/.loom/scratchpad/` fallback for headless callers
     (64 KB cap) with `read|write|append|clear`. LocalExec is nil; the
     loop intercepts the call and dispatches `execScratchpad`, which
     mutates `Entry.Scratchpad` and the on-disk file via

@@ -16,22 +16,34 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// VectorStore persists code chunks and their embeddings to a SQLite file
-// inside <workspaceRoot>/.loom/index.db. Searches use brute-force cosine
-// similarity over all rows. For ~50k rows at 768 dims this is still
-// sub-100ms in pure Go; switch to an ANN library if that ceases to hold.
+// VectorStore persists code chunks and their embeddings to a SQLite file.
+// The database lives under $LOOM_STORAGE_DIR/index.db when the host provides
+// that env var (VS Code points it at the per-workspace ExtensionContext
+// storage path so the DB stays out of the repo); otherwise it falls back to
+// <workspaceRoot>/.loom/index.db. Searches use brute-force cosine similarity
+// over all rows. For ~50k rows at 768 dims this is still sub-100ms in pure
+// Go; switch to an ANN library if that ceases to hold.
 type VectorStore struct {
 	db  *sql.DB
 	dim int
 	mu  sync.Mutex
 }
 
+// vectorStoreDir resolves the directory that holds index.db, preferring the
+// host-supplied LOOM_STORAGE_DIR and falling back to <workspaceRoot>/.loom.
+func vectorStoreDir(workspaceRoot string) string {
+	if storage := strings.TrimSpace(os.Getenv("LOOM_STORAGE_DIR")); storage != "" {
+		return storage
+	}
+	return filepath.Join(workspaceRoot, ".loom")
+}
+
 // OpenVectorStore opens (creating if needed) the SQLite database for the
 // workspace and ensures the schema exists.
 func OpenVectorStore(workspaceRoot string, dim int) (*VectorStore, error) {
-	dir := filepath.Join(workspaceRoot, ".loom")
+	dir := vectorStoreDir(workspaceRoot)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("create .loom dir: %w", err)
+		return nil, fmt.Errorf("create vector store dir: %w", err)
 	}
 	dbPath := filepath.Join(dir, "index.db")
 	db, err := sql.Open("sqlite", dbPath)

@@ -34,8 +34,10 @@ persists across turns and across reloads of the same conversation.
 - `content` (string) — required for `write` and `append`. Ignored otherwise.
 
 ## Behavior
-- Persisted at `<workspace>/.loom/scratchpad/<conversationId>.md`. Survives
-  task end and window reload; lives only for this conversation.
+- Persisted per-conversation. Survives task end and window reload; lives
+  only for this conversation. Storage location is host-controlled (VS Code
+  routes it to its per-workspace storage path); you do not need to know the
+  exact file path.
 - Hard size cap is 64 KB. Treat the scratchpad as a working buffer, not a
   log — when it grows past a few KB, consider `write` with a condensed
   rewrite.

@@ -101,6 +101,11 @@ export interface AgentSpawnExtras {
     voyageApiKey?: string;
     ollamaHost?: string;
   };
+  // storageDir, when present, is forwarded to the agent as LOOM_STORAGE_DIR.
+  // The Go side writes the per-conversation scratchpad and the vector-index
+  // SQLite database under that directory instead of <workspace>/.loom/, so
+  // runtime artifacts stay out of the repo.
+  storageDir?: string;
 }
 
 export class AgentClient {
@@ -283,6 +288,9 @@ function buildExtrasEnv(extras: AgentSpawnExtras): Record<string, string> {
     if (embed.ollamaHost) {
       env.OLLAMA_HOST = embed.ollamaHost;
     }
+  }
+  if (extras.storageDir && extras.storageDir.trim()) {
+    env.LOOM_STORAGE_DIR = extras.storageDir;
   }
   return env;
 }

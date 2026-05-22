@@ -80,8 +80,10 @@ handoff:
 9. Workspace symbol index lives in `agent/internal/index/`. Tree-sitter
    extraction is gated by `//go:build cgo`; the non-CGO build returns empty
    symbol lists so the agent still works. Embeddings live in
-   `agent/internal/embed/` (Ollama, Voyage). Vector store is SQLite at
-   `<workspace>/.loom/index.db` via pure-Go `modernc.org/sqlite`.
+   `agent/internal/embed/` (Ollama, Voyage). Vector store is SQLite via
+   pure-Go `modernc.org/sqlite` — at `$LOOM_STORAGE_DIR/index.db` when the
+   host sets that env var (VS Code points it at the per-workspace storage
+   path), otherwise at the `<workspace>/.loom/index.db` fallback.
 10. Anthropic + OpenAI prompt caching depend on a byte-stable system-prompt +
     tools prefix. MCP tools are sorted by name in `Driver.registry()`; keep
     any new tool ordering deterministic.
@@ -109,7 +111,10 @@ handoff:
     Code/Architect/Ask mode prompts lead with "search first, read
     narrowly" — preserve that ordering when adding new read-side tools.
 14c. `scratchpad` is per-conversation agent-private working memory.
-    Persisted at `<workspace>/.loom/scratchpad/<conversationId>.md`
+    Persisted as `<conversationId>.md` under
+    `$LOOM_STORAGE_DIR/scratchpad/` (host-supplied, VS Code routes to
+    its per-workspace storage path) or the
+    `<workspace>/.loom/scratchpad/` fallback for headless callers,
     with `read|write|append|clear` actions (64 KB cap). LocalExec is
     nil; the loop intercepts the call in `execOneTool` and dispatches
     to `execScratchpad`, which mutates `Entry.Scratchpad` alongside

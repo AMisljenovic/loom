@@ -105,9 +105,13 @@ change to a message type must be made on both sides.
   steers the model to a range edit — **never** to a whole-file rewrite.
   Keep that recovery contract intact when changing the schema.
 - **Scratchpad is agent-private working memory.** The `scratchpad` tool
-  stores a single per-conversation markdown buffer at
-  `<workspace>/.loom/scratchpad/<conversationId>.md` with
-  `read|write|append|clear` actions and a 64 KB cap. It follows the
+  stores a single per-conversation markdown buffer keyed by
+  `<conversationId>.md` with `read|write|append|clear` actions and a 64 KB
+  cap. Storage lives under `$LOOM_STORAGE_DIR/scratchpad/` when the host
+  sets it (the VS Code extension routes `ExtensionContext.storageUri` here
+  via `agentStorageDir()` so runtime files stay out of the repo); headless
+  callers and pre-upgrade installs fall back to
+  `<workspace>/.loom/scratchpad/`. It follows the
   `load_skill` pattern: `LocalExec: nil` in
   [agent/internal/tools/tools.go](agent/internal/tools/tools.go), intercepted
   in the loop's `execOneTool` dispatch ([loop.go](agent/internal/loop/loop.go))
@@ -328,7 +332,7 @@ change to a message type must be made on both sides.
 | Sub-agent presets (builtin + `.loom/agents/`) | `agent/internal/loop/preset.go` |
 | Workspace symbol index | `agent/internal/index/` (CGO tree-sitter when available, pure-Go fallback) |
 | Embeddings providers | `agent/internal/embed/` (Ollama, Voyage) |
-| Vector store (SQLite) | `agent/internal/index/vector.go` (writes to `<workspace>/.loom/index.db`) |
+| Vector store (SQLite) | `agent/internal/index/vector.go` (writes to `$LOOM_STORAGE_DIR/index.db` when set, else `<workspace>/.loom/index.db`) |
 | Opt-in telemetry | `agent/internal/telemetry/` |
 | Marketplace assets | `assets/`, `media/` |
 | Per-mode system prompts | `agent/internal/prompts/*.md` (embedded via `embed.FS`) |

@@ -10,5 +10,12 @@ out/
 
 .env
 
-# Loom per-workspace local state (scratchpad, index, workspace skills/agents/commands)
-.loom/
+# Loom per-workspace runtime artifacts. Curated content (.loom/commands,
+# .loom/skills, .loom/agents) is tracked. With LOOM_STORAGE_DIR set by the
+# VS Code host, scratchpad + index live outside the repo entirely; these
+# globs keep the legacy fallback path out of git for headless / pre-upgrade
+# installs.
+.loom/scratchpad/
+.loom/index.db
+.loom/index.db-shm
+.loom/index.db-wal

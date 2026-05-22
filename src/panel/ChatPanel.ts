@@ -698,7 +698,19 @@ export class ChatPanel implements vscode.WebviewViewProvider {
         provider: validProvider,
         model: embedModel || undefined,
       },
+      storageDir: this.agentStorageDir(),
     };
+  }
+
+  // agentStorageDir mirrors sessionBodyFile's fallback: prefer the
+  // workspace-scoped ExtensionContext.storageUri, and when that is
+  // unavailable (folderless windows, very early activation) fall back to a
+  // workspace-fingerprinted subdirectory of globalStorageUri so two
+  // unrelated folderless windows never share runtime artifacts.
+  private agentStorageDir(): string {
+    const root = this.ctx.storageUri?.fsPath
+      ?? path.join(this.ctx.globalStorageUri.fsPath, "fallback-sessions", this.workspaceFingerprint());
+    return path.join(root, "agent");
   }
 
   private createAgent(workspaceRoot: string): AgentClient {

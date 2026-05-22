@@ -1,6 +1,10 @@
-// Package scratchpad persists a per-conversation working-memory note to disk
-// under <workspace>/.loom/scratchpad/<conversationId>.md. The loop owns
-// in-memory state on the conversation.Entry; this package only does file I/O.
+// Package scratchpad persists a per-conversation working-memory note to disk.
+// The file lives under $LOOM_STORAGE_DIR/scratchpad/<conversationId>.md when
+// the host sets that env var (VS Code routes it to its per-workspace
+// ExtensionContext.storageUri, keeping runtime artifacts out of the repo);
+// otherwise it falls back to <workspace>/.loom/scratchpad/<conversationId>.md
+// for headless tests and pre-upgrade installs. The loop owns in-memory state
+// on the conversation.Entry; this package only does file I/O.
 package scratchpad
 
 import (
@@ -17,6 +21,18 @@ const dirName = ".loom/scratchpad"
 // token usage.
 const MaxBytes = 64 * 1024
 
+// baseDir returns the directory that holds per-conversation scratchpad files.
+// When LOOM_STORAGE_DIR is set (the VS Code host's per-workspace storage path)
+// the files live under <storage>/scratchpad/. Otherwise they fall back to
+// <workspace>/.loom/scratchpad/ so headless callers and existing installs
+// keep working unchanged.
+func baseDir(workspaceRoot string) string {
+	if storage := strings.TrimSpace(os.Getenv("LOOM_STORAGE_DIR")); storage != "" {
+		return filepath.Join(storage, "scratchpad")
+	}
+	return filepath.Join(workspaceRoot, filepath.FromSlash(dirName))
+}
+
 // Path returns the absolute file path for the given conversation's scratchpad.
 // It does not create the file or its parent directory.
 func Path(workspaceRoot, conversationID string) (string, error) {
@@ -29,7 +45,7 @@ func Path(workspaceRoot, conversationID string) (string, error) {
 	if strings.ContainsAny(id, `/\`) || id == "." || id == ".." {
 		return "", fmt.Errorf("scratchpad: invalid conversation id %q", id)
 	}
-	return filepath.Join(workspaceRoot, filepath.FromSlash(dirName), id+".md"), nil
+	return filepath.Join(baseDir(workspaceRoot), id+".md"), nil
 }
 
 // Load reads the persisted scratchpad. A missing file is not an error; it
