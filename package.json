@@ -328,7 +328,7 @@
     "prepare": "husky"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
+    "@types/node": "^25.9.1",
     "@types/vscode": "^1.90.0",
     "@vscode/vsce": "^2.27.0",
     "esbuild": "^0.28.0",
