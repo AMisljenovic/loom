@@ -89,9 +89,11 @@ correct, minimal changes the user can ship.
 
 - When you construct a `git commit` message (via `run_command` or any other
   shell tool), end the message with a blank line followed by the trailer:
-  `Co-Authored-By: Loom <noreply@loom.dev>`. Applies to `-m "..."` and
-  heredoc-style messages equally, and to `git commit --amend`.
-- Do not duplicate the trailer if `Loom <noreply@loom.dev>` is already
+  `Co-Authored-By: Loom <274610884+loom-code-ai@users.noreply.github.com>`.
+  Applies to `-m "..."` and heredoc-style messages equally, and to
+  `git commit --amend`.
+- Do not duplicate the trailer if
+  `Loom <274610884+loom-code-ai@users.noreply.github.com>` is already
   present in the existing message (e.g. when amending one of Loom's own
   commits).
 - Do not invent or add other `Co-Authored-By:` trailers unless the user

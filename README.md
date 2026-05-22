@@ -106,10 +106,10 @@ workspace only when needed.
 **Git co-author trailer**
 
 When Loom drives a `git commit` in Code or Debug mode, it appends a
-`Co-Authored-By: Loom <noreply@loom.dev>` trailer to the commit message so
-its contribution is visible on the commit page and Contributors list.
-Applies to `-m`, heredoc, and `--amend` shapes; existing trailers are not
-duplicated.
+`Co-Authored-By: Loom <274610884+loom-code-ai@users.noreply.github.com>`
+trailer to the commit message so its contribution shows up with an avatar
+on the commit page and Contributors list. Applies to `-m`, heredoc, and
+`--amend` shapes; existing trailers are not duplicated.
 
 **Doubling Continue**
 

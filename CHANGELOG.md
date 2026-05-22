@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.5
+
+### Fixed
+
+- **Git co-author trailer now resolves to a real GitHub account.** The
+  trailer the agent appends to commit messages was previously
+  `Co-Authored-By: Loom <noreply@loom.dev>`, which GitHub could not link
+  to any user, so commits rendered "Loom" as plain text with no avatar.
+  The trailer now uses the GitHub-noreply form for the dedicated bot
+  account: `Co-Authored-By: Loom <274610884+loom-code-ai@users.noreply.github.com>`.
+  Updated in the Code and Debug mode prompts.
+
 ## 0.6.4
 
 Loom 0.6.4 moves runtime artifacts out of the repo by default and expands Loom's built-in workspace assets.
