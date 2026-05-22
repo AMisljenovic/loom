@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.6.4
+
+Loom 0.6.4 moves runtime artifacts out of the repo by default and expands Loom's built-in workspace assets.
+
+### Added
+
+- **Host-controlled agent storage.** The VS Code host now passes a
+  `LOOM_STORAGE_DIR` path to the Go agent so persisted scratchpads and
+  the semantic-search SQLite index live under VS Code's per-workspace
+  storage area instead of the repository checkout. Existing headless and
+  pre-upgrade installs still fall back to `<workspace>/.loom/`.
+- **Built-in Loom workspace assets under `.loom/`.** This release adds
+  reusable command stubs (`build-check`, `docs-sync`, `protocol-sync`,
+  `release-prep`, `test-fix`), two read-only sub-agent presets
+  (`prompt-prefix-checker`, `protocol-auditor`), and four bundled skills
+  (`add-loom-tool`, `prompt-prefix-stability`, `webview-host-message`,
+  `wire-protocol-message`).
+
+### Changed
+
+- **Scratchpad storage/docs now match the new storage model.** The Go
+  scratchpad package resolves its on-disk path from `LOOM_STORAGE_DIR`
+  when present, the tool description no longer hard-codes a repo-local
+  file path, and `ChatPanel` mirrors the existing session-storage
+  fallback logic when choosing the agent storage directory.
+- **Vector index database follows the same storage routing.** The
+  semantic-search vector store now opens `index.db` under the host-
+  supplied storage directory when available, falling back to
+  `<workspace>/.loom/index.db` only when no storage override is set.
+- **Git ignore rules now target only fallback runtime artifacts.**
+  Curated `.loom/commands`, `.loom/skills`, and `.loom/agents` content
+  remains tracked, while legacy `.loom/scratchpad/` and `.loom/index.db*`
+  artifacts stay ignored.
+
+### Internal
+
+- Added Go tests covering `LOOM_STORAGE_DIR` override and whitespace-only
+  fallback behavior for scratchpad persistence.
+- Updated prompt/change documentation in `docs/prompt-changelog.md`,
+  `AGENTS.md`, `CLAUDE.md`, and `.github/copilot-instructions.md`.
+
+## 0.6.3
+
 ## 0.6.3
 
 Loom 0.6.3 signs its commits.
