@@ -3,7 +3,7 @@ module github.com/your-org/loom
 go 1.25.0
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.43.0
+	github.com/anthropics/anthropic-sdk-go v1.45.0
 	github.com/openai/openai-go v1.12.0
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
